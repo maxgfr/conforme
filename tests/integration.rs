@@ -109,14 +109,14 @@ fn test_init_overwrites_with_force() {
 // ===== Sync =====
 
 #[test]
-fn test_sync_requires_agents_md() {
+fn test_sync_requires_source() {
     let dir = TempDir::new().unwrap();
 
     conforme()
         .args(["-C", dir.path().to_str().unwrap(), "sync"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("No AGENTS.md found"));
+        .stderr(predicate::str::contains("No source configured"));
 }
 
 #[test]
@@ -304,14 +304,14 @@ fn test_sync_idempotent() {
 // ===== Check =====
 
 #[test]
-fn test_check_requires_agents_md() {
+fn test_check_requires_source() {
     let dir = TempDir::new().unwrap();
 
     conforme()
         .args(["-C", dir.path().to_str().unwrap(), "check"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("No AGENTS.md found"));
+        .stderr(predicate::str::contains("No source configured"));
 }
 
 #[test]
@@ -733,4 +733,401 @@ fn test_help_ai() {
             .and(predicate::str::contains("Amp"))
             .and(predicate::str::contains("AGENTS.md")),
     );
+}
+
+// ===== Source-based flow =====
+
+#[test]
+fn test_sync_from_claude_source() {
+    // Create a project with Claude as source and Cursor as target
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".claude/rules")).unwrap();
+    fs::create_dir_all(dir.path().join(".cursor")).unwrap();
+
+    // Write Claude config (source)
+    fs::write(
+        dir.path().join("CLAUDE.md"),
+        "# Instructions\nUse TypeScript.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".claude/rules/api.md"),
+        "---\npaths:\n  - src/api/**\n---\n\nFollow REST conventions.\n",
+    )
+    .unwrap();
+
+    // Configure source
+    fs::write(dir.path().join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    // Cursor should have the rules
+    let general = dir.path().join(".cursor/rules/general.mdc");
+    assert!(general.exists());
+    let content = fs::read_to_string(&general).unwrap();
+    assert!(content.contains("Use TypeScript."));
+}
+
+#[test]
+fn test_sync_from_flag_override() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".cursor/rules")).unwrap();
+    fs::create_dir_all(dir.path().join(".windsurf")).unwrap();
+
+    // Write Cursor rules (will be used as source via --from)
+    fs::write(
+        dir.path().join(".cursor/rules/general.mdc"),
+        "---\nalwaysApply: true\n---\n\nCursor instructions.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "sync",
+            "--from",
+            "cursor",
+        ])
+        .assert()
+        .success();
+
+    // Windsurf should have been synced
+    let windsurf_general = dir.path().join(".windsurf/rules/general.md");
+    assert!(windsurf_general.exists());
+    let content = fs::read_to_string(&windsurf_general).unwrap();
+    assert!(content.contains("Cursor instructions."));
+}
+
+// ===== Orphan cleanup =====
+
+#[test]
+fn test_orphan_cleanup_on_rule_rename() {
+    let agents_v1 =
+        "# Instructions\nHello.\n\n## Rule: OldRule\n<!-- activation: always -->\n\nOld content.\n";
+    let dir = create_project_with_tools(agents_v1, &["cursor"]);
+
+    // First sync creates oldrule.mdc
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert!(dir.path().join(".cursor/rules/oldrule.mdc").exists());
+
+    // Rename the rule in AGENTS.md
+    let agents_v2 =
+        "# Instructions\nHello.\n\n## Rule: NewRule\n<!-- activation: always -->\n\nNew content.\n";
+    fs::write(dir.path().join("AGENTS.md"), agents_v2).unwrap();
+
+    // Second sync should create newrule.mdc and remove oldrule.mdc
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert!(dir.path().join(".cursor/rules/newrule.mdc").exists());
+    assert!(!dir.path().join(".cursor/rules/oldrule.mdc").exists());
+}
+
+#[test]
+fn test_no_clean_flag_keeps_orphans() {
+    let agents_v1 =
+        "# Instructions\nHello.\n\n## Rule: OldRule\n<!-- activation: always -->\n\nOld.\n";
+    let dir = create_project_with_tools(agents_v1, &["cursor"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert!(dir.path().join(".cursor/rules/oldrule.mdc").exists());
+
+    let agents_v2 =
+        "# Instructions\nHello.\n\n## Rule: NewRule\n<!-- activation: always -->\n\nNew.\n";
+    fs::write(dir.path().join("AGENTS.md"), agents_v2).unwrap();
+
+    // With --no-clean, old file should remain
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync", "--no-clean"])
+        .assert()
+        .success();
+    assert!(dir.path().join(".cursor/rules/newrule.mdc").exists());
+    assert!(dir.path().join(".cursor/rules/oldrule.mdc").exists()); // still there!
+}
+
+// ===== Diff command =====
+
+#[test]
+fn test_diff_no_changes() {
+    let agents_md = "# Instructions\nHello.\n";
+    let dir = create_project_with_tools(agents_md, &["cursor"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "diff"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("All configs in sync"));
+}
+
+#[test]
+fn test_diff_shows_changes() {
+    let agents_md = "# Instructions\nHello.\n";
+    let dir = create_project_with_tools(agents_md, &["cursor"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    // Modify AGENTS.md
+    fs::write(dir.path().join("AGENTS.md"), "# Instructions\nUpdated.\n").unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "diff"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Cursor"));
+}
+
+// ===== Add command =====
+
+#[test]
+fn test_add_rule() {
+    let dir = TempDir::new().unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "add",
+            "rule",
+            "TypeScript",
+            "--activation",
+            "glob **/*.ts",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Added rule"));
+
+    let content = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(content.contains("## Rule: TypeScript"));
+    assert!(content.contains("activation: glob **/*.ts"));
+}
+
+#[test]
+fn test_add_mcp() {
+    let dir = TempDir::new().unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "add",
+            "mcp",
+            "filesystem",
+            "--command",
+            "npx",
+            "--args=-y,@mcp/server-fs",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Added MCP server"));
+
+    let content = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(content.contains("## MCP: filesystem"));
+    assert!(content.contains("command: npx"));
+}
+
+#[test]
+fn test_add_skill() {
+    let dir = TempDir::new().unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "add",
+            "skill",
+            "deploy",
+            "--description",
+            "Deploy app",
+            "--tools",
+            "Bash",
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(content.contains("## Skill: deploy"));
+    assert!(content.contains("description: Deploy app"));
+    assert!(content.contains("tools: Bash"));
+}
+
+// ===== Validation =====
+
+#[test]
+fn test_sync_fails_on_duplicate_rule_names() {
+    let agents_md = "# Test\n\n## Rule: Same\n<!-- activation: always -->\nA.\n\n## Rule: Same\n<!-- activation: always -->\nB.\n";
+    let dir = create_project_with_tools(agents_md, &["cursor"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Duplicate rule name"));
+}
+
+// ===== .conformerc.toml =====
+
+#[test]
+fn test_conformerc_exclude() {
+    let agents_md = "# Instructions\nHello.\n";
+    let dir = create_project_with_tools(agents_md, &["cursor", "windsurf"]);
+
+    // Exclude windsurf
+    fs::write(
+        dir.path().join(".conformerc.toml"),
+        "exclude = [\"windsurf\"]\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    // Cursor should have files
+    assert!(dir.path().join(".cursor/rules/general.mdc").exists());
+    // Windsurf should NOT (excluded)
+    assert!(!dir.path().join(".windsurf/rules/general.md").exists());
+}
+
+#[test]
+fn test_conformerc_only() {
+    let agents_md = "# Instructions\nHello.\n";
+    let dir = create_project_with_tools(agents_md, &["cursor", "windsurf", "claude"]);
+
+    // Only sync to cursor
+    fs::write(dir.path().join(".conformerc.toml"), "only = [\"cursor\"]\n").unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert!(dir.path().join(".cursor/rules/general.mdc").exists());
+    assert!(!dir.path().join(".windsurf/rules/general.md").exists());
+    // Claude would be skipped because only=cursor
+}
+
+// ===== Full real-world scenario =====
+
+#[test]
+fn test_full_config_all_tools() {
+    let agents_md = r#"# Full Project Config
+
+Use TypeScript with strict mode.
+
+## Rule: TypeScript
+<!-- activation: glob **/*.ts,**/*.tsx -->
+
+Use strict TypeScript.
+
+## Rule: Testing
+<!-- activation: agent-decision -->
+<!-- description: Apply for test files -->
+
+Write thorough tests.
+
+## Skill: deploy
+<!-- description: Deploy to production -->
+<!-- tools: Bash -->
+
+Run `npm run deploy`.
+
+## Agent: reviewer
+<!-- description: Code review agent -->
+<!-- model: gpt-4o -->
+<!-- tools: Read, Grep -->
+
+Review all changes for bugs.
+
+## MCP: filesystem
+<!-- command: npx -->
+<!-- args: -y, @modelcontextprotocol/server-filesystem, /tmp -->
+"#;
+    let dir = create_project_with_tools(
+        agents_md,
+        &[
+            "cursor", "claude", "windsurf", "copilot", "kiro", "roocode", "amazonq", "continue",
+            "gemini", "zed",
+        ],
+    );
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    // Claude: CLAUDE.md + .claude/rules/ + skills + agents + .mcp.json
+    assert!(dir.path().join("CLAUDE.md").exists());
+    assert!(dir.path().join(".claude/skills/deploy/SKILL.md").exists());
+    assert!(dir.path().join(".claude/agents/reviewer.md").exists());
+    assert!(dir.path().join(".mcp.json").exists());
+
+    // Cursor: rules + agents + mcp
+    assert!(dir.path().join(".cursor/rules/general.mdc").exists());
+    assert!(dir.path().join(".cursor/rules/typescript.mdc").exists());
+    assert!(dir.path().join(".cursor/agents/reviewer.mdc").exists());
+    assert!(dir.path().join(".cursor/mcp.json").exists());
+
+    // Copilot: instructions + prompts + agents + mcp
+    assert!(dir.path().join(".github/copilot-instructions.md").exists());
+    assert!(dir.path().join(".github/prompts/deploy.prompt.md").exists());
+    assert!(dir.path().join(".github/agents/reviewer.agent.md").exists());
+    assert!(dir.path().join(".vscode/mcp.json").exists());
+
+    // Kiro: steering + skills + agents + mcp
+    assert!(dir.path().join(".kiro/steering/general.md").exists());
+    assert!(dir.path().join(".kiro/steering/typescript.md").exists());
+    assert!(dir.path().join(".kiro/skills/deploy/SKILL.md").exists());
+    assert!(dir.path().join(".kiro/agents/reviewer.md").exists());
+    assert!(dir.path().join(".kiro/settings/mcp.json").exists());
+
+    // Gemini: GEMINI.md + agents + mcp
+    assert!(dir.path().join("GEMINI.md").exists());
+    assert!(dir.path().join(".gemini/agents/reviewer.md").exists());
+    assert!(dir.path().join(".gemini/settings.json").exists());
+
+    // Roo Code: rules + mcp
+    assert!(dir.path().join(".roo/rules/00-general.md").exists());
+    assert!(dir.path().join(".roo/mcp.json").exists());
+
+    // Windsurf: rules + mcp
+    assert!(dir.path().join(".windsurf/rules/general.md").exists());
+    assert!(dir.path().join(".windsurf/mcp.json").exists());
+
+    // Continue: rules + mcp
+    assert!(dir.path().join(".continue/rules/general.md").exists());
+    assert!(dir.path().join(".continue/mcp.json").exists());
+
+    // Zed: .rules + settings
+    assert!(dir.path().join(".rules").exists());
+    assert!(dir.path().join(".zed/settings.json").exists());
+
+    // Amazon Q: rules + mcp
+    assert!(dir.path().join(".amazonq/rules/general.md").exists());
+    assert!(dir.path().join(".amazonq/mcp.json").exists());
+
+    // Check should pass after sync
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "check"])
+        .assert()
+        .success();
 }

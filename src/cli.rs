@@ -7,20 +7,25 @@ use std::path::PathBuf;
     version,
     about = "Universal AI coding agent config synchronization",
     long_about = "Conforme synchronizes configuration across 13 AI coding tools.\n\n\
-        It treats AGENTS.md as the source of truth and generates/updates \
+        It reads config from a source tool (or AGENTS.md) and generates/updates \
         tool-specific config files for Claude Code, Cursor, Windsurf, \
         GitHub Copilot, Codex CLI, OpenCode, Roo Code, Gemini CLI, \
         Continue.dev, Zed AI, Amazon Q, Kiro, and Amp.",
     after_help = "\x1b[1mExamples:\x1b[0m\n  \
         conforme init                        Detect tools and create configs\n  \
-        conforme sync                        Sync AGENTS.md to all tool configs\n  \
+        conforme sync                        Sync source to all tool configs\n  \
+        conforme sync --from claude          Sync from Claude Code as source\n  \
         conforme sync --dry-run              Preview changes without writing\n  \
         conforme sync --only claude,cursor   Sync only to specific tools\n  \
+        conforme sync --no-clean             Don't remove orphaned files\n  \
+        conforme diff                        Show diff between expected and actual\n  \
         conforme check                       Check if configs are in sync (CI)\n  \
         conforme status                      Show detected tools and sync state\n  \
-        conforme remove cursor,windsurf       Remove generated files for tools\n  \
+        conforme add rule \"Name\" --activation \"glob **/*.ts\"\n  \
+        conforme remove cursor,windsurf      Remove generated files for tools\n  \
         conforme hook install                Install git pre-commit hook\n  \
         conforme hook uninstall              Remove git pre-commit hook\n  \
+        conforme watch                       Watch source and auto-sync\n  \
         conforme help-ai                     Show all supported tools and formats"
 )]
 pub struct Cli {
@@ -44,7 +49,7 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Sync AGENTS.md to all detected tool configs
+    /// Sync source config to all detected tool configs
     Sync {
         /// Preview changes without writing files
         #[arg(short = 'n', long)]
@@ -52,6 +57,26 @@ pub enum Command {
         /// Only sync to specific tools (comma-separated: claude,cursor,windsurf,copilot)
         #[arg(short, long, value_delimiter = ',')]
         only: Option<Vec<String>>,
+        /// Read config from this tool instead of configured source
+        #[arg(long)]
+        from: Option<String>,
+        /// Don't remove orphaned files from managed directories
+        #[arg(long)]
+        no_clean: bool,
+    },
+    /// Show diff between expected and actual config files
+    Diff {
+        /// Only diff specific tools (comma-separated)
+        #[arg(short, long, value_delimiter = ',')]
+        only: Option<Vec<String>>,
+        /// Read config from this tool instead of configured source
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Add a rule, skill, agent, or MCP server to AGENTS.md
+    Add {
+        #[command(subcommand)]
+        what: AddTarget,
     },
     /// Remove generated config files for specific tools
     Remove {
@@ -60,7 +85,11 @@ pub enum Command {
         tools: Vec<String>,
     },
     /// Check if configs are in sync (exits 1 if out of sync)
-    Check,
+    Check {
+        /// Read config from this tool instead of configured source
+        #[arg(long)]
+        from: Option<String>,
+    },
     /// Show detected tools and sync status
     Status,
     /// Manage git pre-commit hook (like Husky)
@@ -68,8 +97,74 @@ pub enum Command {
         #[command(subcommand)]
         action: HookAction,
     },
+    /// Watch source config and auto-sync on changes
+    Watch {
+        /// Only sync to specific tools (comma-separated)
+        #[arg(short, long, value_delimiter = ',')]
+        only: Option<Vec<String>>,
+    },
     /// Show all supported AI tools and their config formats
     HelpAi,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AddTarget {
+    /// Add a new rule
+    Rule {
+        /// Rule name
+        name: String,
+        /// Activation mode (always, manual, agent-decision, or "glob <patterns>")
+        #[arg(long, default_value = "always")]
+        activation: String,
+        /// Rule content
+        #[arg(long, default_value = "")]
+        content: String,
+    },
+    /// Add a new skill
+    Skill {
+        /// Skill name
+        name: String,
+        /// Description
+        #[arg(long, default_value = "")]
+        description: String,
+        /// Allowed tools (comma-separated)
+        #[arg(long, default_value = "")]
+        tools: String,
+        /// Skill content
+        #[arg(long, default_value = "")]
+        content: String,
+    },
+    /// Add a new agent
+    Agent {
+        /// Agent name
+        name: String,
+        /// Description
+        #[arg(long, default_value = "")]
+        description: String,
+        /// Model to use
+        #[arg(long)]
+        model: Option<String>,
+        /// Tools (comma-separated)
+        #[arg(long, default_value = "")]
+        tools: String,
+        /// Agent content
+        #[arg(long, default_value = "")]
+        content: String,
+    },
+    /// Add a new MCP server
+    Mcp {
+        /// Server name
+        name: String,
+        /// Command for stdio transport
+        #[arg(long)]
+        command: Option<String>,
+        /// Arguments (comma-separated)
+        #[arg(long, default_value = "")]
+        args: String,
+        /// URL for HTTP transport
+        #[arg(long)]
+        url: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]

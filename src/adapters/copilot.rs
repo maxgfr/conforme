@@ -25,6 +25,23 @@ impl AiToolAdapter for CopilotAdapter {
             || project_root.join(".github").join("instructions").is_dir()
     }
 
+    fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
+        crate::adapters::AdapterCapabilities {
+            activation_modes: true,
+            skills: true,
+            agents: true,
+            mcp: true,
+        }
+    }
+
+    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+        vec![
+            project_root.join(".github").join("instructions"),
+            project_root.join(".github").join("prompts"),
+            project_root.join(".github").join("agents"),
+        ]
+    }
+
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let instructions_file = project_root.join(".github").join("copilot-instructions.md");
         let instructions = if instructions_file.exists() {

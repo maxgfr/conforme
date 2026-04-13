@@ -1,10 +1,71 @@
 use anyhow::{bail, Context, Result};
 use owo_colors::OwoColorize;
+use similar::{ChangeTag, TextDiff};
 use std::path::Path;
 
-use crate::adapters::{self, AiToolAdapter};
+use crate::adapters::{self, clean_orphans, AiToolAdapter};
+use crate::cli::AddTarget;
+use crate::config::NormalizedConfig;
 use crate::detect;
 use crate::markdown;
+use crate::project_config::ProjectConfig;
+use crate::validate;
+
+/// Resolve the source config: reads from the configured source tool or AGENTS.md.
+fn resolve_config(
+    project_root: &Path,
+    from: Option<&str>,
+    project_cfg: &ProjectConfig,
+    verbose: bool,
+) -> Result<(NormalizedConfig, String)> {
+    let adapters = adapters::all_adapters();
+
+    // Priority: --from flag > .conformerc.toml source > AGENTS.md fallback
+    let source_id = from
+        .map(|s| s.to_string())
+        .or_else(|| project_cfg.source.clone());
+
+    if let Some(ref id) = source_id {
+        // Read from a specific tool adapter
+        let adapter = adapters
+            .iter()
+            .find(|a| a.id() == id.as_str())
+            .ok_or_else(|| {
+                let known: Vec<&str> = adapters.iter().map(|a| a.id()).collect();
+                anyhow::anyhow!(
+                    "Unknown source tool '{}'. Known tools: {}",
+                    id,
+                    known.join(", ")
+                )
+            })?;
+
+        if verbose {
+            println!("  Reading config from {}...", adapter.name().bold());
+        }
+
+        let config = adapter
+            .read(project_root)
+            .with_context(|| format!("failed to read config from {}", adapter.name()))?;
+
+        return Ok((config, id.clone()));
+    }
+
+    // Fallback: read AGENTS.md
+    let agents_md = project_root.join("AGENTS.md");
+    if agents_md.exists() {
+        let content = std::fs::read_to_string(&agents_md).context("failed to read AGENTS.md")?;
+        let config = markdown::parse_agents_md(&content)?;
+        return Ok((config, "agents.md".to_string()));
+    }
+
+    bail!(
+        "No source configured. Either:\n  \
+         - Create AGENTS.md with {}\n  \
+         - Set source in .conformerc.toml: source = \"claude\"\n  \
+         - Use --from flag: conforme sync --from claude",
+        "conforme init".bold()
+    );
+}
 
 /// Run the `init` command.
 pub fn run_init(project_root: &Path, force: bool, verbose: bool) -> Result<()> {
@@ -31,7 +92,6 @@ pub fn run_init(project_root: &Path, force: bool, verbose: bool) -> Result<()> {
                         Ok(config)
                             if !config.instructions.is_empty() || !config.rules.is_empty() =>
                         {
-                            // Write imported config as AGENTS.md
                             let content = markdown::export_as_agents_md(&config);
                             std::fs::write(&agents_md, content)?;
                             println!(
@@ -56,7 +116,7 @@ pub fn run_init(project_root: &Path, force: bool, verbose: bool) -> Result<()> {
     }
 
     // Now sync to all detected tools
-    run_sync(project_root, false, None, verbose)
+    run_sync(project_root, false, None, None, false, verbose)
 }
 
 /// Run the `sync` command.
@@ -64,33 +124,39 @@ pub fn run_sync(
     project_root: &Path,
     dry_run: bool,
     only: Option<&[String]>,
+    from: Option<&str>,
+    no_clean: bool,
     verbose: bool,
 ) -> Result<()> {
-    let agents_md = project_root.join("AGENTS.md");
-    if !agents_md.exists() {
-        bail!(
-            "No AGENTS.md found in {}. Run {} first.",
-            project_root.display(),
-            "conforme init".bold()
-        );
-    }
-
-    let content = std::fs::read_to_string(&agents_md).context("failed to read AGENTS.md")?;
-    let config = markdown::parse_agents_md(&content)?;
+    let project_cfg = ProjectConfig::load(project_root);
+    let (config, source_id) = resolve_config(project_root, from, &project_cfg, verbose)?;
 
     if verbose {
         println!(
-            "  Parsed AGENTS.md: {} instructions chars, {} rules",
-            config.instructions.len(),
-            config.rules.len()
+            "  Source: {} ({} rules, {} skills, {} agents, {} MCP servers)",
+            source_id.bold(),
+            config.rules.len(),
+            config.skills.len(),
+            config.agents.len(),
+            config.mcp_servers.len(),
         );
+    }
+
+    // Validate
+    if !validate::validate(&config, verbose) {
+        bail!("Validation failed. Fix the errors above before syncing.");
     }
 
     let adapters = adapters::all_adapters();
     let mut any_written = false;
 
-    // Warn about unknown tool names in --only
-    if let Some(only_list) = only {
+    // Resolve the effective --only list (CLI > .conformerc.toml)
+    let effective_only: Option<Vec<String>> = only
+        .map(|o| o.to_vec())
+        .or_else(|| project_cfg.only.clone());
+
+    // Warn about unknown tool names
+    if let Some(ref only_list) = effective_only {
         let known_ids: Vec<&str> = adapters.iter().map(|a| a.id()).collect();
         for o in only_list {
             if !known_ids.contains(&o.as_str()) {
@@ -104,10 +170,25 @@ pub fn run_sync(
         }
     }
 
+    // Determine if we should clean orphans
+    let should_clean = !no_clean && project_cfg.clean;
+
     for adapter in &adapters {
-        // Filter by --only
-        if let Some(only_list) = only {
+        // Skip the source tool (don't write back to it)
+        if adapter.id() == source_id {
+            continue;
+        }
+
+        // Filter by --only / .conformerc.toml only
+        if let Some(ref only_list) = effective_only {
             if !only_list.iter().any(|o| o == adapter.id()) {
+                continue;
+            }
+        }
+
+        // Filter by .conformerc.toml exclude
+        if let Some(ref exclude) = project_cfg.exclude {
+            if exclude.iter().any(|e| e == adapter.id()) {
                 continue;
             }
         }
@@ -123,25 +204,37 @@ pub fn run_sync(
             continue;
         }
 
+        // Warn about capability loss
+        warn_capability_loss(adapter.as_ref(), &config);
+
         if dry_run {
             let generated = adapter.generate(project_root, &config)?;
             println!("{} {} (dry-run):", ">".cyan(), adapter.name().bold());
             for (path, expected) in &generated {
-                let status = if path.exists() {
+                if path.exists() {
                     let existing = std::fs::read_to_string(path)?;
                     if crate::hash::contents_match(&existing, expected) {
-                        "unchanged".dimmed().to_string()
+                        println!(
+                            "    {} {}",
+                            "unchanged".dimmed(),
+                            path.strip_prefix(project_root).unwrap_or(path).display()
+                        );
                     } else {
-                        "would update".yellow().to_string()
+                        println!(
+                            "    {} {}",
+                            "would update".yellow(),
+                            path.strip_prefix(project_root).unwrap_or(path).display()
+                        );
+                        // Show diff in dry-run
+                        print_diff(&existing, expected);
                     }
                 } else {
-                    "would create".green().to_string()
-                };
-                println!(
-                    "    {} {}",
-                    status,
-                    path.strip_prefix(project_root).unwrap_or(path).display()
-                );
+                    println!(
+                        "    {} {}",
+                        "would create".green(),
+                        path.strip_prefix(project_root).unwrap_or(path).display()
+                    );
+                }
             }
         } else {
             let report = adapter.write(project_root, &config)?;
@@ -165,6 +258,52 @@ pub fn run_sync(
                     );
                 }
             }
+
+            // Clean orphans
+            if should_clean {
+                let managed_dirs = adapter.managed_directories(project_root);
+                if !managed_dirs.is_empty() {
+                    let generated = adapter.generate(project_root, &config)?;
+                    match clean_orphans(&managed_dirs, &generated) {
+                        Ok(cleaned) => {
+                            for path in &cleaned {
+                                any_written = true;
+                                println!(
+                                    "    {} {}",
+                                    "cleaned".red(),
+                                    path.strip_prefix(project_root).unwrap_or(path).display()
+                                );
+                            }
+                        }
+                        Err(e) if verbose => {
+                            eprintln!("  {} Failed to clean orphans: {}", "!".yellow(), e);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    // Optionally generate AGENTS.md as output
+    if !dry_run && source_id != "agents.md" && project_cfg.generate_agents_md {
+        let agents_content = markdown::export_as_agents_md(&config);
+        let agents_path = project_root.join("AGENTS.md");
+        let should_write = if agents_path.exists() {
+            let existing = std::fs::read_to_string(&agents_path)?;
+            !crate::hash::contents_match(&existing, &agents_content)
+        } else {
+            true
+        };
+        if should_write {
+            std::fs::write(&agents_path, &agents_content)?;
+            any_written = true;
+            println!(
+                "{} {} (generated from {})",
+                ">".green(),
+                "AGENTS.md".bold(),
+                source_id
+            );
         }
     }
 
@@ -175,24 +314,60 @@ pub fn run_sync(
     Ok(())
 }
 
-/// Run the `remove` command.
-pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Result<()> {
-    let agents_md = project_root.join("AGENTS.md");
-    if !agents_md.exists() {
-        bail!(
-            "No AGENTS.md found in {}. Run {} first.",
-            project_root.display(),
-            "conforme init".bold()
+/// Warn about capabilities lost when syncing to this adapter.
+fn warn_capability_loss(adapter: &dyn AiToolAdapter, config: &NormalizedConfig) {
+    let caps = adapter.capabilities();
+
+    if !caps.activation_modes {
+        let has_non_always = config
+            .rules
+            .iter()
+            .any(|r| !matches!(r.activation, crate::config::ActivationMode::Always));
+        if has_non_always {
+            eprintln!(
+                "  {} {} does not support activation modes — all rules will be always-on",
+                "!".yellow(),
+                adapter.name()
+            );
+        }
+    }
+
+    if !caps.skills && !config.skills.is_empty() {
+        eprintln!(
+            "  {} {} does not support skills — {} skill(s) will be skipped",
+            "!".yellow(),
+            adapter.name(),
+            config.skills.len()
         );
     }
 
-    let content = std::fs::read_to_string(&agents_md).context("failed to read AGENTS.md")?;
-    let config = markdown::parse_agents_md(&content)?;
+    if !caps.agents && !config.agents.is_empty() {
+        eprintln!(
+            "  {} {} does not support agents — {} agent(s) will be skipped",
+            "!".yellow(),
+            adapter.name(),
+            config.agents.len()
+        );
+    }
+
+    if !caps.mcp && !config.mcp_servers.is_empty() {
+        eprintln!(
+            "  {} {} does not support MCP servers — {} server(s) will be skipped",
+            "!".yellow(),
+            adapter.name(),
+            config.mcp_servers.len()
+        );
+    }
+}
+
+/// Run the `remove` command.
+pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Result<()> {
+    let project_cfg = ProjectConfig::load(project_root);
+    let (config, _) = resolve_config(project_root, None, &project_cfg, verbose)?;
 
     let adapters = adapters::all_adapters();
     let known_ids: Vec<&str> = adapters.iter().map(|a| a.id()).collect();
 
-    // Validate tool names
     for tool in tools {
         if !known_ids.contains(&tool.as_str()) {
             eprintln!(
@@ -248,23 +423,18 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
 }
 
 /// Run the `check` command.
-pub fn run_check(project_root: &Path, verbose: bool) -> Result<()> {
-    let agents_md = project_root.join("AGENTS.md");
-    if !agents_md.exists() {
-        bail!(
-            "No AGENTS.md found in {}. Run {} first.",
-            project_root.display(),
-            "conforme init".bold()
-        );
-    }
-
-    let content = std::fs::read_to_string(&agents_md).context("failed to read AGENTS.md")?;
-    let config = markdown::parse_agents_md(&content)?;
+pub fn run_check(project_root: &Path, from: Option<&str>, verbose: bool) -> Result<()> {
+    let project_cfg = ProjectConfig::load(project_root);
+    let (config, source_id) = resolve_config(project_root, from, &project_cfg, verbose)?;
 
     let adapters = adapters::all_adapters();
     let mut out_of_sync = Vec::new();
 
     for adapter in &adapters {
+        if adapter.id() == source_id {
+            continue;
+        }
+
         if !adapter.detect(project_root) {
             continue;
         }
@@ -313,9 +483,23 @@ pub fn run_check(project_root: &Path, verbose: bool) -> Result<()> {
 pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
     let has_agents = detect::has_agents_md(project_root);
     let tools = detect::detect_tools(project_root);
+    let project_cfg = ProjectConfig::load(project_root);
 
     println!("{}", "Tool Status".bold().underline());
     println!();
+
+    // Source info
+    if let Some(ref source) = project_cfg.source {
+        println!("  {:<20} {}", "Source:".bold(), source.green());
+    } else if has_agents {
+        println!(
+            "  {:<20} {}",
+            "Source:".bold(),
+            "AGENTS.md (default)".green()
+        );
+    } else {
+        println!("  {:<20} {}", "Source:".bold(), "Not configured".red());
+    }
 
     // AGENTS.md status
     if has_agents {
@@ -323,7 +507,12 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
             "  {:<20} {:<12} {}",
             "AGENTS.md",
             "Yes".green(),
-            "Source of truth".dimmed()
+            if project_cfg.source.is_some() {
+                "Generated output"
+            } else {
+                "Source of truth"
+            }
+            .dimmed()
         );
     } else {
         println!(
@@ -335,12 +524,7 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
     }
 
     // Check sync status for each tool
-    let config = if has_agents {
-        let content = std::fs::read_to_string(project_root.join("AGENTS.md"))?;
-        Some(markdown::parse_agents_md(&content)?)
-    } else {
-        None
-    };
+    let config = resolve_config(project_root, None, &project_cfg, false).ok();
 
     let adapters = adapters::all_adapters();
     for (tool, adapter) in tools.iter().zip(adapters.iter()) {
@@ -352,11 +536,15 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
 
         let sync_status = if !tool.detected {
             "--".dimmed().to_string()
-        } else if let Some(ref cfg) = config {
-            match check_sync_status(project_root, adapter.as_ref(), cfg) {
-                Ok(true) => "In sync".green().to_string(),
-                Ok(false) => "Out of sync".yellow().to_string(),
-                Err(_) => "Error".red().to_string(),
+        } else if let Some((ref cfg, ref source_id)) = config {
+            if adapter.id() == source_id.as_str() {
+                "Source".cyan().to_string()
+            } else {
+                match check_sync_status(project_root, adapter.as_ref(), cfg) {
+                    Ok(true) => "In sync".green().to_string(),
+                    Ok(false) => "Out of sync".yellow().to_string(),
+                    Err(_) => "Error".red().to_string(),
+                }
             }
         } else {
             "No source".dimmed().to_string()
@@ -372,7 +560,7 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
 fn check_sync_status(
     project_root: &Path,
     adapter: &dyn AiToolAdapter,
-    config: &crate::config::NormalizedConfig,
+    config: &NormalizedConfig,
 ) -> Result<bool> {
     let generated = adapter.generate(project_root, config)?;
     for (path, expected) in &generated {
@@ -386,4 +574,178 @@ fn check_sync_status(
         }
     }
     Ok(true)
+}
+
+/// Run the `diff` command.
+pub fn run_diff(
+    project_root: &Path,
+    only: Option<&[String]>,
+    from: Option<&str>,
+    verbose: bool,
+) -> Result<()> {
+    let project_cfg = ProjectConfig::load(project_root);
+    let (config, source_id) = resolve_config(project_root, from, &project_cfg, verbose)?;
+
+    let adapters = adapters::all_adapters();
+    let mut any_diff = false;
+
+    for adapter in &adapters {
+        if adapter.id() == source_id {
+            continue;
+        }
+
+        if let Some(only_list) = only {
+            if !only_list.iter().any(|o| o == adapter.id()) {
+                continue;
+            }
+        }
+
+        if !adapter.detect(project_root) {
+            continue;
+        }
+
+        let generated = adapter.generate(project_root, &config)?;
+        let mut tool_has_diff = false;
+
+        for (path, expected) in &generated {
+            let existing = if path.exists() {
+                std::fs::read_to_string(path)?
+            } else {
+                String::new()
+            };
+
+            if !crate::hash::contents_match(&existing, expected) {
+                if !tool_has_diff {
+                    println!("{} {}:", ">".cyan(), adapter.name().bold());
+                    tool_has_diff = true;
+                    any_diff = true;
+                }
+                let rel_path = path.strip_prefix(project_root).unwrap_or(path);
+                println!("  {}:", rel_path.display().to_string().bold());
+                print_diff(&existing, expected);
+            }
+        }
+    }
+
+    if !any_diff {
+        println!("{} All configs in sync.", "+".green());
+    }
+
+    Ok(())
+}
+
+/// Print a unified diff between two strings.
+fn print_diff(old: &str, new: &str) {
+    let diff = TextDiff::from_lines(old, new);
+    for change in diff.iter_all_changes() {
+        match change.tag() {
+            ChangeTag::Delete => print!("    {}", format!("-{change}").red()),
+            ChangeTag::Insert => print!("    {}", format!("+{change}").green()),
+            ChangeTag::Equal => {}
+        }
+    }
+}
+
+/// Run the `add` command.
+pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result<()> {
+    let agents_path = project_root.join("AGENTS.md");
+
+    // Read existing AGENTS.md or start fresh
+    let mut content = if agents_path.exists() {
+        std::fs::read_to_string(&agents_path)?
+    } else {
+        "# Project Instructions\n\n".to_string()
+    };
+
+    // Ensure trailing newline
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+
+    match target {
+        AddTarget::Rule {
+            name,
+            activation,
+            content: rule_content,
+        } => {
+            content.push_str(&format!("\n## Rule: {name}\n"));
+            content.push_str(&format!("<!-- activation: {activation} -->\n"));
+            if !rule_content.is_empty() {
+                content.push_str(&format!("\n{rule_content}\n"));
+            } else {
+                content.push_str("\n<!-- Add rule content here -->\n");
+            }
+            println!("{} Added rule '{}'", "+".green(), name.bold());
+        }
+        AddTarget::Skill {
+            name,
+            description,
+            tools,
+            content: skill_content,
+        } => {
+            content.push_str(&format!("\n## Skill: {name}\n"));
+            if !description.is_empty() {
+                content.push_str(&format!("<!-- description: {description} -->\n"));
+            }
+            if !tools.is_empty() {
+                content.push_str(&format!("<!-- tools: {tools} -->\n"));
+            }
+            if !skill_content.is_empty() {
+                content.push_str(&format!("\n{skill_content}\n"));
+            } else {
+                content.push_str("\n<!-- Add skill content here -->\n");
+            }
+            println!("{} Added skill '{}'", "+".green(), name.bold());
+        }
+        AddTarget::Agent {
+            name,
+            description,
+            model,
+            tools,
+            content: agent_content,
+        } => {
+            content.push_str(&format!("\n## Agent: {name}\n"));
+            if !description.is_empty() {
+                content.push_str(&format!("<!-- description: {description} -->\n"));
+            }
+            if let Some(m) = model {
+                content.push_str(&format!("<!-- model: {m} -->\n"));
+            }
+            if !tools.is_empty() {
+                content.push_str(&format!("<!-- tools: {tools} -->\n"));
+            }
+            if !agent_content.is_empty() {
+                content.push_str(&format!("\n{agent_content}\n"));
+            } else {
+                content.push_str("\n<!-- Add agent instructions here -->\n");
+            }
+            println!("{} Added agent '{}'", "+".green(), name.bold());
+        }
+        AddTarget::Mcp {
+            name,
+            command,
+            args,
+            url,
+        } => {
+            content.push_str(&format!("\n## MCP: {name}\n"));
+            if let Some(cmd) = command {
+                content.push_str(&format!("<!-- command: {cmd} -->\n"));
+                if !args.is_empty() {
+                    content.push_str(&format!("<!-- args: {args} -->\n"));
+                }
+            } else if let Some(u) = url {
+                content.push_str(&format!("<!-- url: {u} -->\n"));
+            }
+            content.push('\n');
+            println!("{} Added MCP server '{}'", "+".green(), name.bold());
+        }
+    }
+
+    std::fs::write(&agents_path, &content)?;
+
+    if verbose {
+        println!("  Updated AGENTS.md");
+    }
+
+    Ok(())
 }

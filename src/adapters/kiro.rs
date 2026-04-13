@@ -27,6 +27,23 @@ impl AiToolAdapter for KiroAdapter {
         project_root.join(".kiro").is_dir()
     }
 
+    fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
+        crate::adapters::AdapterCapabilities {
+            activation_modes: true,
+            skills: true,
+            agents: true,
+            mcp: true,
+        }
+    }
+
+    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+        vec![
+            project_root.join(".kiro").join("steering"),
+            project_root.join(".kiro").join("skills"),
+            project_root.join(".kiro").join("agents"),
+        ]
+    }
+
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let mut instructions = String::new();
         let mut rules = Vec::new();

@@ -1,6 +1,6 @@
 # conforme
 
-Universal AI coding agent config synchronization. Treats [AGENTS.md](https://github.com/agentsmd/agents.md) as the source of truth and syncs to all tool-specific formats.
+Sync your AI coding config from any tool to all 13 others. Write once, apply everywhere.
 
 AGENTS.md is governed by the [Agentic AI Foundation](https://www.linuxfoundation.org/press/linux-foundation-launches-agentic-ai-initiative) (Linux Foundation) with 146+ member organizations including Anthropic, OpenAI, Google, AWS, and Microsoft.
 
@@ -16,6 +16,15 @@ cargo install --path .
 # Pre-built binaries
 # Download from GitHub Releases
 ```
+
+## How it works
+
+1. **Write your config** in your preferred tool (Claude Code, Cursor, Windsurf, etc.) or directly in `AGENTS.md`
+2. **Run `conforme sync`** — it reads from your chosen source and propagates to all detected tools
+3. **Only changed files are updated** — content is compared using SHA-256 hashes, so unchanged files are never touched
+4. **Orphan files are cleaned** — when you rename or remove a rule, the old generated files are automatically deleted
+
+You can set your source tool once in `.conformerc.toml` or pass it on the command line with `--from`. If no source is specified, conforme defaults to `AGENTS.md`.
 
 ## Supported tools (13)
 
@@ -45,57 +54,42 @@ cargo install --path .
 ## Quick start
 
 ```bash
-# Initialize in your project
-conforme init
-
-# Edit AGENTS.md with your instructions and rules
-# Then sync to all detected tools
-conforme sync
-
-# Preview what would change
-conforme sync --dry-run
-
-# Sync only specific tools
-conforme sync --only claude,cursor,windsurf
-
-# Check if configs are in sync (for CI)
-conforme check
-
-# Remove generated files for specific tools
-conforme remove cursor,windsurf
-
-# See status of all tools
-conforme status
-
-# Show all supported tools and format details
-conforme help-ai
+conforme init                        # Initialize and sync
+conforme sync                        # Sync source to all tools
+conforme sync --from claude          # Use Claude Code as source
+conforme sync --dry-run              # Preview changes with diffs
+conforme diff                        # Show what would change
+conforme check                       # CI check (exit 1 if out of sync)
+conforme status                      # Show tools and sync state
+conforme add rule "Name" --activation "glob **/*.ts"
+conforme watch                       # Auto-sync on file changes
+conforme remove cursor,windsurf      # Remove generated files
+conforme hook install                # Git pre-commit hook
+conforme help-ai                     # Show tool format details
 ```
 
-## Pre-commit hook
+## `.conformerc.toml` configuration
 
-conforme can act as a pre-commit hook (like [Husky](https://github.com/typicode/husky)) to ensure configs stay in sync:
+Create a `.conformerc.toml` at your project root to customize conforme's behavior:
 
-```bash
-# Install the git hook
-conforme hook install
+```toml
+# Source tool — conforme reads config from here
+source = "claude"
 
-# Remove it
-conforme hook uninstall
+# Only sync to these tools (default: all detected)
+only = ["cursor", "copilot", "windsurf"]
+
+# Exclude these tools
+exclude = ["zed", "amp"]
+
+# Auto-generate AGENTS.md from source (default: true)
+generate_agents_md = true
+
+# Clean orphan files on sync (default: true)
+clean = true
 ```
 
-The hook runs `conforme check` before each commit and blocks the commit if configs are out of sync.
-
-## CI/CD integration
-
-Add to your CI pipeline:
-
-```yaml
-# GitHub Actions
-- name: Check AI configs in sync
-  run: conforme check
-```
-
-Or use the pre-commit hook for local enforcement.
+When `source` is set, conforme reads your rules, skills, agents, and MCP servers from that tool's config files instead of `AGENTS.md`. This means you can author your config in whichever tool you prefer and have it propagated everywhere else.
 
 ## AGENTS.md format
 
@@ -224,6 +218,14 @@ Run `npm run build && npm run deploy`.
 <!-- args: -y, @modelcontextprotocol/server-filesystem, . -->
 ```
 
+Alternatively, if you prefer to author your config in Claude Code and have it propagated to all other tools, set up `.conformerc.toml`:
+
+```toml
+source = "claude"
+```
+
+Then write your rules in `.claude/rules/` as you normally would, and run `conforme sync` to propagate them. You can also sync from any other tool by running `conforme sync --from cursor`, `conforme sync --from copilot`, etc.
+
 ### 3. Sync and install hook
 
 ```bash
@@ -325,6 +327,15 @@ before suggesting changes are complete.
 5. Push: `git push && git push --tags`
 ```
 
+Alternatively, configure a source tool in `.conformerc.toml` to write your rules in your preferred editor's format and let conforme handle the rest:
+
+```toml
+source = "cursor"
+only = ["claude", "copilot", "windsurf", "kiro"]
+```
+
+Then author your rules in `.cursor/rules/` and run `conforme sync` to propagate them everywhere.
+
 ### 3. Sync and install hook
 
 ```bash
@@ -376,12 +387,31 @@ check:
 
 ---
 
-## How it works
+## Pre-commit hook
 
-1. **Parse**: Reads `AGENTS.md` and extracts instructions, rules, skills, agents, and MCP servers
-2. **Detect**: Scans for tool-specific directories (`.cursor/`, `.windsurf/`, `.kiro/`, etc.)
-3. **Generate**: Converts normalized config to each tool's format (frontmatter, file structure, JSON)
-4. **Write**: Creates/updates files only if content changed (SHA-256 hash comparison)
+conforme can act as a pre-commit hook (like [Husky](https://github.com/typicode/husky)) to ensure configs stay in sync:
+
+```bash
+# Install the git hook
+conforme hook install
+
+# Remove it
+conforme hook uninstall
+```
+
+The hook runs `conforme check` before each commit and blocks the commit if configs are out of sync.
+
+## CI/CD integration
+
+Add to your CI pipeline:
+
+```yaml
+# GitHub Actions
+- name: Check AI configs in sync
+  run: conforme check
+```
+
+Or use the pre-commit hook for local enforcement.
 
 ## License
 

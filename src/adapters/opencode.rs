@@ -24,6 +24,15 @@ impl AiToolAdapter for OpenCodeAdapter {
         project_root.join("opencode.json").exists() || project_root.join(".opencode").is_dir()
     }
 
+    fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
+        crate::adapters::AdapterCapabilities {
+            activation_modes: false,
+            skills: false,
+            agents: true,
+            mcp: true,
+        }
+    }
+
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         // OpenCode reads AGENTS.md natively
         let agents_md = project_root.join("AGENTS.md");

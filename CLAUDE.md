@@ -2,13 +2,13 @@
 
 ## Project overview
 
-conforme is a Rust CLI that synchronizes AI coding agent configurations across 13 tools. It treats AGENTS.md as the source of truth and generates/updates tool-specific config files.
+conforme is a Rust CLI that synchronizes AI coding agent configurations across 13 tools. It reads config from a source tool (Claude Code, Cursor, etc.) or AGENTS.md, and propagates to all other tool-specific config files.
 
 ## Build & test
 
 ```bash
 cargo build --release
-cargo test                     # 152 tests (94 unit + 32 integration + 17 error + 9 roundtrip)
+cargo test                     # 172 tests (101 unit + 45 integration + 17 error + 9 roundtrip)
 cargo clippy -- -D warnings    # lint — MUST pass before pushing
 cargo fmt -- --check           # format check
 ```
@@ -27,6 +27,9 @@ src/
   detect.rs         — Tool detection (which tools present in project)
   hash.rs           — SHA-256 content hashing for change detection
   hook.rs           — Git pre-commit hook install/uninstall (like Husky)
+  project_config.rs  — .conformerc.toml parser (source, only, exclude, clean options)
+  validate.rs        — Config validation (duplicate names, empty content, invalid globs)
+  watch.rs           — File watcher for auto-sync (notify + debounce)
   help_ai.rs        — Detailed help about all supported tools and formats
   mcp.rs            — MCP config generation/parsing (JSON format for all tools: standard mcpServers, Copilot servers, OpenCode mcp, Zed context_servers)
   skills.rs         — Skills (SKILL.md), agents (.agent.md, .mdc), prompts (.prompt.md) generation
@@ -57,7 +60,10 @@ tests/
 1. `README.md` — supported tools table, CLI commands, activation mapping table
 2. `src/help_ai.rs` — the `conforme help-ai` output must list all tools with correct formats
 3. `src/cli.rs` — the `after_help` examples and `long_about` tool count
-4. This `CLAUDE.md` — architecture section and test count
+4. `src/project_config.rs` — if adding new config options
+5. `src/validate.rs` — if adding new validation rules
+6. `src/watch.rs` — if changing watched file patterns
+7. This `CLAUDE.md` — architecture section and test count
 
 ## Key concepts
 
@@ -119,6 +125,23 @@ Review for bugs.
 2. For each detected adapter: generate expected files, write if changed
 3. Change detection uses SHA-256 content hashing
 
+### Source-based flow
+
+conforme can read config from any tool, not just AGENTS.md:
+
+1. `--from` CLI flag (highest priority)
+2. `source` in `.conformerc.toml`
+3. AGENTS.md fallback (backward compatible)
+
+Configure via `.conformerc.toml`:
+```toml
+source = "claude"
+only = ["cursor", "copilot"]
+exclude = ["zed"]
+generate_agents_md = true
+clean = true
+```
+
 ### Pre-commit hook
 
 `conforme hook install` installs a git pre-commit hook that runs `conforme check`.
@@ -135,6 +158,11 @@ conforme remove <tools>                    # Remove generated config files for t
 conforme hook install                      # Install git pre-commit hook
 conforme hook uninstall                    # Remove git pre-commit hook
 conforme help-ai                           # Show all supported tools + formats
+conforme diff                              # Show diff between expected and actual
+conforme add rule|skill|agent|mcp          # Add section to AGENTS.md
+conforme watch                             # Watch source and auto-sync
+conforme sync --from <tool>                # Use specific tool as source
+conforme sync --no-clean                   # Don't clean orphan files
 ```
 
 ## MCP servers (.mcp.json)

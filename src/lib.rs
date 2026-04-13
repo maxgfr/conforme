@@ -4,4 +4,6 @@ pub mod frontmatter;
 pub mod hash;
 pub mod markdown;
 pub mod mcp;
+pub mod project_config;
 pub mod skills;
+pub mod validate;

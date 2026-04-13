@@ -8,8 +8,11 @@ mod help_ai;
 mod hook;
 mod markdown;
 mod mcp;
+mod project_config;
 mod skills;
 mod sync;
+mod validate;
+mod watch;
 
 use anyhow::Result;
 use clap::Parser;
@@ -22,16 +25,38 @@ fn main() -> Result<()> {
 
     match args.command {
         cli::Command::Init { force } => sync::run_init(&project_root, force, args.verbose),
-        cli::Command::Sync { dry_run, only } => {
-            sync::run_sync(&project_root, dry_run, only.as_deref(), args.verbose)
-        }
+        cli::Command::Sync {
+            dry_run,
+            only,
+            from,
+            no_clean,
+        } => sync::run_sync(
+            &project_root,
+            dry_run,
+            only.as_deref(),
+            from.as_deref(),
+            no_clean,
+            args.verbose,
+        ),
+        cli::Command::Diff { only, from } => sync::run_diff(
+            &project_root,
+            only.as_deref(),
+            from.as_deref(),
+            args.verbose,
+        ),
+        cli::Command::Add { ref what } => sync::run_add(&project_root, what, args.verbose),
         cli::Command::Remove { tools } => sync::run_remove(&project_root, &tools, args.verbose),
-        cli::Command::Check => sync::run_check(&project_root, args.verbose),
+        cli::Command::Check { from } => {
+            sync::run_check(&project_root, from.as_deref(), args.verbose)
+        }
         cli::Command::Status => sync::run_status(&project_root, args.verbose),
         cli::Command::Hook { action } => match action {
             cli::HookAction::Install => hook::install(&project_root, args.verbose),
             cli::HookAction::Uninstall => hook::uninstall(&project_root, args.verbose),
         },
+        cli::Command::Watch { only } => {
+            watch::run_watch(&project_root, only.as_deref(), args.verbose)
+        }
         cli::Command::HelpAi => {
             help_ai::print_help_ai();
             Ok(())

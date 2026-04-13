@@ -24,6 +24,19 @@ impl AiToolAdapter for ContinueDevAdapter {
         project_root.join(".continue").is_dir()
     }
 
+    fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
+        crate::adapters::AdapterCapabilities {
+            activation_modes: true,
+            skills: false,
+            agents: false,
+            mcp: true,
+        }
+    }
+
+    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+        vec![project_root.join(".continue").join("rules")]
+    }
+
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let mut instructions = String::new();
         let mut rules = Vec::new();

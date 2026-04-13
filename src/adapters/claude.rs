@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::AiToolAdapter;
-use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
+use crate::config::{
+    sanitize_name, ActivationMode, NormalizedAgent, NormalizedConfig, NormalizedRule,
+    NormalizedSkill,
+};
 use crate::frontmatter;
 
 pub struct ClaudeAdapter;
@@ -19,6 +22,23 @@ impl AiToolAdapter for ClaudeAdapter {
 
     fn detect(&self, project_root: &Path) -> bool {
         project_root.join("CLAUDE.md").exists() || project_root.join(".claude").is_dir()
+    }
+
+    fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
+        crate::adapters::AdapterCapabilities {
+            activation_modes: true,
+            skills: true,
+            agents: true,
+            mcp: true,
+        }
+    }
+
+    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+        vec![
+            project_root.join(".claude").join("rules"),
+            project_root.join(".claude").join("skills"),
+            project_root.join(".claude").join("agents"),
+        ]
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
@@ -72,10 +92,103 @@ impl AiToolAdapter for ClaudeAdapter {
             }
         }
 
+        // Read skills from .claude/skills/<name>/SKILL.md
+        let mut skills = Vec::new();
+        let skills_dir = project_root.join(".claude").join("skills");
+        if skills_dir.is_dir() {
+            for entry in std::fs::read_dir(&skills_dir)? {
+                let entry = entry?;
+                let skill_dir = entry.path();
+                if skill_dir.is_dir() {
+                    let skill_file = skill_dir.join("SKILL.md");
+                    if skill_file.exists() {
+                        let content = std::fs::read_to_string(&skill_file)?;
+                        let (fields, body) = frontmatter::parse(&content)?;
+                        let name = fields
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_else(|| skill_dir.file_name().unwrap().to_str().unwrap())
+                            .to_string();
+                        let description = fields
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let allowed_tools = fields
+                            .get("allowed-tools")
+                            .and_then(|v| v.as_str())
+                            .map(|s| {
+                                s.split(',')
+                                    .map(|t| t.trim().to_string())
+                                    .filter(|t| !t.is_empty())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        skills.push(NormalizedSkill {
+                            name,
+                            description,
+                            content: body.trim().to_string(),
+                            allowed_tools,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Read agents from .claude/agents/*.md
+        let mut agents = Vec::new();
+        let agents_dir = project_root.join(".claude").join("agents");
+        if agents_dir.is_dir() {
+            for entry in std::fs::read_dir(&agents_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "md") {
+                    let content = std::fs::read_to_string(&path)?;
+                    let (fields, body) = frontmatter::parse(&content)?;
+                    let name = fields
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_else(|| path.file_stem().unwrap().to_str().unwrap())
+                        .to_string();
+                    let description = fields
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let model = fields
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let tools = fields
+                        .get("tools")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.split_whitespace().map(|t| t.to_string()).collect())
+                        .unwrap_or_default();
+                    agents.push(NormalizedAgent {
+                        name,
+                        description,
+                        content: body.trim().to_string(),
+                        model,
+                        tools,
+                    });
+                }
+            }
+        }
+
+        // Read MCP servers from .mcp.json
+        let mut mcp_servers = Vec::new();
+        let mcp_path = project_root.join(".mcp.json");
+        if mcp_path.exists() {
+            let mcp_content = std::fs::read_to_string(&mcp_path)?;
+            mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
+        }
+
         Ok(NormalizedConfig {
             instructions,
             rules,
-            ..Default::default()
+            skills,
+            agents,
+            mcp_servers,
         })
     }
 

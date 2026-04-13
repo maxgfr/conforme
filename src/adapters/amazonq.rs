@@ -22,6 +22,19 @@ impl AiToolAdapter for AmazonQAdapter {
         project_root.join(".amazonq").is_dir()
     }
 
+    fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
+        crate::adapters::AdapterCapabilities {
+            activation_modes: false,
+            skills: false,
+            agents: false,
+            mcp: true,
+        }
+    }
+
+    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+        vec![project_root.join(".amazonq").join("rules")]
+    }
+
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let mut instructions = String::new();
         let mut rules = Vec::new();

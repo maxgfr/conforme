@@ -22,6 +22,19 @@ impl AiToolAdapter for GeminiAdapter {
         project_root.join("GEMINI.md").exists() || project_root.join(".gemini").is_dir()
     }
 
+    fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
+        crate::adapters::AdapterCapabilities {
+            activation_modes: false,
+            skills: false,
+            agents: true,
+            mcp: true,
+        }
+    }
+
+    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+        vec![project_root.join(".gemini").join("agents")]
+    }
+
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let gemini_md = project_root.join("GEMINI.md");
         let instructions = if gemini_md.exists() {

@@ -24,6 +24,15 @@ impl AiToolAdapter for CodexAdapter {
         project_root.join(".codex").is_dir()
     }
 
+    fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
+        crate::adapters::AdapterCapabilities {
+            activation_modes: false,
+            skills: true,
+            agents: false,
+            mcp: false,
+        }
+    }
+
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         // Codex reads AGENTS.md directly — same as our source of truth
         let agents_md = project_root.join("AGENTS.md");

@@ -7,8 +7,7 @@ pub fn print_help_ai() {
     );
     println!();
     println!(
-        "conforme treats {} as the source of truth and syncs to all tool-specific formats.",
-        "AGENTS.md".bold()
+        "conforme reads config from your preferred tool (or AGENTS.md) and syncs to all others."
     );
     println!("AGENTS.md is governed by the Agentic AI Foundation (Linux Foundation).");
     println!();

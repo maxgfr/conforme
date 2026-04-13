@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::AiToolAdapter;
-use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
+use crate::config::{
+    sanitize_name, ActivationMode, NormalizedAgent, NormalizedConfig, NormalizedRule,
+};
 use crate::frontmatter;
 
 pub struct CursorAdapter;
@@ -19,6 +21,22 @@ impl AiToolAdapter for CursorAdapter {
 
     fn detect(&self, project_root: &Path) -> bool {
         project_root.join(".cursor").is_dir() || project_root.join(".cursorrules").exists()
+    }
+
+    fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
+        crate::adapters::AdapterCapabilities {
+            activation_modes: true,
+            skills: false,
+            agents: true,
+            mcp: true,
+        }
+    }
+
+    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+        vec![
+            project_root.join(".cursor").join("rules"),
+            project_root.join(".cursor").join("agents"),
+        ]
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
@@ -55,10 +73,66 @@ impl AiToolAdapter for CursorAdapter {
             }
         }
 
+        // Read agents from .cursor/agents/*.mdc
+        let mut agents = Vec::new();
+        let agents_dir = project_root.join(".cursor").join("agents");
+        if agents_dir.is_dir() {
+            for entry in std::fs::read_dir(&agents_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "mdc") {
+                    let content = std::fs::read_to_string(&path)
+                        .with_context(|| format!("failed to read {}", path.display()))?;
+                    let (fields, body) = frontmatter::parse(&content)?;
+                    let name = fields
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_else(|| path.file_stem().unwrap().to_str().unwrap())
+                        .to_string();
+                    let description = fields
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let model = fields
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let tools = match fields.get("tools") {
+                        Some(serde_yaml_ng::Value::Sequence(seq)) => seq
+                            .iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect(),
+                        Some(serde_yaml_ng::Value::String(s)) => {
+                            s.split_whitespace().map(|t| t.to_string()).collect()
+                        }
+                        _ => Vec::new(),
+                    };
+                    agents.push(NormalizedAgent {
+                        name,
+                        description,
+                        content: body.trim().to_string(),
+                        model,
+                        tools,
+                    });
+                }
+            }
+        }
+
+        // Read MCP servers from .cursor/mcp.json
+        let mut mcp_servers = Vec::new();
+        let mcp_path = project_root.join(".cursor").join("mcp.json");
+        if mcp_path.exists() {
+            let mcp_content = std::fs::read_to_string(&mcp_path)?;
+            mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
+        }
+
         Ok(NormalizedConfig {
             instructions,
             rules,
-            ..Default::default()
+            skills: Vec::new(),
+            agents,
+            mcp_servers,
         })
     }
 

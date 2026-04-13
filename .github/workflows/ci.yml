@@ -69,11 +69,77 @@ jobs:
         run: cargo build --release
       - name: Unit tests
         run: cargo test
-      - name: Smoke test
+      - name: Smoke test - basic sync
         run: |
-          mkdir -p /tmp/test-project/.cursor /tmp/test-project/.claude
-          echo '# Instructions
-          Use TypeScript.' > /tmp/test-project/AGENTS.md
+          mkdir -p /tmp/test-project/.cursor /tmp/test-project/.claude /tmp/test-project/.windsurf
+          cat > /tmp/test-project/AGENTS.md << 'EOF'
+          # Instructions
+          Use TypeScript with strict mode.
+
+          ## Rule: TypeScript
+          <!-- activation: glob **/*.ts -->
+
+          Use strict TypeScript.
+
+          ## Skill: deploy
+          <!-- description: Deploy the app -->
+          <!-- tools: Bash -->
+
+          Run npm run deploy.
+
+          ## MCP: filesystem
+          <!-- command: npx -->
+          <!-- args: -y, @modelcontextprotocol/server-filesystem -->
+          EOF
+
           ./target/release/conforme -C /tmp/test-project sync
-          test -f /tmp/test-project/CLAUDE.md && echo "PASSED" || (echo "FAILED" && exit 1)
-          test -f /tmp/test-project/.cursor/rules/general.mdc && echo "PASSED" || (echo "FAILED" && exit 1)
+
+          # Verify files exist
+          test -f /tmp/test-project/CLAUDE.md && echo "CLAUDE.md: PASSED"
+          test -f /tmp/test-project/.cursor/rules/general.mdc && echo "Cursor general: PASSED"
+          test -f /tmp/test-project/.cursor/rules/typescript.mdc && echo "Cursor rule: PASSED"
+          test -f /tmp/test-project/.windsurf/rules/general.md && echo "Windsurf general: PASSED"
+
+          # Verify content correctness
+          grep -q "Use TypeScript" /tmp/test-project/CLAUDE.md && echo "CLAUDE.md content: PASSED"
+          grep -q "alwaysApply: true" /tmp/test-project/.cursor/rules/general.mdc && echo "Cursor frontmatter: PASSED"
+          grep -q "trigger: always_on" /tmp/test-project/.windsurf/rules/general.md && echo "Windsurf frontmatter: PASSED"
+
+          # Verify skills and MCP
+          test -f /tmp/test-project/.claude/skills/deploy/SKILL.md && echo "Claude skill: PASSED"
+          test -f /tmp/test-project/.mcp.json && echo "MCP config: PASSED"
+          grep -q "filesystem" /tmp/test-project/.mcp.json && echo "MCP content: PASSED"
+
+          # Check should pass after sync
+          ./target/release/conforme -C /tmp/test-project check && echo "Check: PASSED"
+
+      - name: Smoke test - source-based flow
+        run: |
+          mkdir -p /tmp/test-source/.claude/rules /tmp/test-source/.cursor
+          echo '---
+          paths:
+            - "src/api/**"
+          ---
+
+          Follow REST conventions.' > /tmp/test-source/.claude/rules/api.md
+          echo 'General instructions.' > /tmp/test-source/CLAUDE.md
+          echo 'source = "claude"' > /tmp/test-source/.conformerc.toml
+
+          ./target/release/conforme -C /tmp/test-source sync
+
+          test -f /tmp/test-source/.cursor/rules/general.mdc && echo "Source flow - general: PASSED"
+          grep -q "General instructions" /tmp/test-source/.cursor/rules/general.mdc && echo "Source flow - content: PASSED"
+
+      - name: Smoke test - diff and add commands
+        run: |
+          mkdir -p /tmp/test-commands/.cursor
+          echo '# Test' > /tmp/test-commands/AGENTS.md
+
+          ./target/release/conforme -C /tmp/test-commands sync
+          ./target/release/conforme -C /tmp/test-commands diff | grep -q "in sync" && echo "Diff: PASSED"
+
+          ./target/release/conforme -C /tmp/test-commands add rule "NewRule" --activation "always"
+          grep -q "## Rule: NewRule" /tmp/test-commands/AGENTS.md && echo "Add rule: PASSED"
+
+          ./target/release/conforme -C /tmp/test-commands add mcp "test-server" --command "node" --args="server.js"
+          grep -q "## MCP: test-server" /tmp/test-commands/AGENTS.md && echo "Add MCP: PASSED"

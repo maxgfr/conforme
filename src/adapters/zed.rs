@@ -23,6 +23,15 @@ impl AiToolAdapter for ZedAdapter {
         project_root.join(".rules").exists()
     }
 
+    fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
+        crate::adapters::AdapterCapabilities {
+            activation_modes: false,
+            skills: false,
+            agents: false,
+            mcp: true,
+        }
+    }
+
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let rules_file = project_root.join(".rules");
         let instructions = if rules_file.exists() {

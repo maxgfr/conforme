@@ -23,6 +23,19 @@ pub struct WriteReport {
     pub files_unchanged: Vec<PathBuf>,
 }
 
+/// Declares what features an adapter supports.
+#[derive(Default)]
+pub struct AdapterCapabilities {
+    /// Supports per-rule activation modes (glob, agent-decision, manual).
+    pub activation_modes: bool,
+    /// Supports skills generation.
+    pub skills: bool,
+    /// Supports agents generation.
+    pub agents: bool,
+    /// Supports MCP server config generation.
+    pub mcp: bool,
+}
+
 /// Trait for AI tool configuration adapters.
 pub trait AiToolAdapter: Send + Sync {
     /// Human-readable tool name (e.g., "Claude Code")
@@ -36,6 +49,17 @@ pub trait AiToolAdapter: Send + Sync {
 
     /// Read this tool's current config into normalized form
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig>;
+
+    /// Declare what features this adapter supports.
+    fn capabilities(&self) -> AdapterCapabilities {
+        AdapterCapabilities::default()
+    }
+
+    /// Directories managed by this adapter (for orphan cleanup).
+    /// Files in these directories that are not in the generate() output will be removed.
+    fn managed_directories(&self, _project_root: &Path) -> Vec<PathBuf> {
+        Vec::new()
+    }
 
     /// Write normalized config into this tool's format.
     /// Returns a report of what files were written/unchanged.
@@ -59,6 +83,32 @@ pub trait AiToolAdapter: Send + Sync {
         project_root: &Path,
         config: &NormalizedConfig,
     ) -> Result<Vec<(PathBuf, String)>>;
+}
+
+/// Clean orphan files from managed directories.
+/// Removes files that exist on disk but are not in the expected file list.
+pub fn clean_orphans(
+    managed_dirs: &[PathBuf],
+    expected_files: &[(PathBuf, String)],
+) -> Result<Vec<PathBuf>> {
+    let expected_set: std::collections::HashSet<_> =
+        expected_files.iter().map(|(p, _)| p.clone()).collect();
+
+    let mut cleaned = Vec::new();
+    for dir in managed_dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() && !expected_set.contains(&path) {
+                std::fs::remove_file(&path)?;
+                cleaned.push(path);
+            }
+        }
+    }
+    Ok(cleaned)
 }
 
 /// Get all registered adapters.
