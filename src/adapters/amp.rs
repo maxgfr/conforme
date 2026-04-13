@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{write_if_changed, AiToolAdapter, WriteReport};
+use crate::adapters::AiToolAdapter;
 use crate::config::NormalizedConfig;
 
 /// Amp (Sourcegraph) adapter.
@@ -38,36 +38,39 @@ impl AiToolAdapter for AmpAdapter {
         })
     }
 
-    fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport> {
-        let generated = self.generate(project_root, config)?;
-        let mut report = WriteReport {
-            files_written: Vec::new(),
-            files_unchanged: Vec::new(),
-        };
-        for (path, content) in generated {
-            write_if_changed(&path, &content, &mut report)?;
-        }
-        Ok(report)
-    }
-
     fn generate(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,
     ) -> Result<Vec<(PathBuf, String)>> {
-        // Amp reads AGENTS.md natively — re-export full content
-        let mut content = config.instructions.clone();
+        // Amp reads AGENTS.md natively — no need to re-generate it
+        // since AGENTS.md is already our source of truth.
+        let _ = project_root;
+        let _ = config;
+        Ok(vec![])
+    }
+}
 
-        for rule in &config.rules {
-            content.push_str("\n\n## ");
-            content.push_str(&rule.name);
-            content.push_str("\n\n");
-            content.push_str(&rule.content);
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::NormalizedConfig;
+    use std::path::Path;
 
-        Ok(vec![(
-            project_root.join("AGENTS.md"),
-            format!("{}\n", content.trim()),
-        )])
+    fn make_adapter() -> AmpAdapter {
+        AmpAdapter
+    }
+
+    #[test]
+    fn test_generate_no_files() {
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "General instructions.".to_string(),
+            rules: vec![],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        // Amp reads AGENTS.md natively — no files generated
+        assert!(files.is_empty());
     }
 }

@@ -8,7 +8,7 @@ conforme is a Rust CLI that synchronizes AI coding agent configurations across 1
 
 ```bash
 cargo build --release
-cargo test                     # 53 tests (23 unit + 30 integration)
+cargo test                     # 152 tests (94 unit + 32 integration + 17 error + 9 roundtrip)
 cargo clippy -- -D warnings    # lint — MUST pass before pushing
 cargo fmt -- --check           # format check
 ```
@@ -22,15 +22,16 @@ src/
   config.rs         — NormalizedConfig, NormalizedRule, NormalizedSkill, NormalizedAgent, NormalizedMcpServer, ActivationMode
   markdown.rs       — AGENTS.md parser (sections → rules via ## Rule: headings)
   frontmatter.rs    — gray_matter wrapper for YAML frontmatter parsing/serialization
-  sync.rs           — Core sync engine: init, sync, check, status commands
+  lib.rs            — Library crate re-exports (adapters, config, etc.)
+  sync.rs           — Core sync engine: init, sync, check, status, remove commands
   detect.rs         — Tool detection (which tools present in project)
   hash.rs           — SHA-256 content hashing for change detection
   hook.rs           — Git pre-commit hook install/uninstall (like Husky)
   help_ai.rs        — Detailed help about all supported tools and formats
-  mcp.rs            — MCP config generation/parsing (JSON format for Claude, Cursor, Copilot, Roo)
-  skills.rs         — Skills (SKILL.md), agents (.agent.md), prompts (.prompt.md) generation
+  mcp.rs            — MCP config generation/parsing (JSON format for all tools: standard mcpServers, Copilot servers, OpenCode mcp, Zed context_servers)
+  skills.rs         — Skills (SKILL.md), agents (.agent.md, .mdc), prompts (.prompt.md) generation
   adapters/
-    mod.rs          — AiToolAdapter trait + registry + shared write_if_changed
+    mod.rs          — AiToolAdapter trait (with default write()) + registry + shared write_if_changed
     claude.rs       — Claude Code: CLAUDE.md + .claude/rules/*.md (paths: frontmatter)
     cursor.rs       — Cursor: .cursor/rules/*.mdc (alwaysApply/globs/description)
     windsurf.rs     — Windsurf: .windsurf/rules/*.md (trigger/description/globs)
@@ -46,6 +47,8 @@ src/
     amp.rs          — Amp (Sourcegraph): reads AGENTS.md natively
 tests/
   integration.rs    — CLI integration tests (assert_cmd + tempfile)
+  roundtrip.rs      — Write→read round-trip tests for all per-rule adapters
+  error_cases.rs    — Edge cases, MCP sync, agents sync, activation modes
 ```
 
 ## Keeping docs in sync
@@ -128,6 +131,7 @@ conforme init [--force]                    # Create AGENTS.md + sync to tools
 conforme sync [--dry-run] [--only tools]   # AGENTS.md → all tool configs
 conforme check                             # Exit 0 if in sync, 1 if not
 conforme status                            # Show detected tools + sync state
+conforme remove <tools>                    # Remove generated config files for tools
 conforme hook install                      # Install git pre-commit hook
 conforme hook uninstall                    # Remove git pre-commit hook
 conforme help-ai                           # Show all supported tools + formats

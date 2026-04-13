@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{write_if_changed, AiToolAdapter, WriteReport};
+use crate::adapters::AiToolAdapter;
 use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
 use crate::frontmatter;
 
@@ -62,20 +62,6 @@ impl AiToolAdapter for WindsurfAdapter {
         })
     }
 
-    fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport> {
-        let generated = self.generate(project_root, config)?;
-        let mut report = WriteReport {
-            files_written: Vec::new(),
-            files_unchanged: Vec::new(),
-        };
-
-        for (path, content) in generated {
-            write_if_changed(&path, &content, &mut report)?;
-        }
-
-        Ok(report)
-    }
-
     fn generate(
         &self,
         project_root: &Path,
@@ -99,6 +85,15 @@ impl AiToolAdapter for WindsurfAdapter {
             let fields = build_windsurf_fields(rule);
             let content = frontmatter::serialize(&fields, &format!("{}\n", rule.content))?;
             files.push((rules_dir.join(filename), content));
+        }
+
+        // Generate MCP config as .windsurf/mcp.json
+        if !config.mcp_servers.is_empty() {
+            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
+            files.push((
+                project_root.join(".windsurf").join("mcp.json"),
+                format!("{}\n", mcp_json),
+            ));
         }
 
         Ok(files)
@@ -190,4 +185,161 @@ fn build_windsurf_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_n
     }
 
     fields
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{
+        ActivationMode, McpTransport, NormalizedConfig, NormalizedMcpServer, NormalizedRule,
+    };
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    fn test_config() -> NormalizedConfig {
+        NormalizedConfig {
+            instructions: "Be helpful.".to_string(),
+            rules: vec![
+                NormalizedRule {
+                    name: "TypeScript".to_string(),
+                    content: "Use strict mode.".to_string(),
+                    activation: ActivationMode::Always,
+                },
+                NormalizedRule {
+                    name: "API Rules".to_string(),
+                    content: "Follow REST.".to_string(),
+                    activation: ActivationMode::GlobMatch(vec!["src/api/**".to_string()]),
+                },
+                NormalizedRule {
+                    name: "Smart Rule".to_string(),
+                    content: "Decide wisely.".to_string(),
+                    activation: ActivationMode::AgentDecision {
+                        description: "API context".to_string(),
+                    },
+                },
+                NormalizedRule {
+                    name: "Manual Rule".to_string(),
+                    content: "Only when asked.".to_string(),
+                    activation: ActivationMode::Manual,
+                },
+            ],
+            skills: vec![],
+            mcp_servers: vec![],
+            agents: vec![],
+        }
+    }
+
+    #[test]
+    fn test_generate_instructions_only() {
+        let adapter = WindsurfAdapter;
+        let config = NormalizedConfig {
+            instructions: "Be helpful.".to_string(),
+            rules: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+            agents: vec![],
+        };
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert!(files[0].0.ends_with("general.md"));
+        assert!(files[0]
+            .0
+            .to_string_lossy()
+            .contains(".windsurf/rules/general.md"));
+        assert!(files[0].1.contains("trigger: always_on"));
+        assert!(files[0].1.contains("Be helpful."));
+    }
+
+    #[test]
+    fn test_generate_glob_rule() {
+        let adapter = WindsurfAdapter;
+        let config = test_config();
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        let api_rule = files
+            .iter()
+            .find(|(p, _)| p.ends_with("api-rules.md"))
+            .unwrap();
+        assert!(api_rule.1.contains("trigger: glob"));
+        assert!(api_rule.1.contains("globs: "));
+        assert!(api_rule.1.contains("src/api/**"));
+        assert!(api_rule.1.contains("Follow REST."));
+    }
+
+    #[test]
+    fn test_generate_agent_decision_rule() {
+        let adapter = WindsurfAdapter;
+        let config = test_config();
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        let smart_rule = files
+            .iter()
+            .find(|(p, _)| p.ends_with("smart-rule.md"))
+            .unwrap();
+        assert!(smart_rule.1.contains("trigger: model_decision"));
+        assert!(smart_rule.1.contains("description: API context"));
+        assert!(smart_rule.1.contains("Decide wisely."));
+    }
+
+    #[test]
+    fn test_generate_manual_rule() {
+        let adapter = WindsurfAdapter;
+        let config = test_config();
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        let manual_rule = files
+            .iter()
+            .find(|(p, _)| p.ends_with("manual-rule.md"))
+            .unwrap();
+        assert!(manual_rule.1.contains("trigger: manual"));
+        assert!(manual_rule.1.contains("Only when asked."));
+    }
+
+    #[test]
+    fn test_generate_with_mcp() {
+        let adapter = WindsurfAdapter;
+        let config = NormalizedConfig {
+            instructions: "".to_string(),
+            rules: vec![],
+            skills: vec![],
+            mcp_servers: vec![NormalizedMcpServer {
+                name: "test-server".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@test/server".to_string()],
+                },
+                env: BTreeMap::new(),
+            }],
+            agents: vec![],
+        };
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        let mcp_file = files.iter().find(|(p, _)| p.ends_with("mcp.json")).unwrap();
+        assert!(mcp_file.0.to_string_lossy().contains(".windsurf/mcp.json"));
+        assert!(mcp_file.1.contains("mcpServers"));
+        assert!(mcp_file.1.contains("test-server"));
+        assert!(mcp_file.1.contains("npx"));
+    }
+
+    #[test]
+    fn test_generate_empty_config() {
+        let adapter = WindsurfAdapter;
+        let config = NormalizedConfig {
+            instructions: "".to_string(),
+            rules: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+            agents: vec![],
+        };
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        assert!(files.is_empty());
+    }
 }

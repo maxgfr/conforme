@@ -18,6 +18,7 @@ use std::path::PathBuf;
         conforme sync --only claude,cursor   Sync only to specific tools\n  \
         conforme check                       Check if configs are in sync (CI)\n  \
         conforme status                      Show detected tools and sync state\n  \
+        conforme remove cursor,windsurf       Remove generated files for tools\n  \
         conforme hook install                Install git pre-commit hook\n  \
         conforme hook uninstall              Remove git pre-commit hook\n  \
         conforme help-ai                     Show all supported tools and formats"
@@ -51,6 +52,12 @@ pub enum Command {
         /// Only sync to specific tools (comma-separated: claude,cursor,windsurf,copilot)
         #[arg(short, long, value_delimiter = ',')]
         only: Option<Vec<String>>,
+    },
+    /// Remove generated config files for specific tools
+    Remove {
+        /// Tools to remove (comma-separated: claude,cursor,windsurf)
+        #[arg(value_delimiter = ',')]
+        tools: Vec<String>,
     },
     /// Check if configs are in sync (exits 1 if out of sync)
     Check,

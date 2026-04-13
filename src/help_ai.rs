@@ -42,7 +42,7 @@ pub fn print_help_ai() {
         &[
             "Frontmatter: trigger (always_on|glob|model_decision|manual), description, globs",
             "Reads AGENTS.md natively",
-            "MCP is global-only (~/.codeium/windsurf/mcp_config.json)",
+            "MCP synced to .windsurf/mcp.json (project-level)",
         ],
     );
     print_tool(
@@ -103,38 +103,41 @@ pub fn print_help_ai() {
     print_tool(
         "OpenAI Codex CLI",
         "codex",
-        "AGENTS.md (native)",
+        "AGENTS.md (native) + .agents/skills/",
         &[
             "Config at ~/.codex/config.toml",
-            "Also supports AGENTS.override.md",
+            "MCP is global-only (~/.codex/config.toml, TOML format)",
+            "Skills synced to .agents/skills/<name>/SKILL.md",
         ],
     );
     print_tool(
         "OpenCode",
         "opencode",
-        "AGENTS.md (native), falls back to CLAUDE.md",
+        "AGENTS.md (native) + opencode.json",
         &[
-            "Config at opencode.json",
+            "MCP synced to .opencode/mcp.json (OpenCode format: type:local)",
+            "Agents synced to .opencode/agents.json (mode:subagent)",
             "Also scans .opencode/skills/, .claude/skills/, .agents/skills/",
         ],
     );
     print_tool(
         "Gemini CLI",
         "gemini",
-        "GEMINI.md",
+        "GEMINI.md + .gemini/settings.json",
         &[
             "Hierarchical: ~/.gemini/GEMINI.md → project → subdirs",
+            "MCP synced to .gemini/settings.json (standard mcpServers format)",
             "Supports @file.md imports",
-            "Can be configured to read AGENTS.md via settings.json",
         ],
     );
     print_tool(
         "Zed AI",
         "zed",
-        ".rules",
+        ".rules + .zed/settings.json",
         &[
             "Fallback chain: .rules → .cursorrules → .windsurfrules → AGENTS.md → CLAUDE.md",
-            "Single file, no frontmatter",
+            "MCP synced to .zed/settings.json (context_servers format)",
+            "Single .rules file, no frontmatter",
         ],
     );
     print_tool(

@@ -679,6 +679,50 @@ Review all changes for bugs.
     assert!(dir.path().join(".agents/skills/deploy/SKILL.md").exists());
 }
 
+// ===== Remove =====
+
+#[test]
+fn test_remove_deletes_tool_files() {
+    let agents_md = "# Instructions\nHello.\n";
+    let dir = create_project_with_tools(agents_md, &["cursor", "windsurf"]);
+
+    // Sync first
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert!(dir.path().join(".cursor/rules/general.mdc").exists());
+    assert!(dir.path().join(".windsurf/rules/general.md").exists());
+
+    // Remove cursor only
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "remove", "cursor"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("removed"));
+
+    // Cursor files should be gone
+    assert!(!dir.path().join(".cursor/rules/general.mdc").exists());
+    // Windsurf files should still exist
+    assert!(dir.path().join(".windsurf/rules/general.md").exists());
+}
+
+#[test]
+fn test_remove_no_files() {
+    let agents_md = "# Instructions\nHello.\n";
+    let dir = create_project_with_tools(agents_md, &["cursor"]);
+
+    // Remove without syncing first — no files to remove
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "remove", "cursor"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No files to remove"));
+}
+
+// ===== Help AI =====
+
 #[test]
 fn test_help_ai() {
     conforme().arg("help-ai").assert().success().stdout(

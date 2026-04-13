@@ -39,7 +39,18 @@ pub trait AiToolAdapter: Send + Sync {
 
     /// Write normalized config into this tool's format.
     /// Returns a report of what files were written/unchanged.
-    fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport>;
+    /// Default implementation calls generate() then write_if_changed for each file.
+    fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport> {
+        let generated = self.generate(project_root, config)?;
+        let mut report = WriteReport {
+            files_written: Vec::new(),
+            files_unchanged: Vec::new(),
+        };
+        for (path, content) in generated {
+            write_if_changed(&path, &content, &mut report)?;
+        }
+        Ok(report)
+    }
 
     /// Generate expected file contents without writing.
     /// Returns Vec<(path, expected_content)>.

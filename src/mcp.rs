@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 
 use crate::config::{McpTransport, NormalizedMcpServer};
 
@@ -107,6 +106,152 @@ pub fn generate_copilot_mcp_json(servers: &[NormalizedMcpServer]) -> Result<Stri
     serde_json::to_string_pretty(&root).context("failed to serialize Copilot MCP config")
 }
 
+/// Generate OpenCode MCP format: { "mcp": { "name": { "type": "local", "command": ... } } }
+pub fn generate_opencode_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
+    if servers.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut mcp = serde_json::Map::new();
+
+    for server in servers {
+        let mut entry = serde_json::Map::new();
+
+        match &server.transport {
+            McpTransport::Stdio { command, args } => {
+                entry.insert(
+                    "type".to_string(),
+                    serde_json::Value::String("local".to_string()),
+                );
+                entry.insert(
+                    "command".to_string(),
+                    serde_json::Value::String(command.clone()),
+                );
+                let json_args: Vec<serde_json::Value> = args
+                    .iter()
+                    .map(|a| serde_json::Value::String(a.clone()))
+                    .collect();
+                entry.insert("args".to_string(), serde_json::Value::Array(json_args));
+            }
+            McpTransport::Http { url, .. } => {
+                entry.insert(
+                    "type".to_string(),
+                    serde_json::Value::String("remote".to_string()),
+                );
+                entry.insert("url".to_string(), serde_json::Value::String(url.clone()));
+            }
+        }
+
+        if !server.env.is_empty() {
+            let env_obj: serde_json::Map<String, serde_json::Value> = server
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            entry.insert("env".to_string(), serde_json::Value::Object(env_obj));
+        }
+
+        mcp.insert(server.name.clone(), serde_json::Value::Object(entry));
+    }
+
+    let root = serde_json::json!({ "mcp": mcp });
+    serde_json::to_string_pretty(&root).context("failed to serialize OpenCode MCP config")
+}
+
+/// Generate Zed context_servers format: { "context_servers": { "name": { "command": ..., "args": [...] } } }
+pub fn generate_zed_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
+    if servers.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut context_servers = serde_json::Map::new();
+
+    for server in servers {
+        let mut entry = serde_json::Map::new();
+
+        match &server.transport {
+            McpTransport::Stdio { command, args } => {
+                entry.insert(
+                    "command".to_string(),
+                    serde_json::Value::String(command.clone()),
+                );
+                let json_args: Vec<serde_json::Value> = args
+                    .iter()
+                    .map(|a| serde_json::Value::String(a.clone()))
+                    .collect();
+                entry.insert("args".to_string(), serde_json::Value::Array(json_args));
+            }
+            McpTransport::Http { url, headers } => {
+                entry.insert("url".to_string(), serde_json::Value::String(url.clone()));
+                if !headers.is_empty() {
+                    let h: serde_json::Map<String, serde_json::Value> = headers
+                        .iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                        .collect();
+                    entry.insert("headers".to_string(), serde_json::Value::Object(h));
+                }
+            }
+        }
+
+        if !server.env.is_empty() {
+            let env_obj: serde_json::Map<String, serde_json::Value> = server
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            entry.insert("env".to_string(), serde_json::Value::Object(env_obj));
+        }
+
+        context_servers.insert(server.name.clone(), serde_json::Value::Object(entry));
+    }
+
+    let root = serde_json::json!({ "context_servers": context_servers });
+    serde_json::to_string_pretty(&root).context("failed to serialize Zed MCP config")
+}
+
+/// Generate OpenCode agents format for opencode.json: { "agent": { "name": { ... } } }
+pub fn generate_opencode_agents_json(agents: &[crate::config::NormalizedAgent]) -> Result<String> {
+    if agents.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut agent_map = serde_json::Map::new();
+
+    for agent in agents {
+        let mut entry = serde_json::Map::new();
+        if !agent.description.is_empty() {
+            entry.insert(
+                "description".to_string(),
+                serde_json::Value::String(agent.description.clone()),
+            );
+        }
+        entry.insert(
+            "mode".to_string(),
+            serde_json::Value::String("subagent".to_string()),
+        );
+        if let Some(model) = &agent.model {
+            entry.insert(
+                "model".to_string(),
+                serde_json::Value::String(model.clone()),
+            );
+        }
+        if !agent.content.is_empty() {
+            entry.insert(
+                "prompt".to_string(),
+                serde_json::Value::String(agent.content.clone()),
+            );
+        }
+
+        agent_map.insert(
+            crate::config::sanitize_name(&agent.name),
+            serde_json::Value::Object(entry),
+        );
+    }
+
+    let root = serde_json::json!({ "agent": agent_map });
+    serde_json::to_string_pretty(&root).context("failed to serialize OpenCode agents config")
+}
+
 /// Parse a `.mcp.json` file (Claude Code / standard format).
 #[allow(dead_code)]
 pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
@@ -189,18 +334,6 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
     Ok(result)
 }
 
-/// Get the MCP config path for a given tool.
-#[allow(dead_code)]
-pub fn mcp_path_for_tool(project_root: &Path, tool_id: &str) -> Option<PathBuf> {
-    match tool_id {
-        "claude" => Some(project_root.join(".mcp.json")),
-        "cursor" => Some(project_root.join(".cursor").join("mcp.json")),
-        "copilot" => Some(project_root.join(".vscode").join("mcp.json")),
-        "roocode" => Some(project_root.join(".roo").join("mcp.json")),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,5 +398,59 @@ mod tests {
         let result = generate_copilot_mcp_json(&servers).unwrap();
         assert!(result.contains("\"servers\""));
         assert!(!result.contains("mcpServers"));
+    }
+
+    #[test]
+    fn test_generate_opencode_mcp() {
+        let servers = vec![NormalizedMcpServer {
+            name: "filesystem".to_string(),
+            transport: McpTransport::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "@mcp/fs".to_string()],
+            },
+            env: BTreeMap::new(),
+        }];
+        let result = generate_opencode_mcp_json(&servers).unwrap();
+        assert!(result.contains("\"mcp\""));
+        assert!(result.contains("\"type\": \"local\""));
+        assert!(result.contains("filesystem"));
+        assert!(result.contains("npx"));
+        assert!(!result.contains("mcpServers"));
+    }
+
+    #[test]
+    fn test_generate_zed_mcp() {
+        let servers = vec![NormalizedMcpServer {
+            name: "fs".to_string(),
+            transport: McpTransport::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "@mcp/fs".to_string()],
+            },
+            env: BTreeMap::new(),
+        }];
+        let result = generate_zed_mcp_json(&servers).unwrap();
+        assert!(result.contains("\"context_servers\""));
+        assert!(result.contains("\"command\": \"npx\""));
+        assert!(result.contains("fs"));
+        assert!(!result.contains("mcpServers"));
+        assert!(!result.contains("\"type\""));
+    }
+
+    #[test]
+    fn test_generate_opencode_agents() {
+        let agents = vec![crate::config::NormalizedAgent {
+            name: "reviewer".to_string(),
+            description: "Code review".to_string(),
+            content: "Review code.".to_string(),
+            model: Some("gpt-4o".to_string()),
+            tools: vec![],
+        }];
+        let result = generate_opencode_agents_json(&agents).unwrap();
+        assert!(result.contains("\"agent\""));
+        assert!(result.contains("\"reviewer\""));
+        assert!(result.contains("\"description\": \"Code review\""));
+        assert!(result.contains("\"mode\": \"subagent\""));
+        assert!(result.contains("\"model\": \"gpt-4o\""));
+        assert!(result.contains("\"prompt\": \"Review code.\""));
     }
 }

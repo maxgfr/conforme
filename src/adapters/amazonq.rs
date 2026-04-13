@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{write_if_changed, AiToolAdapter, WriteReport};
+use crate::adapters::AiToolAdapter;
 use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
 
 /// Amazon Q Developer adapter.
@@ -60,20 +60,6 @@ impl AiToolAdapter for AmazonQAdapter {
         })
     }
 
-    fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport> {
-        let generated = self.generate(project_root, config)?;
-        let mut report = WriteReport {
-            files_written: Vec::new(),
-            files_unchanged: Vec::new(),
-        };
-
-        for (path, content) in generated {
-            write_if_changed(&path, &content, &mut report)?;
-        }
-
-        Ok(report)
-    }
-
     fn generate(
         &self,
         project_root: &Path,
@@ -94,6 +80,109 @@ impl AiToolAdapter for AmazonQAdapter {
             files.push((rules_dir.join(filename), format!("{}\n", rule.content)));
         }
 
+        // Generate MCP config as .amazonq/mcp.json
+        if !config.mcp_servers.is_empty() {
+            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
+            files.push((
+                project_root.join(".amazonq").join("mcp.json"),
+                format!("{}\n", mcp_json),
+            ));
+        }
+
         Ok(files)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{McpTransport, NormalizedConfig, NormalizedMcpServer};
+    use std::path::Path;
+
+    fn make_adapter() -> AmazonQAdapter {
+        AmazonQAdapter
+    }
+
+    #[test]
+    fn test_generate_instructions_only() {
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "General instructions.".to_string(),
+            rules: vec![],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, Path::new("/tmp/test/.amazonq/rules/general.md"));
+        assert_eq!(files[0].1, "General instructions.\n");
+    }
+
+    #[test]
+    fn test_generate_with_rules() {
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "Main.".to_string(),
+            rules: vec![
+                NormalizedRule {
+                    name: "TypeScript".to_string(),
+                    content: "Use strict mode.".to_string(),
+                    activation: ActivationMode::Always,
+                },
+                NormalizedRule {
+                    name: "Security".to_string(),
+                    content: "No eval.".to_string(),
+                    activation: ActivationMode::Always,
+                },
+            ],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert_eq!(files.len(), 3);
+        assert_eq!(files[0].0, Path::new("/tmp/test/.amazonq/rules/general.md"));
+        assert_eq!(
+            files[1].0,
+            Path::new("/tmp/test/.amazonq/rules/typescript.md")
+        );
+        assert_eq!(
+            files[2].0,
+            Path::new("/tmp/test/.amazonq/rules/security.md")
+        );
+        assert!(files[1].1.contains("Use strict mode."));
+        assert!(files[2].1.contains("No eval."));
+    }
+
+    #[test]
+    fn test_generate_with_mcp() {
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: String::new(),
+            rules: vec![],
+            mcp_servers: vec![NormalizedMcpServer {
+                name: "fs".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@mcp/fs".to_string()],
+                },
+                env: std::collections::BTreeMap::new(),
+            }],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, Path::new("/tmp/test/.amazonq/mcp.json"));
+        assert!(files[0].1.contains("mcpServers"));
+        assert!(files[0].1.contains("\"fs\""));
+    }
+
+    #[test]
+    fn test_generate_empty_config() {
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: String::new(),
+            rules: vec![],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert!(files.is_empty());
     }
 }

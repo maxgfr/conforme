@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{write_if_changed, AiToolAdapter, WriteReport};
+use crate::adapters::AiToolAdapter;
 use crate::config::NormalizedConfig;
 
 /// OpenAI Codex CLI adapter.
@@ -39,48 +39,94 @@ impl AiToolAdapter for CodexAdapter {
         })
     }
 
-    fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport> {
-        let generated = self.generate(project_root, config)?;
-        let mut report = WriteReport {
-            files_written: Vec::new(),
-            files_unchanged: Vec::new(),
-        };
-
-        for (path, content) in generated {
-            write_if_changed(&path, &content, &mut report)?;
-        }
-
-        Ok(report)
-    }
-
     fn generate(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,
     ) -> Result<Vec<(PathBuf, String)>> {
-        // Codex reads AGENTS.md natively. We re-export the full content
-        // as AGENTS.md to ensure it stays in sync with our parsed version.
-        // Rules are embedded as sections since Codex doesn't have per-rule files.
-        let mut content = config.instructions.clone();
-
-        for rule in &config.rules {
-            content.push_str("\n\n## ");
-            content.push_str(&rule.name);
-            content.push_str("\n\n");
-            content.push_str(&rule.content);
-        }
-
-        let mut files = vec![(
-            project_root.join("AGENTS.md"),
-            format!("{}\n", content.trim()),
-        )];
-
-        // Generate skills as .agents/skills/<name>/SKILL.md (Codex format)
-        files.extend(crate::skills::generate_codex_skills(
-            project_root,
-            &config.skills,
-        )?);
+        // Codex reads AGENTS.md natively — no need to re-generate it
+        // since AGENTS.md is already our source of truth.
+        // Only generate skills as .agents/skills/<name>/SKILL.md (Codex format)
+        let files = crate::skills::generate_codex_skills(project_root, &config.skills)?;
 
         Ok(files)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ActivationMode, NormalizedConfig, NormalizedRule, NormalizedSkill};
+    use std::path::Path;
+
+    fn make_adapter() -> CodexAdapter {
+        CodexAdapter
+    }
+
+    #[test]
+    fn test_generate_instructions_only() {
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "General instructions.".to_string(),
+            rules: vec![],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        // Codex reads AGENTS.md natively, no files generated without skills
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_generate_with_rules() {
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "Top-level.".to_string(),
+            rules: vec![NormalizedRule {
+                name: "TypeScript".to_string(),
+                content: "Use strict mode.".to_string(),
+                activation: ActivationMode::Always,
+            }],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        // No files generated — Codex reads AGENTS.md directly
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_generate_with_skills() {
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "Main.".to_string(),
+            rules: vec![],
+            skills: vec![NormalizedSkill {
+                name: "deploy".to_string(),
+                description: "Deploy".to_string(),
+                content: "Run deploy.".to_string(),
+                allowed_tools: vec!["Bash".to_string()],
+            }],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0].0,
+            Path::new("/tmp/test/.agents/skills/deploy/SKILL.md")
+        );
+        assert!(files[0].1.contains("name: deploy"));
+        assert!(files[0].1.contains("description: Deploy"));
+        assert!(files[0].1.contains("Run deploy."));
+    }
+
+    #[test]
+    fn test_generate_empty_config() {
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: String::new(),
+            rules: vec![],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert!(files.is_empty());
     }
 }

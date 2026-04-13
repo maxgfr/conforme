@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::config::{sanitize_name, NormalizedSkill};
+use crate::config::{sanitize_name, NormalizedAgent, NormalizedSkill};
 use crate::frontmatter;
 
 /// Generate Claude Code skill files in `.claude/skills/<name>/SKILL.md`.
@@ -170,6 +170,138 @@ pub fn generate_claude_agents(
             fields.insert(
                 "tools".to_string(),
                 serde_yaml_ng::Value::String(agent.tools.join(", ")),
+            );
+        }
+
+        let content = frontmatter::serialize(&fields, &format!("{}\n", agent.content))?;
+        files.push((agents_dir.join(filename), content));
+    }
+
+    Ok(files)
+}
+
+/// Generate Cursor agent files in `.cursor/agents/<name>.mdc`.
+pub fn generate_cursor_agents(
+    project_root: &Path,
+    agents: &[NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
+    let agents_dir = project_root.join(".cursor").join("agents");
+    let mut files = Vec::new();
+
+    for agent in agents {
+        let filename = format!("{}.mdc", sanitize_name(&agent.name));
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "name".to_string(),
+            serde_yaml_ng::Value::String(agent.name.clone()),
+        );
+        if !agent.description.is_empty() {
+            fields.insert(
+                "description".to_string(),
+                serde_yaml_ng::Value::String(agent.description.clone()),
+            );
+        }
+        if let Some(model) = &agent.model {
+            fields.insert(
+                "model".to_string(),
+                serde_yaml_ng::Value::String(model.clone()),
+            );
+        }
+        if !agent.tools.is_empty() {
+            let yaml_tools: Vec<serde_yaml_ng::Value> = agent
+                .tools
+                .iter()
+                .map(|t| serde_yaml_ng::Value::String(t.clone()))
+                .collect();
+            fields.insert(
+                "tools".to_string(),
+                serde_yaml_ng::Value::Sequence(yaml_tools),
+            );
+        }
+
+        let content = frontmatter::serialize(&fields, &format!("{}\n", agent.content))?;
+        files.push((agents_dir.join(filename), content));
+    }
+
+    Ok(files)
+}
+
+/// Generate Kiro agent files in `.kiro/agents/<name>.md`.
+pub fn generate_kiro_agents(
+    project_root: &Path,
+    agents: &[NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
+    let agents_dir = project_root.join(".kiro").join("agents");
+    let mut files = Vec::new();
+
+    for agent in agents {
+        let filename = format!("{}.md", sanitize_name(&agent.name));
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "name".to_string(),
+            serde_yaml_ng::Value::String(sanitize_name(&agent.name)),
+        );
+        if !agent.description.is_empty() {
+            fields.insert(
+                "description".to_string(),
+                serde_yaml_ng::Value::String(agent.description.clone()),
+            );
+        }
+        if let Some(model) = &agent.model {
+            fields.insert(
+                "model".to_string(),
+                serde_yaml_ng::Value::String(model.clone()),
+            );
+        }
+
+        let content = frontmatter::serialize(&fields, &format!("{}\n", agent.content))?;
+        files.push((agents_dir.join(filename), content));
+    }
+
+    Ok(files)
+}
+
+/// Generate Gemini CLI subagent files in `.gemini/agents/<name>.md`.
+/// Gemini format: name, description, kind (local), tools, model in YAML frontmatter.
+pub fn generate_gemini_agents(
+    project_root: &Path,
+    agents: &[NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
+    let agents_dir = project_root.join(".gemini").join("agents");
+    let mut files = Vec::new();
+
+    for agent in agents {
+        let filename = format!("{}.md", sanitize_name(&agent.name));
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "name".to_string(),
+            serde_yaml_ng::Value::String(sanitize_name(&agent.name)),
+        );
+        if !agent.description.is_empty() {
+            fields.insert(
+                "description".to_string(),
+                serde_yaml_ng::Value::String(agent.description.clone()),
+            );
+        }
+        fields.insert(
+            "kind".to_string(),
+            serde_yaml_ng::Value::String("local".to_string()),
+        );
+        if !agent.tools.is_empty() {
+            let yaml_tools: Vec<serde_yaml_ng::Value> = agent
+                .tools
+                .iter()
+                .map(|t| serde_yaml_ng::Value::String(t.clone()))
+                .collect();
+            fields.insert(
+                "tools".to_string(),
+                serde_yaml_ng::Value::Sequence(yaml_tools),
+            );
+        }
+        if let Some(model) = &agent.model {
+            fields.insert(
+                "model".to_string(),
+                serde_yaml_ng::Value::String(model.clone()),
             );
         }
 

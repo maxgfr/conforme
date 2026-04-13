@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{write_if_changed, AiToolAdapter, WriteReport};
+use crate::adapters::AiToolAdapter;
 use crate::config::NormalizedConfig;
 
 /// OpenCode adapter.
@@ -39,38 +39,105 @@ impl AiToolAdapter for OpenCodeAdapter {
         })
     }
 
-    fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport> {
-        let generated = self.generate(project_root, config)?;
-        let mut report = WriteReport {
-            files_written: Vec::new(),
-            files_unchanged: Vec::new(),
-        };
-
-        for (path, content) in generated {
-            write_if_changed(&path, &content, &mut report)?;
-        }
-
-        Ok(report)
-    }
-
     fn generate(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,
     ) -> Result<Vec<(PathBuf, String)>> {
-        // OpenCode reads AGENTS.md natively — same re-export as Codex
-        let mut content = config.instructions.clone();
+        // OpenCode reads AGENTS.md natively — no need to re-generate it.
+        // But we generate MCP and agents config in opencode.json format.
+        let mut files = Vec::new();
 
-        for rule in &config.rules {
-            content.push_str("\n\n## ");
-            content.push_str(&rule.name);
-            content.push_str("\n\n");
-            content.push_str(&rule.content);
+        // Generate MCP config as opencode.json with "mcp" key
+        if !config.mcp_servers.is_empty() {
+            let mcp_json = crate::mcp::generate_opencode_mcp_json(&config.mcp_servers)?;
+            files.push((
+                project_root.join(".opencode").join("mcp.json"),
+                format!("{}\n", mcp_json),
+            ));
         }
 
-        Ok(vec![(
-            project_root.join("AGENTS.md"),
-            format!("{}\n", content.trim()),
-        )])
+        // Generate agents config as .opencode/agents.json with "agent" key
+        if !config.agents.is_empty() {
+            let agents_json = crate::mcp::generate_opencode_agents_json(&config.agents)?;
+            files.push((
+                project_root.join(".opencode").join("agents.json"),
+                format!("{}\n", agents_json),
+            ));
+        }
+
+        Ok(files)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::NormalizedConfig;
+    use std::path::Path;
+
+    fn make_adapter() -> OpenCodeAdapter {
+        OpenCodeAdapter
+    }
+
+    #[test]
+    fn test_generate_no_files_without_mcp_or_agents() {
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "General instructions.".to_string(),
+            rules: vec![],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_generate_with_mcp() {
+        use crate::config::{McpTransport, NormalizedMcpServer};
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "".to_string(),
+            rules: vec![],
+            mcp_servers: vec![NormalizedMcpServer {
+                name: "fs".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@mcp/fs".to_string()],
+                },
+                env: std::collections::BTreeMap::new(),
+            }],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, Path::new("/tmp/test/.opencode/mcp.json"));
+        assert!(files[0].1.contains("\"mcp\""));
+        assert!(files[0].1.contains("\"type\": \"local\""));
+        assert!(files[0].1.contains("\"fs\""));
+    }
+
+    #[test]
+    fn test_generate_with_agents() {
+        use crate::config::NormalizedAgent;
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "".to_string(),
+            rules: vec![],
+            agents: vec![NormalizedAgent {
+                name: "reviewer".to_string(),
+                description: "Code review".to_string(),
+                content: "Review code.".to_string(),
+                model: Some("gpt-4o".to_string()),
+                tools: vec![],
+            }],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, Path::new("/tmp/test/.opencode/agents.json"));
+        assert!(files[0].1.contains("\"agent\""));
+        assert!(files[0].1.contains("\"reviewer\""));
+        assert!(files[0].1.contains("\"mode\": \"subagent\""));
     }
 }

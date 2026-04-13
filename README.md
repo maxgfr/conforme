@@ -61,6 +61,9 @@ conforme sync --only claude,cursor,windsurf
 # Check if configs are in sync (for CI)
 conforme check
 
+# Remove generated files for specific tools
+conforme remove cursor,windsurf
+
 # See status of all tools
 conforme status
 
@@ -154,15 +157,23 @@ Review all changes for correctness and security.
 <!-- args: -y, @modelcontextprotocol/server-filesystem, /workspace -->
 ```
 
-### What gets generated
+### Feature matrix
 
-| Source | Claude Code | Copilot | Codex CLI |
-|--------|------------|---------|-----------|
-| `## Skill:` | `.claude/skills/<name>/SKILL.md` | `.github/prompts/<name>.prompt.md` | `.agents/skills/<name>/SKILL.md` |
-| `## Agent:` | — | `.github/agents/<name>.agent.md` | — |
-| `## MCP:` | `.mcp.json` | `.vscode/mcp.json` | — |
-
-MCP is also synced to `.cursor/mcp.json` and `.roo/mcp.json` when those tools are detected.
+| Adapter | Rules | Skills | Agents | MCP |
+|---------|-------|--------|--------|-----|
+| Claude Code | `.claude/rules/*.md` | `.claude/skills/` | `.claude/agents/*.md` | `.mcp.json` |
+| GitHub Copilot | `.github/instructions/*.md` | `.github/prompts/*.prompt.md` | `.github/agents/*.agent.md` | `.vscode/mcp.json` |
+| Cursor | `.cursor/rules/*.mdc` | - | `.cursor/agents/*.mdc` | `.cursor/mcp.json` |
+| Kiro (AWS) | `.kiro/steering/*.md` | `.kiro/skills/` | `.kiro/agents/*.md` | `.kiro/settings/mcp.json` |
+| Windsurf | `.windsurf/rules/*.md` | - | - | `.windsurf/mcp.json` |
+| Continue.dev | `.continue/rules/*.md` | - | - | `.continue/mcp.json` |
+| Roo Code | `.roo/rules/*.md` | - | - | `.roo/mcp.json` |
+| Amazon Q | `.amazonq/rules/*.md` | - | - | `.amazonq/mcp.json` |
+| Gemini CLI | `GEMINI.md` | - | `.gemini/agents/*.md` | `.gemini/settings.json` |
+| OpenCode | native (AGENTS.md) | - | `.opencode/agents.json` | `.opencode/mcp.json` |
+| Zed AI | `.rules` | - | - | `.zed/settings.json` |
+| Codex CLI | native (AGENTS.md) | `.agents/skills/` | - | - (global only) |
+| Amp | native (AGENTS.md) | - | - | - |
 
 ## Tutorial: Node.js project
 

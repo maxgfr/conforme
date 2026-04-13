@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{write_if_changed, AiToolAdapter, WriteReport};
+use crate::adapters::AiToolAdapter;
 use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
 use crate::frontmatter;
 
@@ -90,20 +90,6 @@ impl AiToolAdapter for CopilotAdapter {
         })
     }
 
-    fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport> {
-        let generated = self.generate(project_root, config)?;
-        let mut report = WriteReport {
-            files_written: Vec::new(),
-            files_unchanged: Vec::new(),
-        };
-
-        for (path, content) in generated {
-            write_if_changed(&path, &content, &mut report)?;
-        }
-
-        Ok(report)
-    }
-
     fn generate(
         &self,
         project_root: &Path,
@@ -176,5 +162,214 @@ impl AiToolAdapter for CopilotAdapter {
         }
 
         Ok(files)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{
+        ActivationMode, McpTransport, NormalizedAgent, NormalizedConfig, NormalizedMcpServer,
+        NormalizedRule, NormalizedSkill,
+    };
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    fn test_config() -> NormalizedConfig {
+        NormalizedConfig {
+            instructions: "Be helpful.".to_string(),
+            rules: vec![
+                NormalizedRule {
+                    name: "TypeScript".to_string(),
+                    content: "Use strict mode.".to_string(),
+                    activation: ActivationMode::Always,
+                },
+                NormalizedRule {
+                    name: "API Rules".to_string(),
+                    content: "Follow REST.".to_string(),
+                    activation: ActivationMode::GlobMatch(vec!["src/api/**".to_string()]),
+                },
+                NormalizedRule {
+                    name: "Smart Rule".to_string(),
+                    content: "Decide wisely.".to_string(),
+                    activation: ActivationMode::AgentDecision {
+                        description: "API context".to_string(),
+                    },
+                },
+                NormalizedRule {
+                    name: "Manual Rule".to_string(),
+                    content: "Only when asked.".to_string(),
+                    activation: ActivationMode::Manual,
+                },
+            ],
+            skills: vec![],
+            mcp_servers: vec![],
+            agents: vec![],
+        }
+    }
+
+    #[test]
+    fn test_generate_instructions_only() {
+        let adapter = CopilotAdapter;
+        let config = NormalizedConfig {
+            instructions: "Be helpful.".to_string(),
+            rules: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+            agents: vec![],
+        };
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert!(files[0].0.ends_with("copilot-instructions.md"));
+        assert!(files[0]
+            .0
+            .to_string_lossy()
+            .contains(".github/copilot-instructions.md"));
+        assert!(files[0].1.contains("Be helpful."));
+    }
+
+    #[test]
+    fn test_generate_with_glob_rules() {
+        let adapter = CopilotAdapter;
+        let config = test_config();
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        // Glob rules go to .github/instructions/<name>.instructions.md with applyTo:
+        let api_rule = files
+            .iter()
+            .find(|(p, _)| p.ends_with("api-rules.instructions.md"))
+            .unwrap();
+        assert!(api_rule
+            .0
+            .to_string_lossy()
+            .contains(".github/instructions/"));
+        assert!(api_rule.1.contains("applyTo:"));
+        assert!(api_rule.1.contains("src/api/**"));
+        assert!(api_rule.1.contains("Follow REST."));
+    }
+
+    #[test]
+    fn test_generate_always_rules_inlined() {
+        let adapter = CopilotAdapter;
+        let config = test_config();
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        // Always, AgentDecision, and Manual rules get inlined into copilot-instructions.md
+        let main_file = files
+            .iter()
+            .find(|(p, _)| p.ends_with("copilot-instructions.md"))
+            .unwrap();
+        assert!(main_file.1.contains("## TypeScript"));
+        assert!(main_file.1.contains("Use strict mode."));
+        assert!(main_file.1.contains("## Smart Rule"));
+        assert!(main_file.1.contains("Decide wisely."));
+        assert!(main_file.1.contains("## Manual Rule"));
+        assert!(main_file.1.contains("Only when asked."));
+    }
+
+    #[test]
+    fn test_generate_with_skills() {
+        let adapter = CopilotAdapter;
+        let config = NormalizedConfig {
+            instructions: "".to_string(),
+            rules: vec![],
+            skills: vec![NormalizedSkill {
+                name: "deploy".to_string(),
+                description: "Deploy app".to_string(),
+                content: "Run deploy.".to_string(),
+                allowed_tools: vec!["Bash".to_string()],
+            }],
+            mcp_servers: vec![],
+            agents: vec![],
+        };
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        let prompt_file = files
+            .iter()
+            .find(|(p, _)| p.ends_with("deploy.prompt.md"))
+            .unwrap();
+        assert!(prompt_file.0.to_string_lossy().contains(".github/prompts/"));
+        assert!(prompt_file.1.contains("description: Deploy app"));
+        assert!(prompt_file.1.contains("Run deploy."));
+    }
+
+    #[test]
+    fn test_generate_with_agents() {
+        let adapter = CopilotAdapter;
+        let config = NormalizedConfig {
+            instructions: "".to_string(),
+            rules: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+            agents: vec![NormalizedAgent {
+                name: "reviewer".to_string(),
+                description: "Code review".to_string(),
+                content: "Review code.".to_string(),
+                model: Some("gpt-4o".to_string()),
+                tools: vec!["codebase".to_string()],
+            }],
+        };
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        let agent_file = files
+            .iter()
+            .find(|(p, _)| p.ends_with("reviewer.agent.md"))
+            .unwrap();
+        assert!(agent_file.0.to_string_lossy().contains(".github/agents/"));
+        assert!(agent_file.1.contains("name: reviewer"));
+        assert!(agent_file.1.contains("description: Code review"));
+        assert!(agent_file.1.contains("model: gpt-4o"));
+        assert!(agent_file.1.contains("Review code."));
+    }
+
+    #[test]
+    fn test_generate_with_mcp() {
+        let adapter = CopilotAdapter;
+        let config = NormalizedConfig {
+            instructions: "".to_string(),
+            rules: vec![],
+            skills: vec![],
+            mcp_servers: vec![NormalizedMcpServer {
+                name: "test-server".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@test/server".to_string()],
+                },
+                env: BTreeMap::new(),
+            }],
+            agents: vec![],
+        };
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        let mcp_file = files.iter().find(|(p, _)| p.ends_with("mcp.json")).unwrap();
+        // Copilot uses .vscode/mcp.json with "servers" key (NOT mcpServers)
+        assert!(mcp_file.0.to_string_lossy().contains(".vscode/mcp.json"));
+        assert!(mcp_file.1.contains("\"servers\""));
+        assert!(!mcp_file.1.contains("mcpServers"));
+        assert!(mcp_file.1.contains("test-server"));
+        assert!(mcp_file.1.contains("npx"));
+    }
+
+    #[test]
+    fn test_generate_empty_config() {
+        let adapter = CopilotAdapter;
+        let config = NormalizedConfig {
+            instructions: "".to_string(),
+            rules: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+            agents: vec![],
+        };
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        assert!(files.is_empty());
     }
 }

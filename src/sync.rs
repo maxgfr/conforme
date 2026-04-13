@@ -89,6 +89,21 @@ pub fn run_sync(
     let adapters = adapters::all_adapters();
     let mut any_written = false;
 
+    // Warn about unknown tool names in --only
+    if let Some(only_list) = only {
+        let known_ids: Vec<&str> = adapters.iter().map(|a| a.id()).collect();
+        for o in only_list {
+            if !known_ids.contains(&o.as_str()) {
+                eprintln!(
+                    "{} Unknown tool '{}'. Known tools: {}",
+                    "!".yellow(),
+                    o,
+                    known_ids.join(", ")
+                );
+            }
+        }
+    }
+
     for adapter in &adapters {
         // Filter by --only
         if let Some(only_list) = only {
@@ -155,6 +170,78 @@ pub fn run_sync(
 
     if !dry_run && !any_written {
         println!("{} All configs already in sync.", "=".green());
+    }
+
+    Ok(())
+}
+
+/// Run the `remove` command.
+pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Result<()> {
+    let agents_md = project_root.join("AGENTS.md");
+    if !agents_md.exists() {
+        bail!(
+            "No AGENTS.md found in {}. Run {} first.",
+            project_root.display(),
+            "conforme init".bold()
+        );
+    }
+
+    let content = std::fs::read_to_string(&agents_md).context("failed to read AGENTS.md")?;
+    let config = markdown::parse_agents_md(&content)?;
+
+    let adapters = adapters::all_adapters();
+    let known_ids: Vec<&str> = adapters.iter().map(|a| a.id()).collect();
+
+    // Validate tool names
+    for tool in tools {
+        if !known_ids.contains(&tool.as_str()) {
+            eprintln!(
+                "{} Unknown tool '{}'. Known tools: {}",
+                "!".yellow(),
+                tool,
+                known_ids.join(", ")
+            );
+        }
+    }
+
+    let mut any_removed = false;
+
+    for adapter in &adapters {
+        if !tools.iter().any(|t| t == adapter.id()) {
+            continue;
+        }
+
+        let generated = adapter.generate(project_root, &config)?;
+        let mut removed_files = Vec::new();
+
+        for (path, _) in &generated {
+            if path.exists() {
+                std::fs::remove_file(path)?;
+                removed_files.push(path.clone());
+            }
+        }
+
+        if !removed_files.is_empty() {
+            any_removed = true;
+            println!("{} {}:", "x".red(), adapter.name().bold());
+            for path in &removed_files {
+                println!(
+                    "    {} {}",
+                    "removed".red(),
+                    path.strip_prefix(project_root).unwrap_or(path).display()
+                );
+            }
+        } else if verbose {
+            println!(
+                "  {} {} (no files to remove)",
+                "-".dimmed(),
+                adapter.name().dimmed()
+            );
+        }
+    }
+
+    if !any_removed {
+        println!("{} No files to remove.", "=".green());
     }
 
     Ok(())

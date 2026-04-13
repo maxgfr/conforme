@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{write_if_changed, AiToolAdapter, WriteReport};
+use crate::adapters::AiToolAdapter;
 use crate::config::NormalizedConfig;
 
 /// Zed AI adapter.
@@ -41,20 +41,6 @@ impl AiToolAdapter for ZedAdapter {
         })
     }
 
-    fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport> {
-        let generated = self.generate(project_root, config)?;
-        let mut report = WriteReport {
-            files_written: Vec::new(),
-            files_unchanged: Vec::new(),
-        };
-
-        for (path, content) in generated {
-            write_if_changed(&path, &content, &mut report)?;
-        }
-
-        Ok(report)
-    }
-
     fn generate(
         &self,
         project_root: &Path,
@@ -70,9 +56,112 @@ impl AiToolAdapter for ZedAdapter {
             content.push_str(&rule.content);
         }
 
-        Ok(vec![(
-            project_root.join(".rules"),
-            format!("{}\n", content.trim()),
-        )])
+        let mut files = vec![(project_root.join(".rules"), format!("{}\n", content.trim()))];
+
+        // Generate MCP config as .zed/settings.json (context_servers format)
+        if !config.mcp_servers.is_empty() {
+            let mcp_json = crate::mcp::generate_zed_mcp_json(&config.mcp_servers)?;
+            files.push((
+                project_root.join(".zed").join("settings.json"),
+                format!("{}\n", mcp_json),
+            ));
+        }
+
+        Ok(files)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ActivationMode, NormalizedConfig, NormalizedRule};
+    use std::path::Path;
+
+    fn make_adapter() -> ZedAdapter {
+        ZedAdapter
+    }
+
+    #[test]
+    fn test_generate_instructions_only() {
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "General instructions.".to_string(),
+            rules: vec![],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, Path::new("/tmp/test/.rules"));
+        assert_eq!(files[0].1, "General instructions.\n");
+    }
+
+    #[test]
+    fn test_generate_with_rules() {
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "Top-level.".to_string(),
+            rules: vec![
+                NormalizedRule {
+                    name: "TypeScript".to_string(),
+                    content: "Use strict mode.".to_string(),
+                    activation: ActivationMode::Always,
+                },
+                NormalizedRule {
+                    name: "Security".to_string(),
+                    content: "No eval.".to_string(),
+                    activation: ActivationMode::Always,
+                },
+            ],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, Path::new("/tmp/test/.rules"));
+        let content = &files[0].1;
+        assert!(content.contains("Top-level."));
+        assert!(content.contains("## TypeScript"));
+        assert!(content.contains("Use strict mode."));
+        assert!(content.contains("## Security"));
+        assert!(content.contains("No eval."));
+    }
+
+    #[test]
+    fn test_generate_with_mcp() {
+        use crate::config::{McpTransport, NormalizedMcpServer};
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "Hello.".to_string(),
+            rules: vec![],
+            mcp_servers: vec![NormalizedMcpServer {
+                name: "fs".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@mcp/fs".to_string()],
+                },
+                env: std::collections::BTreeMap::new(),
+            }],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].0, Path::new("/tmp/test/.rules"));
+        assert_eq!(files[1].0, Path::new("/tmp/test/.zed/settings.json"));
+        assert!(files[1].1.contains("context_servers"));
+        assert!(files[1].1.contains("\"fs\""));
+        assert!(!files[1].1.contains("mcpServers"));
+    }
+
+    #[test]
+    fn test_generate_empty_config() {
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: String::new(),
+            rules: vec![],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, Path::new("/tmp/test/.rules"));
+        assert_eq!(files[0].1, "\n");
     }
 }

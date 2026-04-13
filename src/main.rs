@@ -25,6 +25,7 @@ fn main() -> Result<()> {
         cli::Command::Sync { dry_run, only } => {
             sync::run_sync(&project_root, dry_run, only.as_deref(), args.verbose)
         }
+        cli::Command::Remove { tools } => sync::run_remove(&project_root, &tools, args.verbose),
         cli::Command::Check => sync::run_check(&project_root, args.verbose),
         cli::Command::Status => sync::run_status(&project_root, args.verbose),
         cli::Command::Hook { action } => match action {
