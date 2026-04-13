@@ -1,0 +1,27 @@
+mod adapters;
+mod cli;
+mod config;
+mod detect;
+mod frontmatter;
+mod hash;
+mod markdown;
+mod sync;
+
+use anyhow::Result;
+use clap::Parser;
+
+fn main() -> Result<()> {
+    let args = cli::Cli::parse();
+    let project_root = args
+        .dir
+        .unwrap_or_else(|| std::env::current_dir().expect("cannot determine current directory"));
+
+    match args.command {
+        cli::Command::Init { force } => sync::run_init(&project_root, force, args.verbose),
+        cli::Command::Sync { dry_run, only } => {
+            sync::run_sync(&project_root, dry_run, only.as_deref(), args.verbose)
+        }
+        cli::Command::Check => sync::run_check(&project_root, args.verbose),
+        cli::Command::Status => sync::run_status(&project_root, args.verbose),
+    }
+}
