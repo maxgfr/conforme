@@ -223,15 +223,6 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - Test round-trips: `read()` output fed into `generate()` should produce identical files
 - MCP JSON keys per tool: Claude/Windsurf/Kiro/RooCode/AmazonQ/Gemini = `mcpServers`, Copilot = `servers`, OpenCode = `mcp`, Zed = `context_servers`, Amp = `amp.mcpServers`
 
-## testing
-
-- Integration tests use `assert_cmd` + `tempfile` crates
-- Each adapter must have round-trip tests in `tests/roundtrip.rs`
-- MCP format tests belong in `src/mcp.rs` unit tests
-- Error case tests go in `tests/error_cases.rs`
-- Always assert on file paths AND content (not just existence)
-- When changing an output path (e.g. MCP location), update ALL tests that reference it
-
 ## rust-conventions
 
 - Run `cargo clippy -- -D warnings` before considering any change complete
@@ -241,3 +232,12 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - Parse frontmatter fields defensively: use `.and_then(|v| v.as_str())` chains, never `.unwrap()` on user input
 - When parsing tool-separated lists (e.g. `allowed-tools`, `tools`), handle both space-separated AND comma-separated formats: `split_whitespace().flat_map(|t| t.split(','))`
 - Keep adapter `read()` and `generate()` symmetric: if `generate()` writes a field, `read()` must parse it back correctly (round-trip guarantee)
+
+## testing
+
+- Integration tests use `assert_cmd` + `tempfile` crates
+- Each adapter must have round-trip tests in `tests/roundtrip.rs`
+- MCP format tests belong in `src/mcp.rs` unit tests
+- Error case tests go in `tests/error_cases.rs`
+- Always assert on file paths AND content (not just existence)
+- When changing an output path (e.g. MCP location), update ALL tests that reference it
