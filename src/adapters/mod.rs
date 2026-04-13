@@ -1,10 +1,12 @@
 pub mod amazonq;
+pub mod amp;
 pub mod claude;
 pub mod codex;
 pub mod continuedev;
 pub mod copilot;
 pub mod cursor;
 pub mod gemini;
+pub mod kiro;
 pub mod opencode;
 pub mod roocode;
 pub mod windsurf;
@@ -62,6 +64,8 @@ pub fn all_adapters() -> Vec<Box<dyn AiToolAdapter>> {
         Box::new(continuedev::ContinueDevAdapter),
         Box::new(zed::ZedAdapter),
         Box::new(amazonq::AmazonQAdapter),
+        Box::new(kiro::KiroAdapter),
+        Box::new(amp::AmpAdapter),
     ]
 }
 

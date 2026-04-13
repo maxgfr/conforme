@@ -35,6 +35,8 @@ fn create_project_with_tools(agents_md: &str, tools: &[&str]) -> TempDir {
             "continue" => fs::create_dir_all(dir.path().join(".continue")).unwrap(),
             "zed" => fs::write(dir.path().join(".rules"), "").unwrap(),
             "amazonq" => fs::create_dir_all(dir.path().join(".amazonq")).unwrap(),
+            "kiro" => fs::create_dir_all(dir.path().join(".kiro")).unwrap(),
+            "amp" => fs::create_dir_all(dir.path().join(".amp")).unwrap(),
             _ => {}
         }
     }
@@ -523,7 +525,7 @@ fn test_sync_all_11_tools() {
         agents_md,
         &[
             "cursor", "claude", "windsurf", "copilot", "codex", "opencode", "roocode", "gemini",
-            "continue", "zed", "amazonq",
+            "continue", "zed", "amazonq", "kiro", "amp",
         ],
     );
 
@@ -540,6 +542,7 @@ fn test_sync_all_11_tools() {
     assert!(dir.path().join(".continue/rules/general.md").exists());
     assert!(dir.path().join(".rules").exists());
     assert!(dir.path().join(".amazonq/rules/general.md").exists());
+    assert!(dir.path().join(".kiro/steering/general.md").exists());
 }
 
 // ===== Hook =====
@@ -590,4 +593,45 @@ fn test_hook_install_and_uninstall() {
         .stdout(predicate::str::contains("uninstalled"));
 
     assert!(!hook.exists());
+}
+
+#[test]
+fn test_sync_creates_kiro_config() {
+    let agents_md = r#"# Instructions
+Follow AWS patterns.
+
+## Rule: Lambda
+<!-- activation: glob **/*.lambda.ts -->
+
+Use handler pattern.
+"#;
+    let dir = create_project_with_tools(agents_md, &["kiro"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let general = dir.path().join(".kiro/steering/general.md");
+    assert!(general.exists());
+    let content = fs::read_to_string(&general).unwrap();
+    assert!(content.contains("inclusion: always"));
+
+    let lambda = dir.path().join(".kiro/steering/lambda.md");
+    assert!(lambda.exists());
+    let content = fs::read_to_string(&lambda).unwrap();
+    assert!(content.contains("inclusion: fileMatch"));
+    assert!(content.contains("fileMatchPattern"));
+}
+
+#[test]
+fn test_help_ai() {
+    conforme().arg("help-ai").assert().success().stdout(
+        predicate::str::contains("Claude Code")
+            .and(predicate::str::contains("Cursor"))
+            .and(predicate::str::contains("Windsurf"))
+            .and(predicate::str::contains("Kiro"))
+            .and(predicate::str::contains("Amp"))
+            .and(predicate::str::contains("AGENTS.md")),
+    );
 }

@@ -6,10 +6,11 @@ use std::path::PathBuf;
     name = "conforme",
     version,
     about = "Universal AI coding agent config synchronization",
-    long_about = "Conforme synchronizes configuration across AI coding tools.\n\n\
+    long_about = "Conforme synchronizes configuration across 13 AI coding tools.\n\n\
         It treats AGENTS.md as the source of truth and generates/updates \
         tool-specific config files for Claude Code, Cursor, Windsurf, \
-        GitHub Copilot, and more.",
+        GitHub Copilot, Codex CLI, OpenCode, Roo Code, Gemini CLI, \
+        Continue.dev, Zed AI, Amazon Q, Kiro, and Amp.",
     after_help = "\x1b[1mExamples:\x1b[0m\n  \
         conforme init                        Detect tools and create configs\n  \
         conforme sync                        Sync AGENTS.md to all tool configs\n  \
@@ -18,7 +19,8 @@ use std::path::PathBuf;
         conforme check                       Check if configs are in sync (CI)\n  \
         conforme status                      Show detected tools and sync state\n  \
         conforme hook install                Install git pre-commit hook\n  \
-        conforme hook uninstall              Remove git pre-commit hook"
+        conforme hook uninstall              Remove git pre-commit hook\n  \
+        conforme help-ai                     Show all supported tools and formats"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -59,6 +61,8 @@ pub enum Command {
         #[command(subcommand)]
         action: HookAction,
     },
+    /// Show all supported AI tools and their config formats
+    HelpAi,
 }
 
 #[derive(Subcommand, Debug)]

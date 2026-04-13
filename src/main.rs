@@ -4,6 +4,7 @@ mod config;
 mod detect;
 mod frontmatter;
 mod hash;
+mod help_ai;
 mod hook;
 mod markdown;
 mod sync;
@@ -28,5 +29,9 @@ fn main() -> Result<()> {
             cli::HookAction::Install => hook::install(&project_root, args.verbose),
             cli::HookAction::Uninstall => hook::uninstall(&project_root, args.verbose),
         },
+        cli::Command::HelpAi => {
+            help_ai::print_help_ai();
+            Ok(())
+        }
     }
 }
