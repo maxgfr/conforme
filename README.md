@@ -233,226 +233,380 @@ Tools without project-level MCP support: Codex CLI (global only via `~/.codex/co
 
 ## Examples
 
-<details>
-<summary><strong>Node.js / TypeScript</strong></summary>
-
-**AGENTS.md**
-
-```markdown
-# My Node.js Project
-
-Use TypeScript with strict mode. Follow ESLint rules.
-Run `npm test` before suggesting changes are complete.
-
-## Rule: TypeScript
-<!-- activation: glob **/*.ts,**/*.tsx -->
-
-- Use strict TypeScript (`"strict": true` in tsconfig)
-- Prefer `interface` over `type` for object shapes
-- Use explicit return types on exported functions
-
-## Rule: Testing
-<!-- activation: glob **/*.test.ts,**/*.spec.ts -->
-
-- Use Vitest for unit tests
-- Mock external APIs, never call them in tests
-- Aim for >80% coverage on business logic
-
-## Skill: deploy
-<!-- description: Deploy to production -->
-<!-- tools: Bash -->
-
-Run `npm run build && npm run deploy`.
-
-## MCP: filesystem
-<!-- command: npx -->
-<!-- args: -y, @modelcontextprotocol/server-filesystem, . -->
-```
-
-**Setup**
-
-```bash
-brew install maxgfr/tap/conforme
-cd my-node-project
-conforme init          # Creates AGENTS.md + .conformerc.toml
-conforme sync          # Syncs to all detected tools
-conforme hook install  # Git pre-commit hook
-```
-
-**Or use Claude Code as source** — add to `.conformerc.toml`:
-
-```toml
-source = "claude"
-```
-
-Then write your rules in `.claude/rules/` and run `conforme sync`.
-
-**CI (GitHub Actions)**
-
-```yaml
-- name: Check AI configs
-  run: |
-    curl -L -o conforme https://github.com/maxgfr/conforme/releases/latest/download/conforme-linux-x64
-    chmod +x conforme && sudo mv conforme /usr/local/bin/
-    conforme check
-```
-
-</details>
+All examples use **Claude Code as source** — write your config once in `.claude/`, and conforme syncs to all other tools.
 
 <details>
-<summary><strong>Python</strong></summary>
+<summary><strong>Node.js / TypeScript</strong> — Full setup with rules, skills, agents, MCP</summary>
 
-**AGENTS.md**
-
-```markdown
-# My Python Project
-
-Use Python 3.12+. Follow PEP 8 and type all functions.
-Run `pytest` and `ruff check .` before suggesting changes.
-
-## Rule: Type Hints
-<!-- activation: glob **/*.py -->
-
-- Add type annotations to all function signatures
-- Use `from __future__ import annotations` for forward references
-- Prefer `list[str]` over `List[str]` (Python 3.9+)
-
-## Rule: Testing
-<!-- activation: glob **/test_*,**/*_test.py -->
-
-- Use pytest with fixtures
-- Use `pytest.raises` for expected exceptions
-- Mock external services with `unittest.mock`
-
-## Rule: FastAPI
-<!-- activation: glob **/api/**,**/routes/** -->
-
-- Use Pydantic models for request/response validation
-- Return proper HTTP status codes
-- Add OpenAPI descriptions to endpoints
-
-## Skill: venv
-<!-- description: Set up virtual environment -->
-<!-- tools: Bash -->
-
-Run `python -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"`.
-```
-
-**Setup**
-
-```bash
-conforme init && conforme sync && conforme hook install
-```
-
-</details>
-
-<details>
-<summary><strong>Rust</strong></summary>
-
-**AGENTS.md**
-
-```markdown
-# My Rust Project
-
-Use idiomatic Rust. Run `cargo clippy -- -D warnings` and `cargo test`
-before suggesting changes are complete.
-
-## Rule: Error Handling
-<!-- activation: glob **/*.rs -->
-
-- Use `anyhow::Result` for application code, `thiserror` for libraries
-- Never use `.unwrap()` in production code — use `?` or `.expect("reason")`
-- Return `Result` from all public functions that can fail
-
-## Rule: Testing
-<!-- activation: glob **/tests/**,**/*_test.rs -->
-
-- Use `#[test]` for unit tests, `tests/` directory for integration
-- Use `assert_eq!` with descriptive messages
-- Test error cases, not just happy paths
-
-## Rule: Unsafe Code
-<!-- activation: agent-decision -->
-<!-- description: Apply when reviewing code that uses unsafe blocks -->
-
-- Every `unsafe` block must have a `// SAFETY:` comment
-- Prefer safe abstractions — only use unsafe when necessary
-
-## Skill: release
-<!-- description: Create a new release -->
-<!-- tools: Bash -->
-
-Run `cargo test && cargo clippy -- -D warnings`, bump version, tag, push.
-```
-
-**Setup**
-
-```bash
-conforme init && conforme sync && conforme hook install
-```
-
-**Or use Cursor as source:**
+**1. Configure Claude Code as source:**
 
 ```toml
 # .conformerc.toml
-source = "cursor"
-only = ["claude", "copilot", "windsurf", "kiro"]
+source = "claude"
+```
+
+**2. Write your rules in `.claude/rules/`:**
+
+`.claude/rules/typescript.md`:
+```markdown
+---
+paths:
+  - "**/*.ts"
+  - "**/*.tsx"
+---
+- Use strict TypeScript (`"strict": true` in tsconfig)
+- Prefer `interface` over `type` for object shapes
+- Use explicit return types on exported functions
+```
+
+`.claude/rules/testing.md`:
+```markdown
+---
+paths:
+  - "**/*.test.ts"
+  - "**/*.spec.ts"
+---
+- Use Vitest for unit tests
+- Mock external APIs, never call them in tests
+- Aim for >80% coverage on business logic
+```
+
+**3. Add your main instructions in `CLAUDE.md`:**
+
+```markdown
+Use TypeScript with strict mode. Follow ESLint rules.
+Run `npm test` before suggesting changes are complete.
+```
+
+**4. Add a skill in `.claude/skills/deploy/SKILL.md`:**
+
+```markdown
+---
+name: deploy
+description: Deploy to production
+allowed-tools: Bash
+---
+Run `npm run build && npm run deploy`.
+```
+
+**5. Add an agent in `.claude/agents/reviewer.md`:**
+
+```markdown
+---
+name: reviewer
+description: Code review agent
+model: sonnet
+tools: Read, Bash
+---
+Review all TypeScript changes for correctness, type safety, and test coverage.
+```
+
+**6. Add MCP servers in `.mcp.json`:**
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    }
+  }
+}
+```
+
+**7. Sync and install hook:**
+
+```bash
+brew install maxgfr/tap/conforme
+conforme sync          # Syncs to Cursor, Copilot, Windsurf, Kiro, etc.
+conforme hook install  # Pre-commit hook runs `conforme check`
+```
+
+This generates:
+- `.cursor/rules/typescript.mdc` with `globs: "**/*.ts, **/*.tsx"`
+- `.cursor/skills/deploy/SKILL.md`
+- `.cursor/agents/reviewer.mdc`
+- `.cursor/mcp.json`
+- `.windsurf/rules/typescript.md` with `trigger: glob`
+- `.github/copilot-instructions.md` + `.github/instructions/typescript.instructions.md`
+- `.github/prompts/deploy.prompt.md`
+- `.github/agents/reviewer.agent.md`
+- `.kiro/steering/typescript.md` with `inclusion: fileMatch`
+- `GEMINI.md`, `.rules`, `.roo/rules/`, `.amazonq/rules/`, etc.
+- `AGENTS.md` (auto-generated from source)
+
+**CI (GitHub Actions):**
+
+```yaml
+- name: Check AI configs in sync
+  run: conforme check
 ```
 
 </details>
 
 <details>
-<summary><strong>Go</strong></summary>
+<summary><strong>Python</strong> — FastAPI project with agent-decision rules</summary>
 
-**AGENTS.md**
+**`.conformerc.toml`:**
+
+```toml
+source = "claude"
+only = ["cursor", "copilot", "windsurf", "kiro", "gemini"]
+```
+
+**`CLAUDE.md`:**
 
 ```markdown
-# My Go Project
+Use Python 3.12+. Follow PEP 8 and type all functions.
+Run `pytest` and `ruff check .` before suggesting changes.
+```
 
+**`.claude/rules/type-hints.md`:**
+
+```markdown
+---
+paths:
+  - "**/*.py"
+---
+- Add type annotations to all function signatures
+- Prefer `list[str]` over `List[str]` (3.12+ native generics)
+- Use `TypedDict` for complex dict structures
+```
+
+**`.claude/rules/testing.md`:**
+
+```markdown
+---
+paths:
+  - "**/test_*"
+  - "**/*_test.py"
+---
+- Use pytest with fixtures
+- Use `pytest.raises` for expected exceptions
+- Mock external services with `unittest.mock`
+```
+
+**`.claude/rules/fastapi.md`:**
+
+```markdown
+---
+paths:
+  - "**/api/**"
+  - "**/routes/**"
+---
+- Use Pydantic models for request/response validation
+- Return proper HTTP status codes
+- Add OpenAPI descriptions to endpoints
+```
+
+**`.claude/skills/venv/SKILL.md`:**
+
+```markdown
+---
+name: venv
+description: Set up virtual environment
+allowed-tools: Bash
+---
+Run `python -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"`.
+```
+
+**`.claude/agents/security-reviewer.md`:**
+
+```markdown
+---
+name: security-reviewer
+description: Review for security vulnerabilities in Python code
+model: sonnet
+tools: Read, Bash
+---
+Check for SQL injection, SSRF, path traversal, and insecure deserialization.
+Run `bandit -r src/` and review the results.
+```
+
+**Sync:**
+
+```bash
+conforme sync          # Syncs to 5 selected tools
+conforme status        # Show sync state
+```
+
+</details>
+
+<details>
+<summary><strong>Rust</strong> — Multiple activation modes + pre-commit hook</summary>
+
+**`.conformerc.toml`:**
+
+```toml
+source = "claude"
+clean = true
+```
+
+**`CLAUDE.md`:**
+
+```markdown
+Use idiomatic Rust. Run `cargo clippy -- -D warnings` and `cargo test`
+before suggesting changes are complete.
+```
+
+**`.claude/rules/error-handling.md`:**
+
+```markdown
+---
+paths:
+  - "**/*.rs"
+---
+- Use `anyhow::Result` for application code, `thiserror` for libraries
+- Never use `.unwrap()` in production code — use `?` or `.expect("reason")`
+- Return `Result` from all public functions that can fail
+```
+
+**`.claude/rules/testing.md`:**
+
+```markdown
+---
+paths:
+  - "**/tests/**"
+  - "**/*_test.rs"
+---
+- Use `#[test]` for unit tests, `tests/` directory for integration
+- Use `assert_eq!` with descriptive messages
+- Test error cases, not just happy paths
+```
+
+**`.claude/rules/unsafe-code.md`** (no paths = always loaded):
+
+```markdown
+- Every `unsafe` block must have a `// SAFETY:` comment
+- Prefer safe abstractions — only use unsafe when necessary
+- Audit all `unsafe` usage before merge
+```
+
+**`.claude/skills/release/SKILL.md`:**
+
+```markdown
+---
+name: release
+description: Create a new release
+allowed-tools: Bash
+---
+Run `cargo test && cargo clippy -- -D warnings`, bump version in Cargo.toml, create git tag, push.
+```
+
+**`.mcp.json`:**
+
+```json
+{
+  "mcpServers": {
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
+    }
+  }
+}
+```
+
+**Setup with pre-commit hook:**
+
+```bash
+conforme sync && conforme hook install
+# Now every commit runs `conforme check` automatically
+```
+
+</details>
+
+<details>
+<summary><strong>Go</strong> — Team workflow with CI</summary>
+
+**`.conformerc.toml`:**
+
+```toml
+source = "claude"
+exclude = ["zed", "amp"]
+generate_agents_md = true
+```
+
+**`CLAUDE.md`:**
+
+```markdown
 Use idiomatic Go. Run `go test ./...` and `golangci-lint run`
 before suggesting changes are complete.
+```
 
-## Rule: Error Handling
-<!-- activation: glob **/*.go -->
+**`.claude/rules/error-handling.md`:**
 
+```markdown
+---
+paths:
+  - "**/*.go"
+---
 - Always check returned errors — never use `_`
 - Wrap errors with `fmt.Errorf("context: %w", err)`
 - Use sentinel errors for expected cases
+```
 
-## Rule: Testing
-<!-- activation: glob **/*_test.go -->
+**`.claude/rules/testing.md`:**
 
+```markdown
+---
+paths:
+  - "**/*_test.go"
+---
 - Use table-driven tests
 - Use `testify/assert` for assertions
 - Test both success and error paths
+```
 
-## Rule: API Design
-<!-- activation: glob **/handler/**,**/api/** -->
+**`.claude/rules/api-design.md`:**
 
+```markdown
+---
+paths:
+  - "**/handler/**"
+  - "**/api/**"
+---
 - Use `net/http` or chi router
 - Return structured JSON errors
 - Log with `slog` (structured logging)
+```
 
-## Skill: build
-<!-- description: Build and test the project -->
-<!-- tools: Bash -->
+**`.claude/skills/build/SKILL.md`:**
 
+```markdown
+---
+name: build
+description: Build and test the project
+allowed-tools: Bash
+---
 Run `go build ./... && go test ./... && golangci-lint run`.
 ```
 
-**Setup**
+**`.claude/agents/db-reviewer.md`:**
 
-```bash
-conforme init && conforme sync && conforme hook install
+```markdown
+---
+name: db-reviewer
+description: Review database migrations and queries
+model: sonnet
+tools: Read, Bash
+---
+Review SQL migrations for correctness. Check for missing indexes, N+1 queries, and unsafe migrations.
+Run `go test ./internal/db/...` after any migration change.
 ```
 
-**Makefile integration:**
+**Setup:**
 
-```makefile
-.PHONY: setup sync check
-setup: ; conforme hook install
-sync:  ; conforme sync
-check: ; conforme check
+```bash
+conforme sync && conforme hook install
+```
+
+**CI (GitHub Actions):**
+
+```yaml
+- name: Check AI configs in sync
+  run: conforme check
 ```
 
 </details>
