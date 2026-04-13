@@ -25,14 +25,17 @@ impl AiToolAdapter for GeminiAdapter {
     fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
         crate::adapters::AdapterCapabilities {
             activation_modes: false,
-            skills: false,
+            skills: true,
             agents: true,
             mcp: true,
         }
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
-        vec![project_root.join(".gemini").join("agents")]
+        vec![
+            project_root.join(".gemini").join("agents"),
+            project_root.join(".gemini").join("skills"),
+        ]
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
@@ -69,10 +72,21 @@ impl AiToolAdapter for GeminiAdapter {
             content.push_str(&rule.content);
         }
 
-        let mut files = vec![(
-            project_root.join("GEMINI.md"),
-            format!("{}\n", content.trim()),
-        )];
+        let mut files = Vec::new();
+
+        // Only generate GEMINI.md if there's actual content
+        let trimmed = content.trim();
+        if !trimmed.is_empty() {
+            files.push((project_root.join("GEMINI.md"), format!("{}\n", trimmed)));
+        }
+
+        // Generate skills as .gemini/skills/<name>/SKILL.md
+        if !config.skills.is_empty() {
+            files.extend(crate::skills::generate_gemini_skills(
+                project_root,
+                &config.skills,
+            )?);
+        }
 
         // Generate subagents as .gemini/agents/<name>.md
         if !config.agents.is_empty() {
@@ -82,9 +96,9 @@ impl AiToolAdapter for GeminiAdapter {
             )?);
         }
 
-        // Generate MCP config as .gemini/settings.json (standard mcpServers format)
+        // Generate MCP config as .gemini/settings.json (Gemini-specific format: no type field, httpUrl for HTTP)
         if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
+            let mcp_json = crate::mcp::generate_gemini_mcp_json(&config.mcp_servers)?;
             files.push((
                 project_root.join(".gemini").join("settings.json"),
                 format!("{}\n", mcp_json),
@@ -172,6 +186,36 @@ mod tests {
         assert_eq!(files[1].0, Path::new("/tmp/test/.gemini/settings.json"));
         assert!(files[1].1.contains("mcpServers"));
         assert!(files[1].1.contains("\"fs\""));
+        // Gemini MCP should NOT have "type" field
+        assert!(!files[1].1.contains("\"type\""));
+    }
+
+    #[test]
+    fn test_generate_with_skills() {
+        use crate::config::NormalizedSkill;
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "Hello.".to_string(),
+            rules: vec![],
+            skills: vec![NormalizedSkill {
+                name: "deploy".to_string(),
+                description: "Deploy the app".to_string(),
+                content: "Run deploy.".to_string(),
+                allowed_tools: vec!["Bash".to_string()],
+            }],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert_eq!(files.len(), 2);
+        let skill_file = files
+            .iter()
+            .find(|(p, _)| p.to_string_lossy().contains(".gemini/skills/"))
+            .unwrap();
+        assert!(skill_file.0.ends_with("SKILL.md"));
+        assert!(skill_file.1.contains("name: deploy"));
+        assert!(skill_file.1.contains("description: Deploy the app"));
+        // Gemini skills should NOT include allowed-tools
+        assert!(!skill_file.1.contains("allowed-tools"));
     }
 
     #[test]
@@ -213,9 +257,7 @@ mod tests {
             ..Default::default()
         };
         let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].0, Path::new("/tmp/test/GEMINI.md"));
-        // Empty instructions get trimmed, resulting in just a newline
-        assert_eq!(files[0].1, "\n");
+        // Empty config should generate no files
+        assert!(files.is_empty());
     }
 }

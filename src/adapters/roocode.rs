@@ -27,14 +27,17 @@ impl AiToolAdapter for RooCodeAdapter {
     fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
         crate::adapters::AdapterCapabilities {
             activation_modes: false,
-            skills: false,
+            skills: true,
             agents: false,
             mcp: true,
         }
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
-        vec![project_root.join(".roo").join("rules")]
+        vec![
+            project_root.join(".roo").join("rules"),
+            project_root.join(".roo").join("skills"),
+        ]
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
@@ -119,6 +122,14 @@ impl AiToolAdapter for RooCodeAdapter {
             content.push_str(&rule.content);
             files.push((rules_dir.join(filename), format!("{}\n", content.trim())));
             idx += 1;
+        }
+
+        // Generate skills as .roo/skills/<name>/SKILL.md
+        if !config.skills.is_empty() {
+            files.extend(crate::skills::generate_roocode_skills(
+                project_root,
+                &config.skills,
+            )?);
         }
 
         // Generate MCP config as .roo/mcp.json
@@ -210,6 +221,31 @@ mod tests {
             .1
             .contains("<!-- Intended scope: **/*.ts, **/*.tsx -->"));
         assert!(files[0].1.contains("Use strict mode."));
+    }
+
+    #[test]
+    fn test_generate_with_skills() {
+        use crate::config::NormalizedSkill;
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: String::new(),
+            rules: vec![],
+            skills: vec![NormalizedSkill {
+                name: "deploy".to_string(),
+                description: "Deploy the app".to_string(),
+                content: "Run deploy.".to_string(),
+                allowed_tools: vec![],
+            }],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0]
+            .0
+            .to_string_lossy()
+            .contains(".roo/skills/deploy/SKILL.md"));
+        assert!(files[0].1.contains("name: deploy"));
+        assert!(files[0].1.contains("description: Deploy the app"));
     }
 
     #[test]

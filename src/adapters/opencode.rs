@@ -27,7 +27,7 @@ impl AiToolAdapter for OpenCodeAdapter {
     fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
         crate::adapters::AdapterCapabilities {
             activation_modes: false,
-            skills: false,
+            skills: true,
             agents: true,
             mcp: true,
         }
@@ -54,8 +54,16 @@ impl AiToolAdapter for OpenCodeAdapter {
         config: &NormalizedConfig,
     ) -> Result<Vec<(PathBuf, String)>> {
         // OpenCode reads AGENTS.md natively — no need to re-generate it.
-        // But we generate MCP and agents config in opencode.json format.
+        // But we generate skills, MCP and agents config.
         let mut files = Vec::new();
+
+        // Generate skills as .opencode/skills/<name>/SKILL.md
+        if !config.skills.is_empty() {
+            files.extend(crate::skills::generate_opencode_skills(
+                project_root,
+                &config.skills,
+            )?);
+        }
 
         // Generate MCP config as opencode.json with "mcp" key
         if !config.mcp_servers.is_empty() {
@@ -99,6 +107,32 @@ mod tests {
         };
         let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_generate_with_skills() {
+        use crate::config::NormalizedSkill;
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: "".to_string(),
+            rules: vec![],
+            skills: vec![NormalizedSkill {
+                name: "deploy".to_string(),
+                description: "Deploy the app".to_string(),
+                content: "Run deploy.".to_string(),
+                allowed_tools: vec!["Bash".to_string()],
+            }],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0]
+            .0
+            .to_string_lossy()
+            .contains(".opencode/skills/deploy/SKILL.md"));
+        assert!(files[0].1.contains("name: deploy"));
+        assert!(files[0].1.contains("description: Deploy the app"));
+        assert!(files[0].1.contains("allowed-tools: Bash"));
     }
 
     #[test]

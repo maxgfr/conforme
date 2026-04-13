@@ -24,14 +24,17 @@ impl AiToolAdapter for WindsurfAdapter {
     fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
         crate::adapters::AdapterCapabilities {
             activation_modes: true,
-            skills: false,
+            skills: true,
             agents: false,
             mcp: true,
         }
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
-        vec![project_root.join(".windsurf").join("rules")]
+        vec![
+            project_root.join(".windsurf").join("rules"),
+            project_root.join(".windsurf").join("skills"),
+        ]
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
@@ -98,6 +101,14 @@ impl AiToolAdapter for WindsurfAdapter {
             let fields = build_windsurf_fields(rule);
             let content = frontmatter::serialize(&fields, &format!("{}\n", rule.content))?;
             files.push((rules_dir.join(filename), content));
+        }
+
+        // Generate skills as .windsurf/skills/<name>/SKILL.md
+        if !config.skills.is_empty() {
+            files.extend(crate::skills::generate_windsurf_skills(
+                project_root,
+                &config.skills,
+            )?);
         }
 
         // Generate MCP config as .windsurf/mcp.json
@@ -311,6 +322,36 @@ mod tests {
             .unwrap();
         assert!(manual_rule.1.contains("trigger: manual"));
         assert!(manual_rule.1.contains("Only when asked."));
+    }
+
+    #[test]
+    fn test_generate_with_skills() {
+        use crate::config::NormalizedSkill;
+        let adapter = WindsurfAdapter;
+        let config = NormalizedConfig {
+            instructions: "".to_string(),
+            rules: vec![],
+            skills: vec![NormalizedSkill {
+                name: "deploy".to_string(),
+                description: "Deploy the app".to_string(),
+                content: "Run deploy.".to_string(),
+                allowed_tools: vec!["Bash".to_string()],
+            }],
+            mcp_servers: vec![],
+            agents: vec![],
+        };
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        let skill_file = files
+            .iter()
+            .find(|(p, _)| p.to_string_lossy().contains(".windsurf/skills/"))
+            .unwrap();
+        assert!(skill_file.0.ends_with("SKILL.md"));
+        assert!(skill_file.1.contains("name: deploy"));
+        assert!(skill_file.1.contains("description: Deploy the app"));
+        // Windsurf skills don't include allowed-tools
+        assert!(!skill_file.1.contains("allowed-tools"));
     }
 
     #[test]

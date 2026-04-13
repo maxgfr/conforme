@@ -26,13 +26,16 @@ impl AiToolAdapter for AmazonQAdapter {
         crate::adapters::AdapterCapabilities {
             activation_modes: false,
             skills: false,
-            agents: false,
+            agents: true,
             mcp: true,
         }
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
-        vec![project_root.join(".amazonq").join("rules")]
+        vec![
+            project_root.join(".amazonq").join("rules"),
+            project_root.join(".amazonq").join("agents"),
+        ]
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
@@ -91,6 +94,15 @@ impl AiToolAdapter for AmazonQAdapter {
         for rule in &config.rules {
             let filename = format!("{}.md", sanitize_name(&rule.name));
             files.push((rules_dir.join(filename), format!("{}\n", rule.content)));
+        }
+
+        // Generate agents as .amazonq/agents/<name>.json
+        if !config.agents.is_empty() {
+            let agent_files = crate::mcp::generate_amazonq_agents_json(&config.agents)?;
+            let agents_dir = project_root.join(".amazonq").join("agents");
+            for (filename, content) in agent_files {
+                files.push((agents_dir.join(filename), format!("{}\n", content)));
+            }
         }
 
         // Generate MCP config as .amazonq/mcp.json
@@ -162,6 +174,34 @@ mod tests {
         );
         assert!(files[1].1.contains("Use strict mode."));
         assert!(files[2].1.contains("No eval."));
+    }
+
+    #[test]
+    fn test_generate_with_agents() {
+        use crate::config::NormalizedAgent;
+        let adapter = make_adapter();
+        let config = NormalizedConfig {
+            instructions: String::new(),
+            rules: vec![],
+            agents: vec![NormalizedAgent {
+                name: "reviewer".to_string(),
+                description: "Code review".to_string(),
+                content: "Review code.".to_string(),
+                model: Some("claude-sonnet".to_string()),
+                tools: vec!["codebase".to_string()],
+            }],
+            ..Default::default()
+        };
+        let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
+        let agent_file = files
+            .iter()
+            .find(|(p, _)| p.to_string_lossy().contains(".amazonq/agents/"))
+            .unwrap();
+        assert!(agent_file.0.ends_with("reviewer.json"));
+        assert!(agent_file.1.contains("\"description\": \"Code review\""));
+        assert!(agent_file.1.contains("\"model\": \"claude-sonnet\""));
+        assert!(agent_file.1.contains("\"prompt\": \"Review code.\""));
+        assert!(agent_file.1.contains("\"codebase\""));
     }
 
     #[test]

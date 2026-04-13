@@ -158,7 +158,7 @@ pub fn generate_opencode_mcp_json(servers: &[NormalizedMcpServer]) -> Result<Str
     serde_json::to_string_pretty(&root).context("failed to serialize OpenCode MCP config")
 }
 
-/// Generate Zed context_servers format: { "context_servers": { "name": { "command": ..., "args": [...] } } }
+/// Generate Zed context_servers format: { "context_servers": { "name": { "source": "custom", "command": ..., "args": [...] } } }
 pub fn generate_zed_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
     if servers.is_empty() {
         return Ok(String::new());
@@ -168,6 +168,12 @@ pub fn generate_zed_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> 
 
     for server in servers {
         let mut entry = serde_json::Map::new();
+
+        // Zed requires "source": "custom" for all custom context servers
+        entry.insert(
+            "source".to_string(),
+            serde_json::Value::String("custom".to_string()),
+        );
 
         match &server.transport {
             McpTransport::Stdio { command, args } => {
@@ -207,6 +213,62 @@ pub fn generate_zed_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> 
 
     let root = serde_json::json!({ "context_servers": context_servers });
     serde_json::to_string_pretty(&root).context("failed to serialize Zed MCP config")
+}
+
+/// Generate Gemini CLI MCP format in `.gemini/settings.json`.
+/// Gemini uses `mcpServers` key but does NOT use `type` field, and uses `httpUrl` for HTTP servers.
+pub fn generate_gemini_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
+    if servers.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut mcp_servers = serde_json::Map::new();
+
+    for server in servers {
+        let mut entry = serde_json::Map::new();
+
+        match &server.transport {
+            McpTransport::Stdio { command, args } => {
+                entry.insert(
+                    "command".to_string(),
+                    serde_json::Value::String(command.clone()),
+                );
+                let json_args: Vec<serde_json::Value> = args
+                    .iter()
+                    .map(|a| serde_json::Value::String(a.clone()))
+                    .collect();
+                entry.insert("args".to_string(), serde_json::Value::Array(json_args));
+            }
+            McpTransport::Http { url, headers } => {
+                // Gemini uses "httpUrl" instead of "url"
+                entry.insert(
+                    "httpUrl".to_string(),
+                    serde_json::Value::String(url.clone()),
+                );
+                if !headers.is_empty() {
+                    let h: serde_json::Map<String, serde_json::Value> = headers
+                        .iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                        .collect();
+                    entry.insert("headers".to_string(), serde_json::Value::Object(h));
+                }
+            }
+        }
+
+        if !server.env.is_empty() {
+            let env_obj: serde_json::Map<String, serde_json::Value> = server
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            entry.insert("env".to_string(), serde_json::Value::Object(env_obj));
+        }
+
+        mcp_servers.insert(server.name.clone(), serde_json::Value::Object(entry));
+    }
+
+    let root = serde_json::json!({ "mcpServers": mcp_servers });
+    serde_json::to_string_pretty(&root).context("failed to serialize Gemini MCP config")
 }
 
 /// Generate OpenCode agents format for opencode.json: { "agent": { "name": { ... } } }
@@ -250,6 +312,52 @@ pub fn generate_opencode_agents_json(agents: &[crate::config::NormalizedAgent]) 
 
     let root = serde_json::json!({ "agent": agent_map });
     serde_json::to_string_pretty(&root).context("failed to serialize OpenCode agents config")
+}
+
+/// Generate Amazon Q agent JSON files.
+/// Each agent is a separate JSON file: `.amazonq/agents/<name>.json`
+pub fn generate_amazonq_agents_json(
+    agents: &[crate::config::NormalizedAgent],
+) -> Result<Vec<(String, String)>> {
+    let mut files = Vec::new();
+
+    for agent in agents {
+        let mut entry = serde_json::Map::new();
+
+        if !agent.description.is_empty() {
+            entry.insert(
+                "description".to_string(),
+                serde_json::Value::String(agent.description.clone()),
+            );
+        }
+        if let Some(model) = &agent.model {
+            entry.insert(
+                "model".to_string(),
+                serde_json::Value::String(model.clone()),
+            );
+        }
+        if !agent.tools.is_empty() {
+            let json_tools: Vec<serde_json::Value> = agent
+                .tools
+                .iter()
+                .map(|t| serde_json::Value::String(t.clone()))
+                .collect();
+            entry.insert("tools".to_string(), serde_json::Value::Array(json_tools));
+        }
+        if !agent.content.is_empty() {
+            entry.insert(
+                "prompt".to_string(),
+                serde_json::Value::String(agent.content.clone()),
+            );
+        }
+
+        let filename = format!("{}.json", crate::config::sanitize_name(&agent.name));
+        let json = serde_json::to_string_pretty(&entry)
+            .context("failed to serialize Amazon Q agent config")?;
+        files.push((filename, json));
+    }
+
+    Ok(files)
 }
 
 /// Parse a `.mcp.json` file (Claude Code / standard format).
@@ -431,9 +539,63 @@ mod tests {
         let result = generate_zed_mcp_json(&servers).unwrap();
         assert!(result.contains("\"context_servers\""));
         assert!(result.contains("\"command\": \"npx\""));
+        assert!(result.contains("\"source\": \"custom\""));
         assert!(result.contains("fs"));
         assert!(!result.contains("mcpServers"));
         assert!(!result.contains("\"type\""));
+    }
+
+    #[test]
+    fn test_generate_gemini_mcp_stdio() {
+        let servers = vec![NormalizedMcpServer {
+            name: "fs".to_string(),
+            transport: McpTransport::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "@mcp/fs".to_string()],
+            },
+            env: BTreeMap::new(),
+        }];
+        let result = generate_gemini_mcp_json(&servers).unwrap();
+        assert!(result.contains("\"mcpServers\""));
+        assert!(result.contains("\"command\": \"npx\""));
+        assert!(result.contains("\"fs\""));
+        // Gemini does NOT use "type" field
+        assert!(!result.contains("\"type\""));
+    }
+
+    #[test]
+    fn test_generate_gemini_mcp_http() {
+        let servers = vec![NormalizedMcpServer {
+            name: "api".to_string(),
+            transport: McpTransport::Http {
+                url: "https://example.com/mcp".to_string(),
+                headers: BTreeMap::new(),
+            },
+            env: BTreeMap::new(),
+        }];
+        let result = generate_gemini_mcp_json(&servers).unwrap();
+        // Gemini uses "httpUrl" not "url"
+        assert!(result.contains("\"httpUrl\": \"https://example.com/mcp\""));
+        assert!(!result.contains("\"url\""));
+        assert!(!result.contains("\"type\""));
+    }
+
+    #[test]
+    fn test_generate_amazonq_agents() {
+        let agents = vec![crate::config::NormalizedAgent {
+            name: "reviewer".to_string(),
+            description: "Code review".to_string(),
+            content: "Review code.".to_string(),
+            model: Some("claude-sonnet".to_string()),
+            tools: vec!["codebase".to_string()],
+        }];
+        let result = generate_amazonq_agents_json(&agents).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "reviewer.json");
+        assert!(result[0].1.contains("\"description\": \"Code review\""));
+        assert!(result[0].1.contains("\"model\": \"claude-sonnet\""));
+        assert!(result[0].1.contains("\"prompt\": \"Review code.\""));
+        assert!(result[0].1.contains("\"codebase\""));
     }
 
     #[test]

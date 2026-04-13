@@ -26,7 +26,7 @@ impl AiToolAdapter for CursorAdapter {
     fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
         crate::adapters::AdapterCapabilities {
             activation_modes: true,
-            skills: false,
+            skills: true,
             agents: true,
             mcp: true,
         }
@@ -36,6 +36,7 @@ impl AiToolAdapter for CursorAdapter {
         vec![
             project_root.join(".cursor").join("rules"),
             project_root.join(".cursor").join("agents"),
+            project_root.join(".cursor").join("skills"),
         ]
     }
 
@@ -156,6 +157,14 @@ impl AiToolAdapter for CursorAdapter {
             let fields = build_cursor_fields(rule);
             let content = frontmatter::serialize(&fields, &format!("{}\n", rule.content))?;
             files.push((rules_dir.join(filename), content));
+        }
+
+        // Generate skills as .cursor/skills/<name>/SKILL.md
+        if !config.skills.is_empty() {
+            files.extend(crate::skills::generate_cursor_skills(
+                project_root,
+                &config.skills,
+            )?);
         }
 
         // Generate agents as .cursor/agents/<name>.mdc
@@ -378,6 +387,34 @@ mod tests {
         assert!(!manual_rule.1.contains("description:"));
         assert!(!manual_rule.1.contains("globs:"));
         assert!(manual_rule.1.contains("Only when asked."));
+    }
+
+    #[test]
+    fn test_generate_with_skills() {
+        use crate::config::NormalizedSkill;
+        let adapter = CursorAdapter;
+        let config = NormalizedConfig {
+            instructions: "".to_string(),
+            rules: vec![],
+            skills: vec![NormalizedSkill {
+                name: "deploy".to_string(),
+                description: "Deploy the app".to_string(),
+                content: "Run deploy.".to_string(),
+                allowed_tools: vec![],
+            }],
+            mcp_servers: vec![],
+            agents: vec![],
+        };
+        let root = Path::new("/tmp/test");
+        let files = adapter.generate(root, &config).unwrap();
+
+        let skill_file = files
+            .iter()
+            .find(|(p, _)| p.to_string_lossy().contains(".cursor/skills/"))
+            .unwrap();
+        assert!(skill_file.0.ends_with("SKILL.md"));
+        assert!(skill_file.1.contains("name: deploy"));
+        assert!(skill_file.1.contains("description: Deploy the app"));
     }
 
     #[test]

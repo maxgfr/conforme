@@ -40,6 +40,36 @@ pub fn generate_claude_skills(
     Ok(files)
 }
 
+/// Generate Cursor skill files in `.cursor/skills/<name>/SKILL.md`.
+/// Cursor skills use `name` and `description` in frontmatter.
+pub fn generate_cursor_skills(
+    project_root: &Path,
+    skills: &[NormalizedSkill],
+) -> Result<Vec<(PathBuf, String)>> {
+    let skills_dir = project_root.join(".cursor").join("skills");
+    let mut files = Vec::new();
+
+    for skill in skills {
+        let skill_name = sanitize_name(&skill.name);
+        let skill_dir = skills_dir.join(&skill_name);
+        let skill_path = skill_dir.join("SKILL.md");
+
+        let mut fields = BTreeMap::new();
+        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
+        if !skill.description.is_empty() {
+            fields.insert(
+                "description".to_string(),
+                serde_yaml_ng::Value::String(skill.description.clone()),
+            );
+        }
+
+        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
+        files.push((skill_path, content));
+    }
+
+    Ok(files)
+}
+
 /// Generate Codex/OpenCode skill files in `.agents/skills/<name>/SKILL.md`.
 pub fn generate_codex_skills(
     project_root: &Path,
@@ -79,12 +109,23 @@ pub fn generate_copilot_prompts(
 
     for skill in skills {
         let filename = format!("{}.prompt.md", sanitize_name(&skill.name));
-        // Copilot prompts use simple frontmatter with description
+        // Copilot prompts use frontmatter with description and tools
         let mut fields = BTreeMap::new();
         if !skill.description.is_empty() {
             fields.insert(
                 "description".to_string(),
                 serde_yaml_ng::Value::String(skill.description.clone()),
+            );
+        }
+        if !skill.allowed_tools.is_empty() {
+            let yaml_tools: Vec<serde_yaml_ng::Value> = skill
+                .allowed_tools
+                .iter()
+                .map(|t| serde_yaml_ng::Value::String(t.clone()))
+                .collect();
+            fields.insert(
+                "tools".to_string(),
+                serde_yaml_ng::Value::Sequence(yaml_tools),
             );
         }
 
@@ -253,6 +294,17 @@ pub fn generate_kiro_agents(
                 serde_yaml_ng::Value::String(model.clone()),
             );
         }
+        if !agent.tools.is_empty() {
+            let yaml_tools: Vec<serde_yaml_ng::Value> = agent
+                .tools
+                .iter()
+                .map(|t| serde_yaml_ng::Value::String(t.clone()))
+                .collect();
+            fields.insert(
+                "tools".to_string(),
+                serde_yaml_ng::Value::Sequence(yaml_tools),
+            );
+        }
 
         let content = frontmatter::serialize(&fields, &format!("{}\n", agent.content))?;
         files.push((agents_dir.join(filename), content));
@@ -333,6 +385,133 @@ pub fn generate_kiro_skills(
                 serde_yaml_ng::Value::String(skill.description.clone()),
             );
         }
+
+        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
+        files.push((skill_path, content));
+    }
+
+    Ok(files)
+}
+
+/// Generate Windsurf skill files in `.windsurf/skills/<name>/SKILL.md`.
+/// Windsurf skills use only `name` and `description` in frontmatter.
+pub fn generate_windsurf_skills(
+    project_root: &Path,
+    skills: &[NormalizedSkill],
+) -> Result<Vec<(PathBuf, String)>> {
+    let skills_dir = project_root.join(".windsurf").join("skills");
+    let mut files = Vec::new();
+
+    for skill in skills {
+        let skill_name = sanitize_name(&skill.name);
+        let skill_dir = skills_dir.join(&skill_name);
+        let skill_path = skill_dir.join("SKILL.md");
+
+        let mut fields = BTreeMap::new();
+        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
+        if !skill.description.is_empty() {
+            fields.insert(
+                "description".to_string(),
+                serde_yaml_ng::Value::String(skill.description.clone()),
+            );
+        }
+
+        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
+        files.push((skill_path, content));
+    }
+
+    Ok(files)
+}
+
+/// Generate Roo Code skill files in `.roo/skills/<name>/SKILL.md`.
+/// Roo Code skills use `name` and `description` in frontmatter.
+pub fn generate_roocode_skills(
+    project_root: &Path,
+    skills: &[NormalizedSkill],
+) -> Result<Vec<(PathBuf, String)>> {
+    let skills_dir = project_root.join(".roo").join("skills");
+    let mut files = Vec::new();
+
+    for skill in skills {
+        let skill_name = sanitize_name(&skill.name);
+        let skill_dir = skills_dir.join(&skill_name);
+        let skill_path = skill_dir.join("SKILL.md");
+
+        let mut fields = BTreeMap::new();
+        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
+        if !skill.description.is_empty() {
+            fields.insert(
+                "description".to_string(),
+                serde_yaml_ng::Value::String(skill.description.clone()),
+            );
+        }
+
+        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
+        files.push((skill_path, content));
+    }
+
+    Ok(files)
+}
+
+/// Generate OpenCode skill files in `.opencode/skills/<name>/SKILL.md`.
+/// OpenCode skills use `name`, `description`, and optional `allowed-tools`.
+pub fn generate_opencode_skills(
+    project_root: &Path,
+    skills: &[NormalizedSkill],
+) -> Result<Vec<(PathBuf, String)>> {
+    let skills_dir = project_root.join(".opencode").join("skills");
+    let mut files = Vec::new();
+
+    for skill in skills {
+        let skill_name = sanitize_name(&skill.name);
+        let skill_dir = skills_dir.join(&skill_name);
+        let skill_path = skill_dir.join("SKILL.md");
+
+        let mut fields = BTreeMap::new();
+        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
+        if !skill.description.is_empty() {
+            fields.insert(
+                "description".to_string(),
+                serde_yaml_ng::Value::String(skill.description.clone()),
+            );
+        }
+        if !skill.allowed_tools.is_empty() {
+            fields.insert(
+                "allowed-tools".to_string(),
+                serde_yaml_ng::Value::String(skill.allowed_tools.join(" ")),
+            );
+        }
+
+        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
+        files.push((skill_path, content));
+    }
+
+    Ok(files)
+}
+
+/// Generate Gemini CLI skill files in `.gemini/skills/<name>/SKILL.md`.
+/// Gemini skills use ONLY `name` and `description` (no other fields allowed).
+pub fn generate_gemini_skills(
+    project_root: &Path,
+    skills: &[NormalizedSkill],
+) -> Result<Vec<(PathBuf, String)>> {
+    let skills_dir = project_root.join(".gemini").join("skills");
+    let mut files = Vec::new();
+
+    for skill in skills {
+        let skill_name = sanitize_name(&skill.name);
+        let skill_dir = skills_dir.join(&skill_name);
+        let skill_path = skill_dir.join("SKILL.md");
+
+        let mut fields = BTreeMap::new();
+        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
+        if !skill.description.is_empty() {
+            fields.insert(
+                "description".to_string(),
+                serde_yaml_ng::Value::String(skill.description.clone()),
+            );
+        }
+        // Gemini docs: "do not include any other fields" — no allowed-tools
 
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));

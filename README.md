@@ -121,12 +121,16 @@ General instructions that apply everywhere.
 
 ### Activation modes
 
-| Mode | Syntax | Cursor | Windsurf | Copilot | Kiro |
-|------|--------|--------|----------|---------|------|
-| Always | `<!-- activation: always -->` | `alwaysApply: true` | `trigger: always_on` | in main file | `inclusion: always` |
-| Glob | `<!-- activation: glob **/*.ts -->` | `globs: "..."` | `trigger: glob` | `applyTo: "..."` | `inclusion: fileMatch` |
-| Agent Decision | `<!-- activation: agent-decision -->` | `description: "..."` | `trigger: model_decision` | in main file | `inclusion: auto` |
-| Manual | `<!-- activation: manual -->` | `alwaysApply: false` | `trigger: manual` | in main file | `inclusion: manual` |
+conforme normalizes 4 activation modes across all tools that support them:
+
+| Mode | AGENTS.md | Claude | Cursor | Windsurf | Copilot | Continue.dev | Kiro |
+|------|-----------|--------|--------|----------|---------|-------------|------|
+| Always | `<!-- activation: always -->` | no frontmatter (in CLAUDE.md) | `alwaysApply: true` | `trigger: always_on` | in main file | `alwaysApply: true` | `inclusion: always` |
+| Glob | `<!-- activation: glob **/*.ts -->` | `paths: [**/*.ts]` | `globs: "**/*.ts"` | `trigger: glob` + `globs:` | `applyTo: "**/*.ts"` | `globs: ["**/*.ts"]` | `inclusion: fileMatch` + `fileMatchPattern:` |
+| Agent Decision | `<!-- activation: agent-decision -->` | no frontmatter (.claude/rules/) | `description: "..."` | `trigger: model_decision` | in main file | `description: "..."` | `inclusion: auto` |
+| Manual | `<!-- activation: manual -->` | no frontmatter (.claude/rules/) | `alwaysApply: false` | `trigger: manual` | in main file | `alwaysApply: false` | `inclusion: manual` |
+
+Tools without activation modes (all rules always-on): Roo Code, Amazon Q, Gemini CLI, OpenCode, Codex CLI, Zed AI, Amp.
 
 ## Skills, Agents, and MCP sync
 
@@ -157,17 +161,73 @@ Review all changes for correctness and security.
 |---------|-------|--------|--------|-----|
 | Claude Code | `.claude/rules/*.md` | `.claude/skills/` | `.claude/agents/*.md` | `.mcp.json` |
 | GitHub Copilot | `.github/instructions/*.md` | `.github/prompts/*.prompt.md` | `.github/agents/*.agent.md` | `.vscode/mcp.json` |
-| Cursor | `.cursor/rules/*.mdc` | - | `.cursor/agents/*.mdc` | `.cursor/mcp.json` |
+| Cursor | `.cursor/rules/*.mdc` | `.cursor/skills/` | `.cursor/agents/*.mdc` | `.cursor/mcp.json` |
 | Kiro (AWS) | `.kiro/steering/*.md` | `.kiro/skills/` | `.kiro/agents/*.md` | `.kiro/settings/mcp.json` |
-| Windsurf | `.windsurf/rules/*.md` | - | - | `.windsurf/mcp.json` |
+| Windsurf | `.windsurf/rules/*.md` | `.windsurf/skills/` | - | `.windsurf/mcp.json` |
 | Continue.dev | `.continue/rules/*.md` | - | - | `.continue/mcp.json` |
-| Roo Code | `.roo/rules/*.md` | - | - | `.roo/mcp.json` |
-| Amazon Q | `.amazonq/rules/*.md` | - | - | `.amazonq/mcp.json` |
-| Gemini CLI | `GEMINI.md` | - | `.gemini/agents/*.md` | `.gemini/settings.json` |
-| OpenCode | native (AGENTS.md) | - | `.opencode/agents.json` | `.opencode/mcp.json` |
+| Roo Code | `.roo/rules/*.md` | `.roo/skills/` | - | `.roo/mcp.json` |
+| Amazon Q | `.amazonq/rules/*.md` | - | `.amazonq/agents/*.json` | `.amazonq/mcp.json` |
+| Gemini CLI | `GEMINI.md` | `.gemini/skills/` | `.gemini/agents/*.md` | `.gemini/settings.json` |
+| OpenCode | native (AGENTS.md) | `.opencode/skills/` | `.opencode/agents.json` | `.opencode/mcp.json` |
 | Zed AI | `.rules` | - | - | `.zed/settings.json` |
 | Codex CLI | native (AGENTS.md) | `.agents/skills/` | - | - (global only) |
-| Amp | native (AGENTS.md) | - | - | - |
+| Amp | native (AGENTS.md) | `.agents/skills/` | - | `.amp/settings.json` |
+
+### Skills format equivalence
+
+Skills are reusable prompts with a description and optional tools. conforme uses the [SKILL.md](https://github.com/anthropics/SKILL.md) standard (YAML frontmatter + markdown body):
+
+| Tool | Path | Frontmatter |
+|------|------|-------------|
+| Claude Code | `.claude/skills/<name>/SKILL.md` | `name`, `description`, `allowed-tools` |
+| Cursor | `.cursor/skills/<name>/SKILL.md` | `name`, `description` |
+| Copilot | `.github/prompts/<name>.prompt.md` | `description`, `tools` |
+| Kiro | `.kiro/skills/<name>/SKILL.md` | `name`, `description` |
+| Windsurf | `.windsurf/skills/<name>/SKILL.md` | `name`, `description` |
+| Roo Code | `.roo/skills/<name>/SKILL.md` | `name`, `description` |
+| Gemini CLI | `.gemini/skills/<name>/SKILL.md` | `name`, `description` (no other fields) |
+| OpenCode | `.opencode/skills/<name>/SKILL.md` | `name`, `description`, `allowed-tools` |
+| Codex CLI | `.agents/skills/<name>/SKILL.md` | `name`, `description` |
+| Amp | `.agents/skills/<name>/SKILL.md` | `name`, `description` (shared Codex format) |
+
+Tools without skills support: Continue.dev, Zed AI, Amazon Q.
+
+### Agents format equivalence
+
+Agents (sub-agents) are custom AI assistants with a model, tools, and system prompt:
+
+| Tool | Path | Format |
+|------|------|--------|
+| Claude Code | `.claude/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
+| Copilot | `.github/agents/<name>.agent.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
+| Cursor | `.cursor/agents/<name>.mdc` | YAML frontmatter: `name`, `description`, `model`, `tools` |
+| Kiro | `.kiro/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
+| Gemini CLI | `.gemini/agents/<name>.md` | YAML frontmatter: `name`, `description`, `kind: local`, `model`, `tools` |
+| OpenCode | `.opencode/agents.json` | JSON: `{ "agent": { "<name>": { "mode": "subagent", "model", "prompt" } } }` |
+| Amazon Q | `.amazonq/agents/<name>.json` | JSON per agent: `{ "description", "model", "tools", "prompt" }` |
+
+Tools without agents support: Windsurf, Continue.dev, Roo Code, Codex CLI, Zed AI, Amp.
+
+### MCP format equivalence
+
+MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are synced to tool-specific JSON formats:
+
+| Tool | Path | JSON key | Format notes |
+|------|------|----------|-------------|
+| Claude Code | `.mcp.json` | `mcpServers` | `type: stdio/http`, with `env`, `headers` |
+| Cursor | `.cursor/mcp.json` | `mcpServers` | `type: stdio/http` |
+| Windsurf | `.windsurf/mcp.json` | `mcpServers` | `type: stdio/http` |
+| Copilot | `.vscode/mcp.json` | `servers` | Uses `servers` key (not `mcpServers`), no headers |
+| Continue.dev | `.continue/mcp.json` | `mcpServers` | `type: stdio/http` |
+| Kiro | `.kiro/settings/mcp.json` | `mcpServers` | Standard format with `disabled` field |
+| Roo Code | `.roo/mcp.json` | `mcpServers` | Standard format with `alwaysAllow` |
+| Amazon Q | `.amazonq/mcp.json` | `mcpServers` | Standard format |
+| Gemini CLI | `.gemini/settings.json` | `mcpServers` | No `type` field, uses `httpUrl` (not `url`) for HTTP |
+| OpenCode | `.opencode/mcp.json` | `mcp` | `type: local/remote` (not stdio/http) |
+| Zed AI | `.zed/settings.json` | `context_servers` | `source: "custom"` required, no `type` field |
+| Amp | `.amp/settings.json` | `mcpServers` | Standard format |
+
+Tools without project-level MCP support: Codex CLI (global only via `~/.codex/config.toml` in TOML format).
 
 ## Examples
 

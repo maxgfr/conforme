@@ -31,6 +31,7 @@ pub fn print_help_ai() {
         &[
             "Frontmatter: alwaysApply (bool), globs (string), description (string)",
             "4 rule types: Always, Auto Attached (globs), Agent Requested (description), Manual",
+            "Skills synced to .cursor/skills/<name>/SKILL.md",
             "Reads AGENTS.md natively",
         ],
     );
@@ -40,6 +41,7 @@ pub fn print_help_ai() {
         ".windsurf/rules/*.md",
         &[
             "Frontmatter: trigger (always_on|glob|model_decision|manual), description, globs",
+            "Skills synced to .windsurf/skills/<name>/SKILL.md",
             "Reads AGENTS.md natively",
             "MCP synced to .windsurf/mcp.json (project-level)",
         ],
@@ -80,6 +82,7 @@ pub fn print_help_ai() {
         &[
             "Plain Markdown — NO YAML frontmatter",
             "Files loaded alphabetically (use numeric prefixes: 00-, 01-)",
+            "Skills synced to .roo/skills/<name>/SKILL.md",
             "Mode-specific rules in .roo/rules-{mode}/",
             "Reads AGENTS.md natively",
         ],
@@ -90,6 +93,7 @@ pub fn print_help_ai() {
         ".amazonq/rules/*.md",
         &[
             "Plain Markdown — NO frontmatter",
+            "Agents synced to .amazonq/agents/<name>.json (JSON format)",
             "IDE version; CLI version migrating to Kiro format",
         ],
     );
@@ -114,9 +118,10 @@ pub fn print_help_ai() {
         "opencode",
         "AGENTS.md (native) + opencode.json",
         &[
+            "Skills synced to .opencode/skills/<name>/SKILL.md",
             "MCP synced to .opencode/mcp.json (OpenCode format: type:local)",
             "Agents synced to .opencode/agents.json (mode:subagent)",
-            "Also scans .opencode/skills/, .claude/skills/, .agents/skills/",
+            "Also scans .claude/skills/, .agents/skills/",
         ],
     );
     print_tool(
@@ -125,7 +130,9 @@ pub fn print_help_ai() {
         "GEMINI.md + .gemini/settings.json",
         &[
             "Hierarchical: ~/.gemini/GEMINI.md → project → subdirs",
-            "MCP synced to .gemini/settings.json (standard mcpServers format)",
+            "Skills synced to .gemini/skills/<name>/SKILL.md (name + description only)",
+            "Agents synced to .gemini/agents/<name>.md (kind:local frontmatter)",
+            "MCP synced to .gemini/settings.json (Gemini format: no type field, httpUrl for HTTP)",
             "Supports @file.md imports",
         ],
     );
@@ -135,7 +142,7 @@ pub fn print_help_ai() {
         ".rules + .zed/settings.json",
         &[
             "Fallback chain: .rules → .cursorrules → .windsurfrules → AGENTS.md → CLAUDE.md",
-            "MCP synced to .zed/settings.json (context_servers format)",
+            "MCP synced to .zed/settings.json (context_servers with source:custom)",
             "Single .rules file, no frontmatter",
         ],
     );
@@ -144,7 +151,8 @@ pub fn print_help_ai() {
         "amp",
         "AGENTS.md (native), falls back to AGENT.md or CLAUDE.md",
         &[
-            "Settings at .amp/settings.json",
+            "Skills synced to .agents/skills/<name>/SKILL.md (shared format)",
+            "MCP synced to .amp/settings.json (standard mcpServers format)",
             "Supports @doc/file.md references in AGENTS.md",
         ],
     );

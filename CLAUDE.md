@@ -8,7 +8,7 @@ conforme is a Rust CLI that synchronizes AI coding agent configurations across 1
 
 ```bash
 cargo build --release
-cargo test                     # 177 tests (101 unit + 50 integration + 17 error + 9 roundtrip)
+cargo test                     # 190 tests (112 unit + 50 integration + 17 error + 9 roundtrip)
 cargo clippy -- -D warnings    # lint — MUST pass before pushing
 cargo fmt -- --check           # format check
 ```
@@ -31,8 +31,8 @@ src/
   validate.rs        — Config validation (duplicate names, empty content, invalid globs)
   watch.rs           — File watcher for auto-sync (notify + debounce)
   help_ai.rs        — Detailed help about all supported tools and formats
-  mcp.rs            — MCP config generation/parsing (JSON format for all tools: standard mcpServers, Copilot servers, OpenCode mcp, Zed context_servers)
-  skills.rs         — Skills (SKILL.md), agents (.agent.md, .mdc), prompts (.prompt.md) generation
+  mcp.rs            — MCP config generation/parsing (JSON format for all tools: standard mcpServers, Copilot servers, OpenCode mcp, Zed context_servers, Gemini mcpServers, Amp settings, Amazon Q agents)
+  skills.rs         — Skills (SKILL.md) for Claude/Codex/Kiro/Copilot/Windsurf/Roo/OpenCode/Gemini, agents (.agent.md, .mdc), prompts (.prompt.md) generation
   adapters/
     mod.rs          — AiToolAdapter trait (with default write()) + registry + shared write_if_changed
     claude.rs       — Claude Code: CLAUDE.md + .claude/rules/*.md (paths: frontmatter)
