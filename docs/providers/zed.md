@@ -19,13 +19,13 @@
 | Feature | Path | Format |
 |---------|------|--------|
 | Rules | `.rules` | Single plain markdown file (no frontmatter) |
-| MCP | `.zed/settings.json` | JSON: `{ "context_servers": { "<name>": { "source": "custom", "command", "args" } } }` |
+| MCP | `.zed/settings.json` | JSON: `{ "context_servers": { "<name>": { "command", "args" } } }` |
 
 ## Activation modes
 
 No activation modes. Single `.rules` file, all content always-on.
 
-Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` -> `AGENTS.md` -> `CLAUDE.md`
+Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` -> `.github/copilot-instructions.md` -> `AGENT.md` -> `AGENTS.md` -> `CLAUDE.md` -> `GEMINI.md`
 
 ## conforme adapter
 
@@ -39,7 +39,6 @@ Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` 
 
 - **MCP format is unique:**
   - Uses `"context_servers"` key (not `"mcpServers"`)
-  - Requires `"source": "custom"` on all entries
   - No `"type"` field
 - Zed has "Agent Profiles" but configured via settings, not project files
 - Skills support is planned (GitHub issue #49057) but not yet implemented

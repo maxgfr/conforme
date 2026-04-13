@@ -2,19 +2,20 @@
 
 Sync your AI coding config from any tool to all 13 others. Write once, apply everywhere.
 
-AGENTS.md is governed by the [Agentic AI Foundation](https://www.linuxfoundation.org/press/linux-foundation-launches-agentic-ai-initiative) (Linux Foundation) with 146+ member organizations including Anthropic, OpenAI, Google, AWS, and Microsoft.
+AGENTS.md is governed by the [Agentic AI Foundation](https://www.linuxfoundation.org/press/linux-foundation-announces-the-formation-of-the-agentic-ai-foundation) (Linux Foundation) with 146+ member organizations including Anthropic, OpenAI, Google, AWS, and Microsoft.
 
 ## Install
 
 ```bash
-# Homebrew
+# Homebrew (macOS & Linux)
 brew install maxgfr/tap/conforme
 
 # From source
 cargo install --path .
 
-# Pre-built binaries
-# Download from GitHub Releases
+# Pre-built binaries (GitHub Releases)
+# Available for: macOS (ARM64, x64), Linux (ARM64, x64), Windows (ARM64, x64)
+# Download from https://github.com/maxgfr/conforme/releases
 ```
 
 ## How it works
@@ -175,7 +176,7 @@ Review all changes for correctness and security.
 
 ### Skills format equivalence
 
-Skills are reusable prompts with a description and optional tools. conforme uses the [SKILL.md](https://github.com/anthropics/SKILL.md) standard (YAML frontmatter + markdown body).
+Skills are reusable prompts with a description and optional tools. conforme uses the [Agent Skills](https://github.com/anthropics/skills) standard (YAML frontmatter + markdown body).
 
 When using Claude Code as source (`source = "claude"`), conforme also reads **custom commands** from `.claude/commands/*.md` and syncs them as skills to all other tools:
 

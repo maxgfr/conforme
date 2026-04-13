@@ -18,7 +18,7 @@
 | Feature | Path | Format |
 |---------|------|--------|
 | Rules | `.continue/rules/*.md` | YAML frontmatter: `name`, `globs` (array), `alwaysApply`, `description` |
-| MCP | `.continue/mcp.json` | JSON: `{ "mcpServers": { ... } }` |
+| MCP | `.continue/mcpServers/mcp.json` | JSON: `{ "mcpServers": { ... } }` |
 
 ## Activation modes
 

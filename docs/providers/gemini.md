@@ -5,7 +5,7 @@
 ## Official docs
 
 - GEMINI.md: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md
-- Configuration: https://github.com/google-gemini/gemini-cli/blob/main/docs/get-started/configuration.md
+- Configuration: https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md
 - Skills: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/skills.md
 - Skills tutorial: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/tutorials/skills-getting-started.md
 - Subagents: https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md

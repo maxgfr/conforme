@@ -6,7 +6,7 @@ use crate::config::NormalizedConfig;
 
 /// Zed AI adapter.
 /// Uses .rules as primary file.
-/// Fallback priority: .rules → .cursorrules → .windsurfrules → .clinerules → AGENTS.md → CLAUDE.md
+/// Fallback priority: .rules → .cursorrules → .windsurfrules → .clinerules → .github/copilot-instructions.md → AGENT.md → AGENTS.md → CLAUDE.md → GEMINI.md
 /// Single file, no per-rule frontmatter.
 pub struct ZedAdapter;
 

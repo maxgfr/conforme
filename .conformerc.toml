@@ -1,0 +1,4 @@
+# conforme dogfooding — this project uses itself
+source = "claude"
+generate_agents_md = true
+clean = true

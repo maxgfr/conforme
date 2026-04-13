@@ -158,7 +158,7 @@ pub fn generate_opencode_mcp_json(servers: &[NormalizedMcpServer]) -> Result<Str
     serde_json::to_string_pretty(&root).context("failed to serialize OpenCode MCP config")
 }
 
-/// Generate Zed context_servers format: { "context_servers": { "name": { "source": "custom", "command": ..., "args": [...] } } }
+/// Generate Zed context_servers format: { "context_servers": { "name": { "command": ..., "args": [...] } } }
 pub fn generate_zed_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
     if servers.is_empty() {
         return Ok(String::new());
@@ -168,12 +168,6 @@ pub fn generate_zed_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> 
 
     for server in servers {
         let mut entry = serde_json::Map::new();
-
-        // Zed requires "source": "custom" for all custom context servers
-        entry.insert(
-            "source".to_string(),
-            serde_json::Value::String("custom".to_string()),
-        );
 
         match &server.transport {
             McpTransport::Stdio { command, args } => {
@@ -213,6 +207,57 @@ pub fn generate_zed_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> 
 
     let root = serde_json::json!({ "context_servers": context_servers });
     serde_json::to_string_pretty(&root).context("failed to serialize Zed MCP config")
+}
+
+/// Generate Amp MCP format: { "amp.mcpServers": { "name": { "command": ..., "args": [...] } } }
+pub fn generate_amp_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
+    if servers.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut mcp_servers = serde_json::Map::new();
+
+    for server in servers {
+        let mut entry = serde_json::Map::new();
+
+        match &server.transport {
+            McpTransport::Stdio { command, args } => {
+                entry.insert(
+                    "command".to_string(),
+                    serde_json::Value::String(command.clone()),
+                );
+                let json_args: Vec<serde_json::Value> = args
+                    .iter()
+                    .map(|a| serde_json::Value::String(a.clone()))
+                    .collect();
+                entry.insert("args".to_string(), serde_json::Value::Array(json_args));
+            }
+            McpTransport::Http { url, headers } => {
+                entry.insert("url".to_string(), serde_json::Value::String(url.clone()));
+                if !headers.is_empty() {
+                    let h: serde_json::Map<String, serde_json::Value> = headers
+                        .iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                        .collect();
+                    entry.insert("headers".to_string(), serde_json::Value::Object(h));
+                }
+            }
+        }
+
+        if !server.env.is_empty() {
+            let env_obj: serde_json::Map<String, serde_json::Value> = server
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            entry.insert("env".to_string(), serde_json::Value::Object(env_obj));
+        }
+
+        mcp_servers.insert(server.name.clone(), serde_json::Value::Object(entry));
+    }
+
+    let root = serde_json::json!({ "amp.mcpServers": mcp_servers });
+    serde_json::to_string_pretty(&root).context("failed to serialize Amp MCP config")
 }
 
 /// Generate Gemini CLI MCP format in `.gemini/settings.json`.
@@ -386,7 +431,7 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
 
         let transport_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
 
-        let transport = if transport_type == "http" {
+        let transport = if transport_type == "http" || transport_type == "sse" {
             let url = obj
                 .get("url")
                 .or_else(|| obj.get("httpUrl"))
@@ -539,7 +584,7 @@ mod tests {
         let result = generate_zed_mcp_json(&servers).unwrap();
         assert!(result.contains("\"context_servers\""));
         assert!(result.contains("\"command\": \"npx\""));
-        assert!(result.contains("\"source\": \"custom\""));
+        assert!(!result.contains("\"source\""));
         assert!(result.contains("fs"));
         assert!(!result.contains("mcpServers"));
         assert!(!result.contains("\"type\""));

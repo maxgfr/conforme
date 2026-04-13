@@ -70,9 +70,9 @@ impl AiToolAdapter for AmpAdapter {
             )?);
         }
 
-        // Generate MCP config as .amp/settings.json (standard mcpServers format)
+        // Generate MCP config as .amp/settings.json (amp.mcpServers format)
         if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
+            let mcp_json = crate::mcp::generate_amp_mcp_json(&config.mcp_servers)?;
             files.push((
                 project_root.join(".amp").join("settings.json"),
                 format!("{}\n", mcp_json),
@@ -148,7 +148,7 @@ mod tests {
         let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].0, Path::new("/tmp/test/.amp/settings.json"));
-        assert!(files[0].1.contains("mcpServers"));
+        assert!(files[0].1.contains("amp.mcpServers"));
         assert!(files[0].1.contains("\"fs\""));
     }
 }

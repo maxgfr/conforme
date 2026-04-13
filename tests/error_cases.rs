@@ -168,8 +168,8 @@ Be helpful.
         .assert()
         .success();
 
-    assert!(dir.path().join(".continue/mcp.json").exists());
-    let mcp = fs::read_to_string(dir.path().join(".continue/mcp.json")).unwrap();
+    assert!(dir.path().join(".continue/mcpServers/mcp.json").exists());
+    let mcp = fs::read_to_string(dir.path().join(".continue/mcpServers/mcp.json")).unwrap();
     assert!(mcp.contains("mcpServers"));
     assert!(mcp.contains("test-server"));
 }

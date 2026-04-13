@@ -38,7 +38,7 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 
 ## Notes
 
-- **MCP is global only** -- configured via TOML in `~/.codex/config.toml`, not project-level JSON
+- **MCP supports both global and project-level** -- configured via TOML in `~/.codex/config.toml` (global) or `.codex/config.toml` (project, requires trust approval)
 - MCP TOML format: `[mcp_servers.name]` with `command`, `bearer_token_env_var`, `startup_timeout_sec`, `tool_timeout_sec`, `enabled`
 - Also supports `AGENTS.override.md` for local overrides
 - Project-level config at `.codex/config.toml`

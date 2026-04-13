@@ -6,12 +6,12 @@
 
 - Owner's Manual: https://ampcode.com/manual
 - AGENTS.md spec: https://ampcode.com/news/AGENT.md
-- AGENTS.md canonical: https://ampcode.com/AGENT.md
+- AGENTS.md canonical: https://ampcode.com/manual#AGENTS.md
 - Globs in AGENTS.md: https://ampcode.com/news/globs-in-AGENTS.md
 - Skills with MCP lazy loading: https://ampcode.com/news/lazy-load-mcp-with-skills
 - Workspace settings: https://ampcode.com/news/cli-workspace-settings
 - How to build an agent: https://ampcode.com/notes/how-to-build-an-agent
-- News/changelog: https://ampcode.com/news
+- News/changelog: https://ampcode.com/chronicle
 - SDK: https://ampcode.com/manual/sdk
 
 ## Config files
@@ -20,7 +20,7 @@
 |---------|------|--------|
 | Instructions | `AGENTS.md` (native) | Markdown |
 | Skills | `.agents/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` (shared Codex format) |
-| MCP | `.amp/settings.json` | JSON: `{ "mcpServers": { ... } }` (standard format) |
+| MCP | `.amp/settings.json` | JSON: `{ "amp.mcpServers": { ... } }` |
 
 ## Activation modes
 

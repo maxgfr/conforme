@@ -18,12 +18,27 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: conforme-linux-x64
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: conforme-linux-arm64
+            cross: true
           - target: x86_64-apple-darwin
             os: macos-latest
             artifact: conforme-macos-x64
+            cross: false
           - target: aarch64-apple-darwin
             os: macos-latest
             artifact: conforme-macos-arm64
+            cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: conforme-windows-x64.exe
+            cross: false
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            artifact: conforme-windows-arm64.exe
+            cross: false
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -33,11 +48,24 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.cross && 'aarch64-linux-gnu-gcc' || '' }}
 
-      - name: Rename binary
+      - name: Rename binary (Unix)
+        if: runner.os != 'Windows'
         run: cp target/${{ matrix.target }}/release/conforme ${{ matrix.artifact }}
+
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        run: cp target/${{ matrix.target }}/release/conforme.exe ${{ matrix.artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -63,9 +91,12 @@ jobs:
         run: |
           mkdir -p binaries
           cp artifacts/conforme-linux-x64/conforme-linux-x64 binaries/
+          cp artifacts/conforme-linux-arm64/conforme-linux-arm64 binaries/
           cp artifacts/conforme-macos-x64/conforme-macos-x64 binaries/
           cp artifacts/conforme-macos-arm64/conforme-macos-arm64 binaries/
-          chmod +x binaries/*
+          cp artifacts/conforme-windows-x64.exe/conforme-windows-x64.exe binaries/
+          cp artifacts/conforme-windows-arm64.exe/conforme-windows-arm64.exe binaries/
+          chmod +x binaries/conforme-linux-* binaries/conforme-macos-*
 
       - name: Release
         uses: cycjimmy/semantic-release-action@v6
@@ -86,6 +117,13 @@ jobs:
         if: steps.get_tag.outputs.tag != ''
         run: |
           TAG="${{ steps.get_tag.outputs.tag }}"
-          gh release upload "$TAG" binaries/conforme-linux-x64 binaries/conforme-macos-x64 binaries/conforme-macos-arm64 --clobber
+          gh release upload "$TAG" \
+            binaries/conforme-linux-x64 \
+            binaries/conforme-linux-arm64 \
+            binaries/conforme-macos-x64 \
+            binaries/conforme-macos-arm64 \
+            binaries/conforme-windows-x64.exe \
+            binaries/conforme-windows-arm64.exe \
+            --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

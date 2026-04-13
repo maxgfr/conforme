@@ -104,11 +104,14 @@ impl AiToolAdapter for ContinueDevAdapter {
             files.push((rules_dir.join(filename), content));
         }
 
-        // Generate MCP config as .continue/mcp.json
+        // Generate MCP config as .continue/mcpServers/mcp.json
         if !config.mcp_servers.is_empty() {
             let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
             files.push((
-                project_root.join(".continue").join("mcp.json"),
+                project_root
+                    .join(".continue")
+                    .join("mcpServers")
+                    .join("mcp.json"),
                 format!("{}\n", mcp_json),
             ));
         }
@@ -344,7 +347,10 @@ mod tests {
         let files = adapter.generate(root, &config).unwrap();
 
         let mcp_file = files.iter().find(|(p, _)| p.ends_with("mcp.json")).unwrap();
-        assert!(mcp_file.0.to_string_lossy().contains(".continue/mcp.json"));
+        assert!(mcp_file
+            .0
+            .to_string_lossy()
+            .contains(".continue/mcpServers/mcp.json"));
         assert!(mcp_file.1.contains("mcpServers"));
         assert!(mcp_file.1.contains("test-server"));
         assert!(mcp_file.1.contains("npx"));

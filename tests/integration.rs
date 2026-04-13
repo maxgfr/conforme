@@ -1115,7 +1115,7 @@ Review all changes for bugs.
 
     // Continue: rules + mcp
     assert!(dir.path().join(".continue/rules/general.md").exists());
-    assert!(dir.path().join(".continue/mcp.json").exists());
+    assert!(dir.path().join(".continue/mcpServers/mcp.json").exists());
 
     // Zed: .rules + settings
     assert!(dir.path().join(".rules").exists());

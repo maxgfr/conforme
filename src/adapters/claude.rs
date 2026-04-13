@@ -118,7 +118,8 @@ impl AiToolAdapter for ClaudeAdapter {
                             .get("allowed-tools")
                             .and_then(|v| v.as_str())
                             .map(|s| {
-                                s.split(',')
+                                s.split_whitespace()
+                                    .flat_map(|t| t.split(','))
                                     .map(|t| t.trim().to_string())
                                     .filter(|t| !t.is_empty())
                                     .collect()
@@ -201,7 +202,13 @@ impl AiToolAdapter for ClaudeAdapter {
                     let tools = fields
                         .get("tools")
                         .and_then(|v| v.as_str())
-                        .map(|s| s.split_whitespace().map(|t| t.to_string()).collect())
+                        .map(|s| {
+                            s.split_whitespace()
+                                .flat_map(|t| t.split(','))
+                                .map(|t| t.trim().to_string())
+                                .filter(|t| !t.is_empty())
+                                .collect()
+                        })
                         .unwrap_or_default();
                     agents.push(NormalizedAgent {
                         name,

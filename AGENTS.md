@@ -1,3 +1,5 @@
+# Project Instructions
+
 # CLAUDE.md
 
 ## Project overview
@@ -213,3 +215,98 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - **ci.yml**: build, unit tests, integration tests, clippy, fmt, audit, macOS smoke test, `conforme check`
 - **release.yml**: matrix build (linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64, windows-arm64), semantic-release, upload binaries
 - Homebrew formula in `maxgfr/homebrew-tap`
+
+## Rule: adapter-consistency
+<!-- activation: glob src/adapters/**,src/mcp.rs,src/skills.rs,docs/providers/** -->
+
+- Every adapter change MUST be reflected in its `docs/providers/<tool>.md`
+- Every MCP format change MUST update the corresponding `generate_*_mcp_json` function AND its unit test
+- When adding a new adapter, update ALL of: README.md tables, src/help_ai.rs, src/cli.rs tool count, CLAUDE.md architecture section
+- Provider docs must list all official documentation URLs for the tool
+- Test round-trips: `read()` output fed into `generate()` should produce identical files
+- MCP JSON keys per tool: Claude/Windsurf/Kiro/RooCode/AmazonQ/Gemini = `mcpServers`, Copilot = `servers`, OpenCode = `mcp`, Zed = `context_servers`, Amp = `amp.mcpServers`
+
+## Rule: testing
+<!-- activation: glob tests/** -->
+
+- Integration tests use `assert_cmd` + `tempfile` crates
+- Each adapter must have round-trip tests in `tests/roundtrip.rs`
+- MCP format tests belong in `src/mcp.rs` unit tests
+- Error case tests go in `tests/error_cases.rs`
+- Always assert on file paths AND content (not just existence)
+- When changing an output path (e.g. MCP location), update ALL tests that reference it
+
+## Rule: rust-conventions
+<!-- activation: glob **/*.rs -->
+
+- Run `cargo clippy -- -D warnings` before considering any change complete
+- Run `cargo test` after modifying adapter logic, MCP generation, or skills generation
+- Use `anyhow::Result` for fallible functions, `anyhow::Context` for error messages
+- Use `BTreeMap` (not `HashMap`) for deterministic output ordering in generated files
+- Parse frontmatter fields defensively: use `.and_then(|v| v.as_str())` chains, never `.unwrap()` on user input
+- When parsing tool-separated lists (e.g. `allowed-tools`, `tools`), handle both space-separated AND comma-separated formats: `split_whitespace().flat_map(|t| t.split(','))`
+- Keep adapter `read()` and `generate()` symmetric: if `generate()` writes a field, `read()` must parse it back correctly (round-trip guarantee)
+
+## Skill: verify-providers
+<!-- description: Verify all 13 provider adapters against their official documentation and fix any discrepancies -->
+<!-- tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Edit, Write -->
+
+Audit every conforme provider adapter against the latest upstream documentation.
+For each of the 13 tools, follow these steps:
+
+## 1. Read the adapter code and provider docs
+
+For each tool (claude, cursor, copilot, windsurf, continuedev, kiro, amazonq, codex, opencode, gemini, zed, amp, roocode):
+
+- Read `src/adapters/<tool>.rs`
+- Read `docs/providers/<tool>.md`
+- Note the official doc URLs listed in the provider doc
+
+## 2. Fetch the latest official documentation
+
+Use WebFetch on each official doc URL from `docs/providers/<tool>.md`.
+Extract the current:
+- Config file paths and names
+- Frontmatter fields and their types
+- Activation mode mappings
+- Skills/agents/MCP format and file locations
+- Any new features or breaking changes
+
+## 3. Compare adapter code vs official docs
+
+Check for discrepancies in:
+- **File paths**: Are we writing to the correct locations?
+- **Frontmatter fields**: Are we reading/writing all required fields? Using correct separators?
+- **MCP format**: Correct JSON key (`mcpServers`, `servers`, `context_servers`, `amp.mcpServers`, `mcp`)? Correct transport types?
+- **Skills format**: Correct frontmatter fields per tool?
+- **Agents format**: Correct file extension and frontmatter?
+- **Activation modes**: Correct mapping values?
+
+## 4. Fix discrepancies
+
+For each issue found:
+1. Fix the adapter code in `src/adapters/` or `src/mcp.rs` or `src/skills.rs`
+2. Update the provider doc in `docs/providers/`
+3. Update `src/help_ai.rs` if the help text is affected
+4. Update tests in `tests/` to match new behavior
+5. Run `cargo test` to verify
+
+## 5. Verify links
+
+WebFetch each documentation URL to confirm it still resolves (not 404).
+If a link is broken, search for the new URL and update `docs/providers/<tool>.md`.
+
+## 6. Final checks
+
+```bash
+cargo test
+cargo clippy -- -D warnings
+cargo fmt -- --check
+```
+
+Report a summary table:
+| Tool | Status | Issues found | Fixed |
+
+## MCP: context7
+<!-- url: https://mcp.context7.com/mcp -->
+
