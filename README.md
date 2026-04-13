@@ -169,23 +169,12 @@ Review all changes for correctness and security.
 | Codex CLI | native (AGENTS.md) | `.agents/skills/` | - | - (global only) |
 | Amp | native (AGENTS.md) | - | - | - |
 
-## Tutorial: Node.js project
+## Examples
 
-### 1. Initialize
+<details>
+<summary><strong>Node.js / TypeScript</strong></summary>
 
-```bash
-cd my-node-project
-npm init -y # if needed
-git init    # if needed
-
-# Install conforme
-brew install maxgfr/tap/conforme
-
-# Initialize
-conforme init
-```
-
-### 2. Configure AGENTS.md
+**AGENTS.md**
 
 ```markdown
 # My Node.js Project
@@ -218,74 +207,87 @@ Run `npm run build && npm run deploy`.
 <!-- args: -y, @modelcontextprotocol/server-filesystem, . -->
 ```
 
-Alternatively, if you prefer to author your config in Claude Code and have it propagated to all other tools, set up `.conformerc.toml`:
+**Setup**
+
+```bash
+brew install maxgfr/tap/conforme
+cd my-node-project
+conforme init          # Creates AGENTS.md + .conformerc.toml
+conforme sync          # Syncs to all detected tools
+conforme hook install  # Git pre-commit hook
+```
+
+**Or use Claude Code as source** — add to `.conformerc.toml`:
 
 ```toml
 source = "claude"
 ```
 
-Then write your rules in `.claude/rules/` as you normally would, and run `conforme sync` to propagate them. You can also sync from any other tool by running `conforme sync --from cursor`, `conforme sync --from copilot`, etc.
+Then write your rules in `.claude/rules/` and run `conforme sync`.
 
-### 3. Sync and install hook
-
-```bash
-conforme sync
-conforme hook install
-```
-
-### 4. Add to CI (GitHub Actions)
+**CI (GitHub Actions)**
 
 ```yaml
-# .github/workflows/ci.yml
-name: CI
-on: [push, pull_request]
-jobs:
-  check-ai-configs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install conforme
-        run: |
-          curl -L -o conforme https://github.com/maxgfr/conforme/releases/latest/download/conforme-linux-x64
-          chmod +x conforme
-          sudo mv conforme /usr/local/bin/
-      - name: Check AI configs in sync
-        run: conforme check
+- name: Check AI configs
+  run: |
+    curl -L -o conforme https://github.com/maxgfr/conforme/releases/latest/download/conforme-linux-x64
+    chmod +x conforme && sudo mv conforme /usr/local/bin/
+    conforme check
 ```
 
-### 5. Add to package.json (alternative to conforme hook)
+</details>
 
-```json
-{
-  "scripts": {
-    "prepare": "conforme hook install",
-    "conforme:sync": "conforme sync",
-    "conforme:check": "conforme check"
-  }
-}
+<details>
+<summary><strong>Python</strong></summary>
+
+**AGENTS.md**
+
+```markdown
+# My Python Project
+
+Use Python 3.12+. Follow PEP 8 and type all functions.
+Run `pytest` and `ruff check .` before suggesting changes.
+
+## Rule: Type Hints
+<!-- activation: glob **/*.py -->
+
+- Add type annotations to all function signatures
+- Use `from __future__ import annotations` for forward references
+- Prefer `list[str]` over `List[str]` (Python 3.9+)
+
+## Rule: Testing
+<!-- activation: glob **/test_*,**/*_test.py -->
+
+- Use pytest with fixtures
+- Use `pytest.raises` for expected exceptions
+- Mock external services with `unittest.mock`
+
+## Rule: FastAPI
+<!-- activation: glob **/api/**,**/routes/** -->
+
+- Use Pydantic models for request/response validation
+- Return proper HTTP status codes
+- Add OpenAPI descriptions to endpoints
+
+## Skill: venv
+<!-- description: Set up virtual environment -->
+<!-- tools: Bash -->
+
+Run `python -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"`.
 ```
 
-Now `npm install` will automatically install the pre-commit hook.
-
----
-
-## Tutorial: Rust project
-
-### 1. Initialize
+**Setup**
 
 ```bash
-cd my-rust-project
-cargo init # if needed
-git init   # if needed
-
-# Install conforme
-brew install maxgfr/tap/conforme
-
-# Initialize
-conforme init
+conforme init && conforme sync && conforme hook install
 ```
 
-### 2. Configure AGENTS.md
+</details>
+
+<details>
+<summary><strong>Rust</strong></summary>
+
+**AGENTS.md**
 
 ```markdown
 # My Rust Project
@@ -308,82 +310,90 @@ before suggesting changes are complete.
 - Test error cases, not just happy paths
 
 ## Rule: Unsafe Code
-<!-- activation: glob **/*.rs -->
 <!-- activation: agent-decision -->
 <!-- description: Apply when reviewing code that uses unsafe blocks -->
 
 - Every `unsafe` block must have a `// SAFETY:` comment
 - Prefer safe abstractions — only use unsafe when necessary
-- Document invariants that the caller must uphold
 
 ## Skill: release
 <!-- description: Create a new release -->
 <!-- tools: Bash -->
 
-1. Run `cargo test`
-2. Run `cargo clippy -- -D warnings`
-3. Bump version in Cargo.toml
-4. Commit and tag: `git tag v$(cargo pkgid | cut -d# -f2)`
-5. Push: `git push && git push --tags`
+Run `cargo test && cargo clippy -- -D warnings`, bump version, tag, push.
 ```
 
-Alternatively, configure a source tool in `.conformerc.toml` to write your rules in your preferred editor's format and let conforme handle the rest:
+**Setup**
+
+```bash
+conforme init && conforme sync && conforme hook install
+```
+
+**Or use Cursor as source:**
 
 ```toml
+# .conformerc.toml
 source = "cursor"
 only = ["claude", "copilot", "windsurf", "kiro"]
 ```
 
-Then author your rules in `.cursor/rules/` and run `conforme sync` to propagate them everywhere.
+</details>
 
-### 3. Sync and install hook
+<details>
+<summary><strong>Go</strong></summary>
+
+**AGENTS.md**
+
+```markdown
+# My Go Project
+
+Use idiomatic Go. Run `go test ./...` and `golangci-lint run`
+before suggesting changes are complete.
+
+## Rule: Error Handling
+<!-- activation: glob **/*.go -->
+
+- Always check returned errors — never use `_`
+- Wrap errors with `fmt.Errorf("context: %w", err)`
+- Use sentinel errors for expected cases
+
+## Rule: Testing
+<!-- activation: glob **/*_test.go -->
+
+- Use table-driven tests
+- Use `testify/assert` for assertions
+- Test both success and error paths
+
+## Rule: API Design
+<!-- activation: glob **/handler/**,**/api/** -->
+
+- Use `net/http` or chi router
+- Return structured JSON errors
+- Log with `slog` (structured logging)
+
+## Skill: build
+<!-- description: Build and test the project -->
+<!-- tools: Bash -->
+
+Run `go build ./... && go test ./... && golangci-lint run`.
+```
+
+**Setup**
 
 ```bash
-conforme sync
-conforme hook install
+conforme init && conforme sync && conforme hook install
 ```
 
-### 4. Add to CI (GitHub Actions)
-
-```yaml
-# .github/workflows/ci.yml
-name: CI
-on: [push, pull_request]
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test
-      - run: cargo clippy -- -D warnings
-
-  check-ai-configs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install conforme
-        run: |
-          curl -L -o conforme https://github.com/maxgfr/conforme/releases/latest/download/conforme-linux-x64
-          chmod +x conforme
-          sudo mv conforme /usr/local/bin/
-      - run: conforme check
-```
-
-### 5. Add to Makefile (alternative)
+**Makefile integration:**
 
 ```makefile
 .PHONY: setup sync check
-
-setup:
-	conforme hook install
-
-sync:
-	conforme sync
-
-check:
-	conforme check
+setup: ; conforme hook install
+sync:  ; conforme sync
+check: ; conforme check
 ```
+
+</details>
 
 ---
 

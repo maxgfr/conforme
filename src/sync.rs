@@ -69,6 +69,29 @@ fn resolve_config(
 
 /// Run the `init` command.
 pub fn run_init(project_root: &Path, force: bool, verbose: bool) -> Result<()> {
+    // Create .conformerc.toml if it doesn't exist
+    let config_path = project_root.join(".conformerc.toml");
+    if !config_path.exists() {
+        let template = r#"# conforme configuration
+# Source tool — conforme reads config from here and syncs to all others
+# source = "claude"
+
+# Only sync to these tools (default: all detected)
+# only = ["cursor", "copilot", "windsurf"]
+
+# Exclude these tools from sync
+# exclude = ["zed", "amp"]
+
+# Auto-generate AGENTS.md from source (default: true)
+generate_agents_md = true
+
+# Clean orphan files on sync (default: true)
+clean = true
+"#;
+        std::fs::write(&config_path, template)?;
+        println!("{} Created .conformerc.toml", "+".green());
+    }
+
     let agents_md = project_root.join("AGENTS.md");
 
     if agents_md.exists() && !force {

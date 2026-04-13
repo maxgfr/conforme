@@ -1131,3 +1131,146 @@ Review all changes for bugs.
         .assert()
         .success();
 }
+
+// ===== Init creates config =====
+
+#[test]
+fn test_init_creates_conformerc() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".cursor")).unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "init"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created .conformerc.toml"));
+
+    assert!(dir.path().join(".conformerc.toml").exists());
+    assert!(dir.path().join("AGENTS.md").exists());
+
+    let config = fs::read_to_string(dir.path().join(".conformerc.toml")).unwrap();
+    assert!(config.contains("source"));
+    assert!(config.contains("clean = true"));
+}
+
+// ===== End-to-end source flow =====
+
+#[test]
+fn test_end_to_end_claude_source_flow() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".claude/rules")).unwrap();
+    fs::create_dir_all(dir.path().join(".cursor")).unwrap();
+    fs::create_dir_all(dir.path().join(".windsurf")).unwrap();
+
+    fs::write(dir.path().join("CLAUDE.md"), "Use TypeScript.\n").unwrap();
+    fs::write(
+        dir.path().join(".claude/rules/api.md"),
+        "---\npaths:\n  - src/api/**\n---\n\nFollow REST.\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+
+    // Sync from Claude source
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    // Cursor should have general + api rules
+    let cursor_general = fs::read_to_string(dir.path().join(".cursor/rules/general.mdc")).unwrap();
+    assert!(cursor_general.contains("Use TypeScript"));
+
+    let cursor_api = fs::read_to_string(dir.path().join(".cursor/rules/api.mdc")).unwrap();
+    assert!(cursor_api.contains("Follow REST"));
+    assert!(cursor_api.contains("globs"));
+
+    // Windsurf should have rules too
+    let ws_general = fs::read_to_string(dir.path().join(".windsurf/rules/general.md")).unwrap();
+    assert!(ws_general.contains("Use TypeScript"));
+
+    // AGENTS.md should be generated
+    assert!(dir.path().join("AGENTS.md").exists());
+    let agents = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(agents.contains("Use TypeScript"));
+
+    // Check should pass
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "check"])
+        .assert()
+        .success();
+
+    // Diff should show in sync
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "diff"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("in sync"));
+}
+
+// ===== Add then sync round-trip =====
+
+#[test]
+fn test_add_then_sync_round_trip() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".cursor")).unwrap();
+
+    // Init
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "init"])
+        .assert()
+        .success();
+
+    // Add a rule via CLI
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "add",
+            "rule",
+            "Security",
+            "--activation",
+            "agent-decision",
+            "--content",
+            "Check for XSS.",
+        ])
+        .assert()
+        .success();
+
+    // Sync
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    // Verify the rule made it to Cursor with correct frontmatter
+    let security = fs::read_to_string(dir.path().join(".cursor/rules/security.mdc")).unwrap();
+    assert!(security.contains("Check for XSS"));
+}
+
+// ===== Status shows source =====
+
+#[test]
+fn test_status_shows_configured_source() {
+    let agents_md = "# Test\n";
+    let dir = create_project_with_tools(agents_md, &["cursor"]);
+    fs::write(dir.path().join(".conformerc.toml"), "source = \"cursor\"\n").unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "status"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("cursor"));
+}
+
+// ===== Watch requires source =====
+
+#[test]
+fn test_watch_requires_source() {
+    let dir = TempDir::new().unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "watch"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No source"));
+}

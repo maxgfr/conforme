@@ -143,3 +143,11 @@ jobs:
 
           ./target/release/conforme -C /tmp/test-commands add mcp "test-server" --command "node" --args="server.js"
           grep -q "## MCP: test-server" /tmp/test-commands/AGENTS.md && echo "Add MCP: PASSED"
+
+      - name: Smoke test - init creates config
+        run: |
+          mkdir -p /tmp/test-init/.cursor
+          ./target/release/conforme -C /tmp/test-init init
+          test -f /tmp/test-init/.conformerc.toml && echo "Config created: PASSED"
+          test -f /tmp/test-init/AGENTS.md && echo "AGENTS.md created: PASSED"
+          grep -q "source" /tmp/test-init/.conformerc.toml && echo "Config has source: PASSED"
