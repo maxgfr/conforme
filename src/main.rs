@@ -3,6 +3,7 @@ mod cli;
 mod config;
 mod detect;
 mod frontmatter;
+mod gitignore;
 mod hash;
 mod help_ai;
 mod hook;
@@ -53,6 +54,10 @@ fn main() -> Result<()> {
         cli::Command::Hook { action } => match action {
             cli::HookAction::Install => hook::install(&project_root, args.verbose),
             cli::HookAction::Uninstall => hook::uninstall(&project_root, args.verbose),
+        },
+        cli::Command::Gitignore { action } => match action {
+            cli::GitignoreAction::Install => gitignore::install(&project_root, args.verbose),
+            cli::GitignoreAction::Uninstall => gitignore::uninstall(&project_root, args.verbose),
         },
         cli::Command::Watch { only } => {
             watch::run_watch(&project_root, only.as_deref(), args.verbose)

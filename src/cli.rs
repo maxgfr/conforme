@@ -25,6 +25,8 @@ use std::path::PathBuf;
         conforme remove cursor,windsurf      Remove generated files for tools\n  \
         conforme hook install                Install git pre-commit hook\n  \
         conforme hook uninstall              Remove git pre-commit hook\n  \
+        conforme gitignore install           Add generated configs to .gitignore\n  \
+        conforme gitignore uninstall         Remove conforme entries from .gitignore\n  \
         conforme watch                       Watch source and auto-sync\n  \
         conforme help-ai                     Show all supported tools and formats"
 )]
@@ -96,6 +98,11 @@ pub enum Command {
     Hook {
         #[command(subcommand)]
         action: HookAction,
+    },
+    /// Manage .gitignore entries for generated tool configs
+    Gitignore {
+        #[command(subcommand)]
+        action: GitignoreAction,
     },
     /// Watch source config and auto-sync on changes
     Watch {
@@ -172,5 +179,13 @@ pub enum HookAction {
     /// Install a git pre-commit hook that runs `conforme check`
     Install,
     /// Remove the conforme pre-commit hook
+    Uninstall,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum GitignoreAction {
+    /// Add generated tool configs to .gitignore (keeps source tool tracked)
+    Install,
+    /// Remove conforme-managed entries from .gitignore
     Uninstall,
 }
