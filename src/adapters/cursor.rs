@@ -46,8 +46,11 @@ impl AiToolAdapter for CursorAdapter {
 
         let rules_dir = project_root.join(".cursor").join("rules");
         if rules_dir.is_dir() {
-            for entry in std::fs::read_dir(&rules_dir)? {
-                let entry = entry?;
+            let mut entries: Vec<_> = std::fs::read_dir(&rules_dir)?
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "mdc") {
                     let content = std::fs::read_to_string(&path)
@@ -78,8 +81,11 @@ impl AiToolAdapter for CursorAdapter {
         let mut agents = Vec::new();
         let agents_dir = project_root.join(".cursor").join("agents");
         if agents_dir.is_dir() {
-            for entry in std::fs::read_dir(&agents_dir)? {
-                let entry = entry?;
+            let mut entries: Vec<_> = std::fs::read_dir(&agents_dir)?
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "mdc") {
                     let content = std::fs::read_to_string(&path)

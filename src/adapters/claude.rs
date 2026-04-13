@@ -55,8 +55,11 @@ impl AiToolAdapter for ClaudeAdapter {
         let mut rules = Vec::new();
         let rules_dir = project_root.join(".claude").join("rules");
         if rules_dir.is_dir() {
-            for entry in std::fs::read_dir(&rules_dir)? {
-                let entry = entry?;
+            let mut entries: Vec<_> = std::fs::read_dir(&rules_dir)?
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "md") {
                     let content = std::fs::read_to_string(&path)?;
@@ -96,8 +99,11 @@ impl AiToolAdapter for ClaudeAdapter {
         let mut skills = Vec::new();
         let skills_dir = project_root.join(".claude").join("skills");
         if skills_dir.is_dir() {
-            for entry in std::fs::read_dir(&skills_dir)? {
-                let entry = entry?;
+            let mut entries: Vec<_> = std::fs::read_dir(&skills_dir)?
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
                 let skill_dir = entry.path();
                 if skill_dir.is_dir() {
                     let skill_file = skill_dir.join("SKILL.md");
@@ -139,8 +145,11 @@ impl AiToolAdapter for ClaudeAdapter {
         // Read commands from .claude/commands/*.md (mapped to skills for cross-tool sync)
         let commands_dir = project_root.join(".claude").join("commands");
         if commands_dir.is_dir() {
-            for entry in std::fs::read_dir(&commands_dir)? {
-                let entry = entry?;
+            let mut entries: Vec<_> = std::fs::read_dir(&commands_dir)?
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "md") {
                     let content = std::fs::read_to_string(&path)?;
@@ -179,8 +188,11 @@ impl AiToolAdapter for ClaudeAdapter {
         let mut agents = Vec::new();
         let agents_dir = project_root.join(".claude").join("agents");
         if agents_dir.is_dir() {
-            for entry in std::fs::read_dir(&agents_dir)? {
-                let entry = entry?;
+            let mut entries: Vec<_> = std::fs::read_dir(&agents_dir)?
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "md") {
                     let content = std::fs::read_to_string(&path)?;

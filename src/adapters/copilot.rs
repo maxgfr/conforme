@@ -56,8 +56,11 @@ impl AiToolAdapter for CopilotAdapter {
         let mut rules = Vec::new();
         let instr_dir = project_root.join(".github").join("instructions");
         if instr_dir.is_dir() {
-            for entry in std::fs::read_dir(&instr_dir)? {
-                let entry = entry?;
+            let mut entries: Vec<_> = std::fs::read_dir(&instr_dir)?
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
                 let path = entry.path();
                 if path
                     .file_name()

@@ -50,8 +50,11 @@ impl AiToolAdapter for KiroAdapter {
 
         let steering_dir = project_root.join(".kiro").join("steering");
         if steering_dir.is_dir() {
-            for entry in std::fs::read_dir(&steering_dir)? {
-                let entry = entry?;
+            let mut entries: Vec<_> = std::fs::read_dir(&steering_dir)?
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "md") {
                     let content = std::fs::read_to_string(&path)

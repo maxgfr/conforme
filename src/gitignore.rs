@@ -12,8 +12,18 @@ const BLOCK_END: &str = "# ── end conforme ──";
 /// Returns (adapter_id, vec of gitignore patterns).
 fn adapter_gitignore_patterns(id: &str) -> Vec<&'static str> {
     match id {
-        "claude" => vec!["CLAUDE.md", ".claude/rules/", ".claude/skills/", ".claude/agents/"],
-        "cursor" => vec![".cursor/rules/", ".cursor/skills/", ".cursor/agents/", ".cursor/mcp.json"],
+        "claude" => vec![
+            "CLAUDE.md",
+            ".claude/rules/",
+            ".claude/skills/",
+            ".claude/agents/",
+        ],
+        "cursor" => vec![
+            ".cursor/rules/",
+            ".cursor/skills/",
+            ".cursor/agents/",
+            ".cursor/mcp.json",
+        ],
         "windsurf" => vec![
             ".windsurf/rules/",
             ".windsurf/skills/",
@@ -157,10 +167,7 @@ pub fn uninstall(project_root: &Path, verbose: bool) -> Result<()> {
     let content = std::fs::read_to_string(&gitignore_path)?;
 
     if !content.contains(BLOCK_START) {
-        println!(
-            "{} .gitignore has no conforme-managed block.",
-            "=".dimmed()
-        );
+        println!("{} .gitignore has no conforme-managed block.", "=".dimmed());
         return Ok(());
     }
 
