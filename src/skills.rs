@@ -141,6 +141,74 @@ pub fn generate_copilot_agents(
     Ok(files)
 }
 
+/// Generate Claude Code subagent files in `.claude/agents/<name>.md`.
+pub fn generate_claude_agents(
+    project_root: &Path,
+    agents: &[crate::config::NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
+    let agents_dir = project_root.join(".claude").join("agents");
+    let mut files = Vec::new();
+
+    for agent in agents {
+        let filename = format!("{}.md", sanitize_name(&agent.name));
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "name".to_string(),
+            serde_yaml_ng::Value::String(sanitize_name(&agent.name)),
+        );
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(agent.description.clone()),
+        );
+        if let Some(model) = &agent.model {
+            fields.insert(
+                "model".to_string(),
+                serde_yaml_ng::Value::String(model.clone()),
+            );
+        }
+        if !agent.tools.is_empty() {
+            fields.insert(
+                "tools".to_string(),
+                serde_yaml_ng::Value::String(agent.tools.join(", ")),
+            );
+        }
+
+        let content = frontmatter::serialize(&fields, &format!("{}\n", agent.content))?;
+        files.push((agents_dir.join(filename), content));
+    }
+
+    Ok(files)
+}
+
+/// Generate Kiro skill files in `.kiro/skills/<name>/SKILL.md`.
+pub fn generate_kiro_skills(
+    project_root: &Path,
+    skills: &[NormalizedSkill],
+) -> Result<Vec<(PathBuf, String)>> {
+    let skills_dir = project_root.join(".kiro").join("skills");
+    let mut files = Vec::new();
+
+    for skill in skills {
+        let skill_name = sanitize_name(&skill.name);
+        let skill_dir = skills_dir.join(&skill_name);
+        let skill_path = skill_dir.join("SKILL.md");
+
+        let mut fields = BTreeMap::new();
+        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
+        if !skill.description.is_empty() {
+            fields.insert(
+                "description".to_string(),
+                serde_yaml_ng::Value::String(skill.description.clone()),
+            );
+        }
+
+        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
+        files.push((skill_path, content));
+    }
+
+    Ok(files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

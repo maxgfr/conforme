@@ -105,6 +105,21 @@ impl AiToolAdapter for KiroAdapter {
             files.push((steering_dir.join(filename), content));
         }
 
+        // Generate skills as .kiro/skills/<name>/SKILL.md
+        files.extend(crate::skills::generate_kiro_skills(
+            project_root,
+            &config.skills,
+        )?);
+
+        // Generate MCP config as .kiro/settings/mcp.json
+        if !config.mcp_servers.is_empty() {
+            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
+            files.push((
+                project_root.join(".kiro").join("settings").join("mcp.json"),
+                format!("{}\n", mcp_json),
+            ));
+        }
+
         Ok(files)
     }
 }

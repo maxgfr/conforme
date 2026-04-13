@@ -147,6 +147,12 @@ impl AiToolAdapter for ClaudeAdapter {
             &config.skills,
         )?);
 
+        // Generate subagents as .claude/agents/<name>.md
+        files.extend(crate::skills::generate_claude_agents(
+            project_root,
+            &config.agents,
+        )?);
+
         // Generate MCP config as .mcp.json
         if !config.mcp_servers.is_empty() {
             let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;

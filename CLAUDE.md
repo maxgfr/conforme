@@ -133,6 +133,21 @@ conforme hook uninstall                    # Remove git pre-commit hook
 conforme help-ai                           # Show all supported tools + formats
 ```
 
+## MCP servers (.mcp.json)
+
+This project has a `.mcp.json` with **Context7** configured. Use it to get up-to-date documentation for any library or framework when working on adapter logic.
+
+**When verifying or updating adapter formats**, use Context7 to check the latest docs for:
+- Claude Code skills/rules/MCP format
+- Cursor rules (.mdc) format
+- Windsurf rules/MCP format
+- GitHub Copilot agents/prompts/instructions format
+- Kiro steering/hooks/specs format
+- Continue.dev rules/MCP format
+- Any other AI coding tool
+
+**Example**: To check if Cursor's frontmatter fields changed, ask Context7 for the latest Cursor documentation.
+
 ## Versioning
 
 Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` during release.
