@@ -21,6 +21,7 @@ pub fn print_help_ai() {
             "Frontmatter: paths (glob array)",
             "Always rules → embedded in CLAUDE.md",
             "Glob rules → .claude/rules/{name}.md with paths: frontmatter",
+            "Commands (.claude/commands/*.md) → synced as skills to other tools",
             "Does NOT read AGENTS.md natively (use @AGENTS.md include)",
         ],
     );
@@ -93,7 +94,7 @@ pub fn print_help_ai() {
         ".amazonq/rules/*.md",
         &[
             "Plain Markdown — NO frontmatter",
-            "Agents synced to .amazonq/agents/<name>.json (JSON format)",
+            "Agents synced to .amazonq/cli-agents/<name>.json (JSON format)",
             "IDE version; CLI version migrating to Kiro format",
         ],
     );

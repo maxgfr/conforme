@@ -34,7 +34,7 @@ impl AiToolAdapter for AmazonQAdapter {
     fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
         vec![
             project_root.join(".amazonq").join("rules"),
-            project_root.join(".amazonq").join("agents"),
+            project_root.join(".amazonq").join("cli-agents"),
         ]
     }
 
@@ -96,10 +96,10 @@ impl AiToolAdapter for AmazonQAdapter {
             files.push((rules_dir.join(filename), format!("{}\n", rule.content)));
         }
 
-        // Generate agents as .amazonq/agents/<name>.json
+        // Generate agents as .amazonq/cli-agents/<name>.json
         if !config.agents.is_empty() {
             let agent_files = crate::mcp::generate_amazonq_agents_json(&config.agents)?;
-            let agents_dir = project_root.join(".amazonq").join("agents");
+            let agents_dir = project_root.join(".amazonq").join("cli-agents");
             for (filename, content) in agent_files {
                 files.push((agents_dir.join(filename), format!("{}\n", content)));
             }
@@ -195,7 +195,7 @@ mod tests {
         let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
         let agent_file = files
             .iter()
-            .find(|(p, _)| p.to_string_lossy().contains(".amazonq/agents/"))
+            .find(|(p, _)| p.to_string_lossy().contains(".amazonq/cli-agents/"))
             .unwrap();
         assert!(agent_file.0.ends_with("reviewer.json"));
         assert!(agent_file.1.contains("\"description\": \"Code review\""));

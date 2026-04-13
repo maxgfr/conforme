@@ -159,14 +159,14 @@ Review all changes for correctness and security.
 
 | Adapter | Rules | Skills | Agents | MCP |
 |---------|-------|--------|--------|-----|
-| Claude Code | `.claude/rules/*.md` | `.claude/skills/` | `.claude/agents/*.md` | `.mcp.json` |
+| Claude Code | `.claude/rules/*.md` | `.claude/skills/` + `.claude/commands/` | `.claude/agents/*.md` | `.mcp.json` |
 | GitHub Copilot | `.github/instructions/*.md` | `.github/prompts/*.prompt.md` | `.github/agents/*.agent.md` | `.vscode/mcp.json` |
 | Cursor | `.cursor/rules/*.mdc` | `.cursor/skills/` | `.cursor/agents/*.mdc` | `.cursor/mcp.json` |
 | Kiro (AWS) | `.kiro/steering/*.md` | `.kiro/skills/` | `.kiro/agents/*.md` | `.kiro/settings/mcp.json` |
 | Windsurf | `.windsurf/rules/*.md` | `.windsurf/skills/` | - | `.windsurf/mcp.json` |
 | Continue.dev | `.continue/rules/*.md` | - | - | `.continue/mcp.json` |
 | Roo Code | `.roo/rules/*.md` | `.roo/skills/` | - | `.roo/mcp.json` |
-| Amazon Q | `.amazonq/rules/*.md` | - | `.amazonq/agents/*.json` | `.amazonq/mcp.json` |
+| Amazon Q | `.amazonq/rules/*.md` | - | `.amazonq/cli-agents/*.json` | `.amazonq/mcp.json` |
 | Gemini CLI | `GEMINI.md` | `.gemini/skills/` | `.gemini/agents/*.md` | `.gemini/settings.json` |
 | OpenCode | native (AGENTS.md) | `.opencode/skills/` | `.opencode/agents.json` | `.opencode/mcp.json` |
 | Zed AI | `.rules` | - | - | `.zed/settings.json` |
@@ -175,7 +175,9 @@ Review all changes for correctness and security.
 
 ### Skills format equivalence
 
-Skills are reusable prompts with a description and optional tools. conforme uses the [SKILL.md](https://github.com/anthropics/SKILL.md) standard (YAML frontmatter + markdown body):
+Skills are reusable prompts with a description and optional tools. conforme uses the [SKILL.md](https://github.com/anthropics/SKILL.md) standard (YAML frontmatter + markdown body).
+
+When using Claude Code as source (`source = "claude"`), conforme also reads **custom commands** from `.claude/commands/*.md` and syncs them as skills to all other tools:
 
 | Tool | Path | Frontmatter |
 |------|------|-------------|
@@ -204,7 +206,7 @@ Agents (sub-agents) are custom AI assistants with a model, tools, and system pro
 | Kiro | `.kiro/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
 | Gemini CLI | `.gemini/agents/<name>.md` | YAML frontmatter: `name`, `description`, `kind: local`, `model`, `tools` |
 | OpenCode | `.opencode/agents.json` | JSON: `{ "agent": { "<name>": { "mode": "subagent", "model", "prompt" } } }` |
-| Amazon Q | `.amazonq/agents/<name>.json` | JSON per agent: `{ "description", "model", "tools", "prompt" }` |
+| Amazon Q | `.amazonq/cli-agents/<name>.json` | JSON per agent: `{ "description", "model", "tools", "prompt" }` |
 
 Tools without agents support: Windsurf, Continue.dev, Roo Code, Codex CLI, Zed AI, Amp.
 

@@ -135,6 +135,45 @@ impl AiToolAdapter for ClaudeAdapter {
             }
         }
 
+        // Read commands from .claude/commands/*.md (mapped to skills for cross-tool sync)
+        let commands_dir = project_root.join(".claude").join("commands");
+        if commands_dir.is_dir() {
+            for entry in std::fs::read_dir(&commands_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "md") {
+                    let content = std::fs::read_to_string(&path)?;
+                    let (fields, body) = frontmatter::parse(&content)?;
+                    let name = path
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    let description = fields
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let allowed_tools = fields
+                        .get("allowed-tools")
+                        .and_then(|v| v.as_str())
+                        .map(|s| {
+                            s.split(',')
+                                .map(|t| t.trim().to_string())
+                                .filter(|t| !t.is_empty())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    skills.push(NormalizedSkill {
+                        name,
+                        description,
+                        content: body.trim().to_string(),
+                        allowed_tools,
+                    });
+                }
+            }
+        }
+
         // Read agents from .claude/agents/*.md
         let mut agents = Vec::new();
         let agents_dir = project_root.join(".claude").join("agents");

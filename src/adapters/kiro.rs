@@ -223,6 +223,10 @@ fn build_kiro_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_ng::V
                 "inclusion".to_string(),
                 serde_yaml_ng::Value::String("manual".to_string()),
             );
+            fields.insert(
+                "name".to_string(),
+                serde_yaml_ng::Value::String(rule.name.clone()),
+            );
         }
     }
 
