@@ -1262,6 +1262,219 @@ fn test_status_shows_configured_source() {
         .stdout(predicate::str::contains("cursor"));
 }
 
+// ===== Migrate =====
+
+#[test]
+fn test_migrate_gemini_to_opencode() {
+    let dir = TempDir::new().unwrap();
+    // Set up gemini source
+    fs::create_dir_all(dir.path().join(".gemini")).unwrap();
+    fs::write(
+        dir.path().join("GEMINI.md"),
+        "# Instructions\n\nUse TypeScript.\n",
+    )
+    .unwrap();
+    // Set up opencode target directory
+    fs::create_dir_all(dir.path().join(".opencode")).unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "gemini",
+            "--output",
+            "opencode",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Migrated"));
+
+    // Source file should be deleted
+    assert!(!dir.path().join("GEMINI.md").exists());
+}
+
+#[test]
+fn test_migrate_gemini_to_cursor() {
+    let dir = TempDir::new().unwrap();
+    // Set up gemini source with content
+    fs::create_dir_all(dir.path().join(".gemini")).unwrap();
+    fs::write(
+        dir.path().join("GEMINI.md"),
+        "# Instructions\n\nUse TypeScript strict mode.\n",
+    )
+    .unwrap();
+    // Set up cursor target
+    fs::create_dir_all(dir.path().join(".cursor")).unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "gemini",
+            "--output",
+            "cursor",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Migrated"));
+
+    // Source should be deleted
+    assert!(!dir.path().join("GEMINI.md").exists());
+    // Cursor rules should exist
+    assert!(dir.path().join(".cursor/rules").is_dir());
+}
+
+#[test]
+fn test_migrate_dry_run_does_not_modify() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".gemini")).unwrap();
+    fs::write(dir.path().join("GEMINI.md"), "Hello world.\n").unwrap();
+    fs::create_dir_all(dir.path().join(".opencode")).unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "gemini",
+            "--output",
+            "opencode",
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dry-run"));
+
+    // Source file must still exist
+    assert!(dir.path().join("GEMINI.md").exists());
+}
+
+#[test]
+fn test_migrate_same_source_and_output_fails() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".gemini")).unwrap();
+    fs::write(dir.path().join("GEMINI.md"), "Hello.\n").unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "gemini",
+            "--output",
+            "gemini",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be the same"));
+}
+
+#[test]
+fn test_migrate_unknown_source_fails() {
+    let dir = TempDir::new().unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "nonexistent",
+            "--output",
+            "cursor",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unknown source tool"));
+}
+
+#[test]
+fn test_migrate_unknown_output_fails() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".gemini")).unwrap();
+    fs::write(dir.path().join("GEMINI.md"), "Hello.\n").unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "gemini",
+            "--output",
+            "nonexistent",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unknown output tool"));
+}
+
+#[test]
+fn test_migrate_source_not_detected_fails() {
+    let dir = TempDir::new().unwrap();
+    // No gemini files at all
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "gemini",
+            "--output",
+            "cursor",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not detected"));
+}
+
+#[test]
+fn test_migrate_deletes_managed_directories_content() {
+    let dir = TempDir::new().unwrap();
+    // Set up gemini source with skills
+    fs::create_dir_all(dir.path().join(".gemini/skills/deploy")).unwrap();
+    fs::write(
+        dir.path().join(".gemini/skills/deploy/SKILL.md"),
+        "---\nname: deploy\n---\nDeploy.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join(".gemini/agents")).unwrap();
+    fs::write(
+        dir.path().join(".gemini/agents/reviewer.md"),
+        "---\nkind: local\n---\nReview.\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("GEMINI.md"), "Instructions.\n").unwrap();
+    // Set up opencode target
+    fs::create_dir_all(dir.path().join(".opencode")).unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "gemini",
+            "--output",
+            "opencode",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Migrated"));
+
+    // Source files should be deleted
+    assert!(!dir.path().join("GEMINI.md").exists());
+    assert!(!dir.path().join(".gemini/skills/deploy/SKILL.md").exists());
+    assert!(!dir.path().join(".gemini/agents/reviewer.md").exists());
+}
+
 // ===== Watch requires source =====
 
 #[test]

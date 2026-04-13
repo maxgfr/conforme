@@ -62,6 +62,11 @@ fn main() -> Result<()> {
         cli::Command::Watch { only } => {
             watch::run_watch(&project_root, only.as_deref(), args.verbose)
         }
+        cli::Command::Migrate {
+            source,
+            output,
+            dry_run,
+        } => sync::run_migrate(&project_root, &source, &output, dry_run, args.verbose),
         cli::Command::HelpAi => {
             help_ai::print_help_ai();
             Ok(())

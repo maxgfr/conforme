@@ -669,6 +669,167 @@ fn print_diff(old: &str, new: &str) {
     }
 }
 
+/// Run the `migrate` command: read from source, write to output, delete source files.
+pub fn run_migrate(
+    project_root: &Path,
+    source: &str,
+    output: &str,
+    dry_run: bool,
+    verbose: bool,
+) -> Result<()> {
+    if source == output {
+        bail!("Source and output tools cannot be the same.");
+    }
+
+    let adapters = adapters::all_adapters();
+    let known_ids: Vec<&str> = adapters.iter().map(|a| a.id()).collect();
+
+    let source_adapter = adapters.iter().find(|a| a.id() == source).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Unknown source tool '{}'. Known tools: {}",
+            source,
+            known_ids.join(", ")
+        )
+    })?;
+
+    let output_adapter = adapters.iter().find(|a| a.id() == output).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Unknown output tool '{}'. Known tools: {}",
+            output,
+            known_ids.join(", ")
+        )
+    })?;
+
+    if !source_adapter.detect(project_root) {
+        bail!(
+            "{} is not detected in this project. Cannot read config from it.",
+            source_adapter.name()
+        );
+    }
+
+    // Read config from source
+    let config = source_adapter
+        .read(project_root)
+        .with_context(|| format!("failed to read config from {}", source_adapter.name()))?;
+
+    if verbose {
+        println!(
+            "  Source: {} ({} rules, {} skills, {} agents, {} MCP servers)",
+            source_adapter.name().bold(),
+            config.rules.len(),
+            config.skills.len(),
+            config.agents.len(),
+            config.mcp_servers.len(),
+        );
+    }
+
+    // Warn about capability loss on the output adapter
+    warn_capability_loss(output_adapter.as_ref(), &config);
+
+    // Collect source files to delete (generated files for the source adapter)
+    let source_files = source_adapter.generate(project_root, &config)?;
+    let source_managed_dirs = source_adapter.managed_directories(project_root);
+
+    if dry_run {
+        // Show what would be written
+        let generated = output_adapter.generate(project_root, &config)?;
+        println!(
+            "{} {} (dry-run, would generate):",
+            ">".cyan(),
+            output_adapter.name().bold()
+        );
+        for (path, _) in &generated {
+            let rel = path.strip_prefix(project_root).unwrap_or(path);
+            if path.exists() {
+                println!("    {} {}", "would update".yellow(), rel.display());
+            } else {
+                println!("    {} {}", "would create".green(), rel.display());
+            }
+        }
+
+        // Show what would be deleted
+        println!(
+            "{} {} (dry-run, would delete):",
+            "x".cyan(),
+            source_adapter.name().bold()
+        );
+        for (path, _) in &source_files {
+            if path.exists() {
+                let rel = path.strip_prefix(project_root).unwrap_or(path);
+                println!("    {} {}", "would remove".red(), rel.display());
+            }
+        }
+        // Also show managed directory contents (recursive)
+        for dir in &source_managed_dirs {
+            if dir.is_dir() {
+                for path in collect_files_recursive(dir)? {
+                    let rel = path.strip_prefix(project_root).unwrap_or(&path);
+                    println!("    {} {}", "would remove".red(), rel.display());
+                }
+            }
+        }
+    } else {
+        // 1. Write output files
+        let report = output_adapter.write(project_root, &config)?;
+        if !report.files_written.is_empty() {
+            println!("{} {}:", ">".green(), output_adapter.name().bold());
+            for path in &report.files_written {
+                println!(
+                    "    {} {}",
+                    "wrote".green(),
+                    path.strip_prefix(project_root).unwrap_or(path).display()
+                );
+            }
+        }
+
+        // 2. Delete source files
+        let mut any_removed = false;
+        let mut removed_paths = Vec::new();
+
+        for (path, _) in &source_files {
+            if path.exists() {
+                std::fs::remove_file(path)?;
+                removed_paths.push(path.clone());
+            }
+        }
+
+        // Also clean managed directories (recursive)
+        for dir in &source_managed_dirs {
+            if dir.is_dir() {
+                for path in collect_files_recursive(dir)? {
+                    std::fs::remove_file(&path)?;
+                    removed_paths.push(path);
+                }
+            }
+        }
+
+        if !removed_paths.is_empty() {
+            any_removed = true;
+            println!("{} {}:", "x".red(), source_adapter.name().bold());
+            for path in &removed_paths {
+                println!(
+                    "    {} {}",
+                    "removed".red(),
+                    path.strip_prefix(project_root).unwrap_or(path).display()
+                );
+            }
+        }
+
+        if report.files_written.is_empty() && !any_removed {
+            println!("{} Nothing to do.", "=".green());
+        } else {
+            println!(
+                "\n{} Migrated from {} to {}.",
+                "+".green(),
+                source_adapter.name().bold(),
+                output_adapter.name().bold()
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// Run the `add` command.
 pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result<()> {
     let agents_path = project_root.join("AGENTS.md");
@@ -771,4 +932,22 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
     }
 
     Ok(())
+}
+
+/// Recursively collect all files under a directory.
+fn collect_files_recursive(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
+    let mut files = Vec::new();
+    if !dir.is_dir() {
+        return Ok(files);
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            files.extend(collect_files_recursive(&path)?);
+        } else if path.is_file() {
+            files.push(path);
+        }
+    }
+    Ok(files)
 }

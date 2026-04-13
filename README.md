@@ -65,6 +65,7 @@ conforme status                      # Show tools and sync state
 conforme add rule "Name" --activation "glob **/*.ts"
 conforme watch                       # Auto-sync on file changes
 conforme remove cursor,windsurf      # Remove generated files
+conforme migrate --source gemini --output opencode  # Migrate between tools
 conforme hook install                # Git pre-commit hook
 conforme help-ai                     # Show tool format details
 ```

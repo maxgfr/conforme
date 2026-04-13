@@ -28,6 +28,7 @@ use std::path::PathBuf;
         conforme gitignore install           Add generated configs to .gitignore\n  \
         conforme gitignore uninstall         Remove conforme entries from .gitignore\n  \
         conforme watch                       Watch source and auto-sync\n  \
+        conforme migrate --source gemini --output opencode   Migrate config between tools\n  \
         conforme help-ai                     Show all supported tools and formats"
 )]
 pub struct Cli {
@@ -109,6 +110,18 @@ pub enum Command {
         /// Only sync to specific tools (comma-separated)
         #[arg(short, long, value_delimiter = ',')]
         only: Option<Vec<String>>,
+    },
+    /// Migrate config from one tool to another (generates output, deletes source)
+    Migrate {
+        /// Source tool to read config from
+        #[arg(long)]
+        source: String,
+        /// Target tool to generate config for
+        #[arg(long)]
+        output: String,
+        /// Preview changes without writing or deleting files
+        #[arg(short = 'n', long)]
+        dry_run: bool,
     },
     /// Show all supported AI tools and their config formats
     HelpAi,
