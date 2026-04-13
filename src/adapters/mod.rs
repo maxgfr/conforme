@@ -1,7 +1,14 @@
+pub mod amazonq;
 pub mod claude;
+pub mod codex;
+pub mod continuedev;
 pub mod copilot;
 pub mod cursor;
+pub mod gemini;
+pub mod opencode;
+pub mod roocode;
 pub mod windsurf;
+pub mod zed;
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -48,5 +55,31 @@ pub fn all_adapters() -> Vec<Box<dyn AiToolAdapter>> {
         Box::new(cursor::CursorAdapter),
         Box::new(windsurf::WindsurfAdapter),
         Box::new(copilot::CopilotAdapter),
+        Box::new(codex::CodexAdapter),
+        Box::new(opencode::OpenCodeAdapter),
+        Box::new(roocode::RooCodeAdapter),
+        Box::new(gemini::GeminiAdapter),
+        Box::new(continuedev::ContinueDevAdapter),
+        Box::new(zed::ZedAdapter),
+        Box::new(amazonq::AmazonQAdapter),
     ]
+}
+
+/// Write a file only if its content differs from what's already on disk.
+pub fn write_if_changed(path: &Path, content: &str, report: &mut WriteReport) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    if path.exists() {
+        let existing = std::fs::read_to_string(path)?;
+        if crate::hash::contents_match(&existing, content) {
+            report.files_unchanged.push(path.to_path_buf());
+            return Ok(());
+        }
+    }
+
+    std::fs::write(path, content)?;
+    report.files_written.push(path.to_path_buf());
+    Ok(())
 }

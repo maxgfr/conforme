@@ -16,7 +16,9 @@ use std::path::PathBuf;
         conforme sync --dry-run              Preview changes without writing\n  \
         conforme sync --only claude,cursor   Sync only to specific tools\n  \
         conforme check                       Check if configs are in sync (CI)\n  \
-        conforme status                      Show detected tools and sync state"
+        conforme status                      Show detected tools and sync state\n  \
+        conforme hook install                Install git pre-commit hook\n  \
+        conforme hook uninstall              Remove git pre-commit hook"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -52,4 +54,17 @@ pub enum Command {
     Check,
     /// Show detected tools and sync status
     Status,
+    /// Manage git pre-commit hook (like Husky)
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum HookAction {
+    /// Install a git pre-commit hook that runs `conforme check`
+    Install,
+    /// Remove the conforme pre-commit hook
+    Uninstall,
 }

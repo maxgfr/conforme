@@ -23,6 +23,13 @@ cargo install --path .
 | Cursor | `.cursor/rules/*.mdc` | Supported |
 | Windsurf | `.windsurf/rules/*.md` | Supported |
 | GitHub Copilot | `.github/copilot-instructions.md` + `.github/instructions/` | Supported |
+| OpenAI Codex CLI | `AGENTS.md` (native) | Supported |
+| OpenCode | `AGENTS.md` (native) | Supported |
+| Roo Code / Cline | `.roo/rules/*.md` | Supported |
+| Gemini CLI | `GEMINI.md` | Supported |
+| Continue.dev | `.continue/rules/*.md` | Supported |
+| Zed AI | `.rules` | Supported |
+| Amazon Q | `.amazonq/rules/*.md` | Supported |
 
 ## Quick start
 
@@ -40,6 +47,20 @@ conforme check
 # See status
 conforme status
 ```
+
+## Pre-commit hook
+
+conforme can act as a pre-commit hook (like [Husky](https://github.com/typicode/husky)) to ensure configs stay in sync:
+
+```bash
+# Install the git hook
+conforme hook install
+
+# Remove it
+conforme hook uninstall
+```
+
+The hook runs `conforme check` before each commit and blocks the commit if configs are out of sync.
 
 ## AGENTS.md format
 

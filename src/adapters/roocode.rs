@@ -1,0 +1,126 @@
+use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
+
+use crate::adapters::{write_if_changed, AiToolAdapter, WriteReport};
+use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
+
+/// Roo Code / Cline adapter.
+/// Rules in .roo/rules/*.md — plain Markdown, NO YAML frontmatter.
+/// Files loaded in alphabetical order. Mode-specific rules in .roo/rules-{mode}/.
+pub struct RooCodeAdapter;
+
+impl AiToolAdapter for RooCodeAdapter {
+    fn name(&self) -> &str {
+        "Roo Code"
+    }
+
+    fn id(&self) -> &str {
+        "roocode"
+    }
+
+    fn detect(&self, project_root: &Path) -> bool {
+        project_root.join(".roo").is_dir()
+            || project_root.join(".roorules").exists()
+            || project_root.join(".clinerules").exists()
+    }
+
+    fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
+        let mut instructions = String::new();
+        let mut rules = Vec::new();
+
+        let rules_dir = project_root.join(".roo").join("rules");
+        if rules_dir.is_dir() {
+            let mut entries: Vec<_> = std::fs::read_dir(&rules_dir)?
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+
+            for entry in entries {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "md") {
+                    let content = std::fs::read_to_string(&path)
+                        .with_context(|| format!("failed to read {}", path.display()))?;
+                    let name = path
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+
+                    if name == "00-general" || name == "general" {
+                        instructions = content.trim().to_string();
+                    } else {
+                        rules.push(NormalizedRule {
+                            name,
+                            content: content.trim().to_string(),
+                            activation: ActivationMode::Always,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(NormalizedConfig {
+            instructions,
+            rules,
+        })
+    }
+
+    fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport> {
+        let generated = self.generate(project_root, config)?;
+        let mut report = WriteReport {
+            files_written: Vec::new(),
+            files_unchanged: Vec::new(),
+        };
+
+        for (path, content) in generated {
+            write_if_changed(&path, &content, &mut report)?;
+        }
+
+        Ok(report)
+    }
+
+    fn generate(
+        &self,
+        project_root: &Path,
+        config: &NormalizedConfig,
+    ) -> Result<Vec<(PathBuf, String)>> {
+        let rules_dir = project_root.join(".roo").join("rules");
+        let mut files = Vec::new();
+        let mut idx = 0u32;
+
+        // Roo Code has no frontmatter — files are plain Markdown, loaded alphabetically.
+        // Use numeric prefix for ordering: 00-general, 01-rule-name, etc.
+
+        if !config.instructions.is_empty() {
+            files.push((
+                rules_dir.join("00-general.md"),
+                format!("{}\n", config.instructions),
+            ));
+            idx += 1;
+        }
+
+        for rule in &config.rules {
+            let filename = format!("{:02}-{}.md", idx, sanitize_name(&rule.name));
+            // Roo Code doesn't support activation modes — all rules are always-on.
+            // For glob/agent-decision rules, we include a comment noting the intended scope.
+            let mut content = String::new();
+            match &rule.activation {
+                ActivationMode::GlobMatch(globs) => {
+                    content.push_str(&format!(
+                        "<!-- Intended scope: {} -->\n\n",
+                        globs.join(", ")
+                    ));
+                }
+                ActivationMode::AgentDecision { description } if !description.is_empty() => {
+                    content.push_str(&format!("<!-- {description} -->\n\n"));
+                }
+                _ => {}
+            }
+            content.push_str(&rule.content);
+            files.push((rules_dir.join(filename), format!("{}\n", content.trim())));
+            idx += 1;
+        }
+
+        Ok(files)
+    }
+}

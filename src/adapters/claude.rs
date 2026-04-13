@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{AiToolAdapter, WriteReport};
+use crate::adapters::{write_if_changed, AiToolAdapter, WriteReport};
 use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
 use crate::frontmatter;
 
@@ -52,8 +52,13 @@ impl AiToolAdapter for ClaudeAdapter {
                             let globs: Vec<String> = paths
                                 .iter()
                                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .filter(|s| !s.is_empty())
                                 .collect();
-                            ActivationMode::GlobMatch(globs)
+                            if globs.is_empty() {
+                                ActivationMode::Always
+                            } else {
+                                ActivationMode::GlobMatch(globs)
+                            }
                         } else {
                             ActivationMode::Always
                         };
@@ -94,11 +99,9 @@ impl AiToolAdapter for ClaudeAdapter {
     ) -> Result<Vec<(PathBuf, String)>> {
         let mut files = Vec::new();
 
-        // Write CLAUDE.md with instructions
         let claude_md = project_root.join("CLAUDE.md");
         let mut claude_content = config.instructions.clone();
 
-        // Append always-on rules directly to CLAUDE.md
         let mut rule_files: Vec<(&NormalizedRule, String)> = Vec::new();
         for rule in &config.rules {
             match &rule.activation {
@@ -117,7 +120,6 @@ impl AiToolAdapter for ClaudeAdapter {
 
         files.push((claude_md, format!("{}\n", claude_content.trim())));
 
-        // Write rules with specific activation to .claude/rules/
         if !rule_files.is_empty() {
             let rules_dir = project_root.join(".claude").join("rules");
             for (rule, filename) in rule_files {
@@ -132,7 +134,6 @@ impl AiToolAdapter for ClaudeAdapter {
                         serde_yaml_ng::Value::Sequence(yaml_globs),
                     );
                 }
-                // AgentDecision and Manual: no frontmatter (Claude doesn't support these modes)
 
                 let content = frontmatter::serialize(&fields, &format!("{}\n", rule.content))?;
                 files.push((rules_dir.join(filename), content));
@@ -141,22 +142,4 @@ impl AiToolAdapter for ClaudeAdapter {
 
         Ok(files)
     }
-}
-
-fn write_if_changed(path: &Path, content: &str, report: &mut WriteReport) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    if path.exists() {
-        let existing = std::fs::read_to_string(path)?;
-        if crate::hash::contents_match(&existing, content) {
-            report.files_unchanged.push(path.to_path_buf());
-            return Ok(());
-        }
-    }
-
-    std::fs::write(path, content)?;
-    report.files_written.push(path.to_path_buf());
-    Ok(())
 }

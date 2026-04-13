@@ -4,6 +4,7 @@ mod config;
 mod detect;
 mod frontmatter;
 mod hash;
+mod hook;
 mod markdown;
 mod sync;
 
@@ -23,5 +24,9 @@ fn main() -> Result<()> {
         }
         cli::Command::Check => sync::run_check(&project_root, args.verbose),
         cli::Command::Status => sync::run_status(&project_root, args.verbose),
+        cli::Command::Hook { action } => match action {
+            cli::HookAction::Install => hook::install(&project_root, args.verbose),
+            cli::HookAction::Uninstall => hook::uninstall(&project_root, args.verbose),
+        },
     }
 }

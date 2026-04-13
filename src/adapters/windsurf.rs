@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{AiToolAdapter, WriteReport};
+use crate::adapters::{write_if_changed, AiToolAdapter, WriteReport};
 use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
 use crate::frontmatter;
 
@@ -83,7 +83,6 @@ impl AiToolAdapter for WindsurfAdapter {
         let rules_dir = project_root.join(".windsurf").join("rules");
         let mut files = Vec::new();
 
-        // Write instructions as general.md
         if !config.instructions.is_empty() {
             let mut fields = BTreeMap::new();
             fields.insert(
@@ -94,7 +93,6 @@ impl AiToolAdapter for WindsurfAdapter {
             files.push((rules_dir.join("general.md"), content));
         }
 
-        // Write each rule
         for rule in &config.rules {
             let filename = format!("{}.md", sanitize_name(&rule.name));
             let fields = build_windsurf_fields(rule);
@@ -116,8 +114,16 @@ fn parse_windsurf_activation(fields: &BTreeMap<String, serde_yaml_ng::Value>) ->
         "always_on" => ActivationMode::Always,
         "glob" => {
             let globs = fields.get("globs").and_then(|v| v.as_str()).unwrap_or("");
-            let patterns: Vec<String> = globs.split(',').map(|s| s.trim().to_string()).collect();
-            ActivationMode::GlobMatch(patterns)
+            let patterns: Vec<String> = globs
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if patterns.is_empty() {
+                ActivationMode::Always
+            } else {
+                ActivationMode::GlobMatch(patterns)
+            }
         }
         "model_decision" => {
             let desc = fields
@@ -183,22 +189,4 @@ fn build_windsurf_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_n
     }
 
     fields
-}
-
-fn write_if_changed(path: &Path, content: &str, report: &mut WriteReport) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    if path.exists() {
-        let existing = std::fs::read_to_string(path)?;
-        if crate::hash::contents_match(&existing, content) {
-            report.files_unchanged.push(path.to_path_buf());
-            return Ok(());
-        }
-    }
-
-    std::fs::write(path, content)?;
-    report.files_written.push(path.to_path_buf());
-    Ok(())
 }

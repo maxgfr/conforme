@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{AiToolAdapter, WriteReport};
+use crate::adapters::{write_if_changed, AiToolAdapter, WriteReport};
 use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
 use crate::frontmatter;
 
@@ -60,9 +60,16 @@ impl AiToolAdapter for CopilotAdapter {
 
                     let activation =
                         if let Some(apply_to) = fields.get("applyTo").and_then(|v| v.as_str()) {
-                            let patterns: Vec<String> =
-                                apply_to.split(',').map(|s| s.trim().to_string()).collect();
-                            ActivationMode::GlobMatch(patterns)
+                            let patterns: Vec<String> = apply_to
+                                .split(',')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+                            if patterns.is_empty() {
+                                ActivationMode::Always
+                            } else {
+                                ActivationMode::GlobMatch(patterns)
+                            }
                         } else {
                             ActivationMode::Always
                         };
@@ -104,7 +111,6 @@ impl AiToolAdapter for CopilotAdapter {
         let github_dir = project_root.join(".github");
         let mut files = Vec::new();
 
-        // Write copilot-instructions.md with instructions + always-on rules
         let mut main_content = config.instructions.clone();
         let mut instruction_rules: Vec<&NormalizedRule> = Vec::new();
 
@@ -113,7 +119,6 @@ impl AiToolAdapter for CopilotAdapter {
                 ActivationMode::Always
                 | ActivationMode::AgentDecision { .. }
                 | ActivationMode::Manual => {
-                    // Append to main instructions file
                     main_content.push_str("\n\n## ");
                     main_content.push_str(&rule.name);
                     main_content.push_str("\n\n");
@@ -132,7 +137,6 @@ impl AiToolAdapter for CopilotAdapter {
             ));
         }
 
-        // Write glob-based rules as .github/instructions/{name}.instructions.md
         if !instruction_rules.is_empty() {
             let instr_dir = github_dir.join("instructions");
             for rule in instruction_rules {
@@ -151,22 +155,4 @@ impl AiToolAdapter for CopilotAdapter {
 
         Ok(files)
     }
-}
-
-fn write_if_changed(path: &Path, content: &str, report: &mut WriteReport) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    if path.exists() {
-        let existing = std::fs::read_to_string(path)?;
-        if crate::hash::contents_match(&existing, content) {
-            report.files_unchanged.push(path.to_path_buf());
-            return Ok(());
-        }
-    }
-
-    std::fs::write(path, content)?;
-    report.files_written.push(path.to_path_buf());
-    Ok(())
 }

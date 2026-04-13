@@ -28,6 +28,13 @@ fn create_project_with_tools(agents_md: &str, tools: &[&str]) -> TempDir {
                 )
                 .unwrap();
             }
+            "codex" => fs::create_dir_all(dir.path().join(".codex")).unwrap(),
+            "opencode" => fs::create_dir_all(dir.path().join(".opencode")).unwrap(),
+            "roocode" => fs::create_dir_all(dir.path().join(".roo")).unwrap(),
+            "gemini" => fs::create_dir_all(dir.path().join(".gemini")).unwrap(),
+            "continue" => fs::create_dir_all(dir.path().join(".continue")).unwrap(),
+            "zed" => fs::write(dir.path().join(".rules"), "").unwrap(),
+            "amazonq" => fs::create_dir_all(dir.path().join(".amazonq")).unwrap(),
             _ => {}
         }
     }
@@ -403,4 +410,184 @@ Use React best practices.
     assert!(dir.path().join(".cursor/rules/general.mdc").exists());
     assert!(dir.path().join(".windsurf/rules/general.md").exists());
     assert!(dir.path().join(".github/copilot-instructions.md").exists());
+}
+
+// ===== New adapters =====
+
+#[test]
+fn test_sync_creates_gemini_config() {
+    let agents_md = "# Instructions\nBe helpful.\n";
+    let dir = create_project_with_tools(agents_md, &["gemini"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let gemini = dir.path().join("GEMINI.md");
+    assert!(gemini.exists());
+    let content = fs::read_to_string(&gemini).unwrap();
+    assert!(content.contains("Be helpful."));
+}
+
+#[test]
+fn test_sync_creates_roocode_config() {
+    let agents_md = r#"# Instructions
+General rules.
+
+## Rule: Testing
+<!-- activation: always -->
+
+Write tests.
+"#;
+    let dir = create_project_with_tools(agents_md, &["roocode"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert!(dir.path().join(".roo/rules/00-general.md").exists());
+    assert!(dir.path().join(".roo/rules/01-testing.md").exists());
+}
+
+#[test]
+fn test_sync_creates_continue_config() {
+    let agents_md = r#"# Instructions
+Be consistent.
+
+## Rule: TypeScript
+<!-- activation: glob **/*.ts -->
+
+Use strict mode.
+"#;
+    let dir = create_project_with_tools(agents_md, &["continue"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let general = dir.path().join(".continue/rules/general.md");
+    assert!(general.exists());
+    let content = fs::read_to_string(&general).unwrap();
+    assert!(content.contains("alwaysApply: true"));
+
+    let ts = dir.path().join(".continue/rules/typescript.md");
+    assert!(ts.exists());
+    let content = fs::read_to_string(&ts).unwrap();
+    assert!(content.contains("globs:"));
+}
+
+#[test]
+fn test_sync_creates_zed_config() {
+    let agents_md = "# Instructions\nUse Rust.\n";
+    let dir = create_project_with_tools(agents_md, &["zed"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let rules = dir.path().join(".rules");
+    assert!(rules.exists());
+    let content = fs::read_to_string(&rules).unwrap();
+    assert!(content.contains("Use Rust."));
+}
+
+#[test]
+fn test_sync_creates_amazonq_config() {
+    let agents_md = r#"# Instructions
+Follow AWS best practices.
+
+## Rule: Security
+<!-- activation: always -->
+
+Use IAM roles.
+"#;
+    let dir = create_project_with_tools(agents_md, &["amazonq"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert!(dir.path().join(".amazonq/rules/general.md").exists());
+    assert!(dir.path().join(".amazonq/rules/security.md").exists());
+}
+
+#[test]
+fn test_sync_all_11_tools() {
+    let agents_md = "# Instructions\nGlobal.\n";
+    let dir = create_project_with_tools(
+        agents_md,
+        &[
+            "cursor", "claude", "windsurf", "copilot", "codex", "opencode", "roocode", "gemini",
+            "continue", "zed", "amazonq",
+        ],
+    );
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert!(dir.path().join("CLAUDE.md").exists());
+    assert!(dir.path().join(".cursor/rules/general.mdc").exists());
+    assert!(dir.path().join(".windsurf/rules/general.md").exists());
+    assert!(dir.path().join("GEMINI.md").exists());
+    assert!(dir.path().join(".roo/rules/00-general.md").exists());
+    assert!(dir.path().join(".continue/rules/general.md").exists());
+    assert!(dir.path().join(".rules").exists());
+    assert!(dir.path().join(".amazonq/rules/general.md").exists());
+}
+
+// ===== Hook =====
+
+#[test]
+fn test_hook_install_requires_git() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("AGENTS.md"), "# test").unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "hook", "install"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No .git directory"));
+}
+
+#[test]
+fn test_hook_install_and_uninstall() {
+    let dir = TempDir::new().unwrap();
+    // Create a fake git repo
+    fs::create_dir_all(dir.path().join(".git/hooks")).unwrap();
+    fs::write(dir.path().join("AGENTS.md"), "# test").unwrap();
+
+    // Install
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "hook", "install"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Pre-commit hook installed"));
+
+    let hook = dir.path().join(".git/hooks/pre-commit");
+    assert!(hook.exists());
+    let content = fs::read_to_string(&hook).unwrap();
+    assert!(content.contains("conforme check"));
+
+    // Install again — should say already installed
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "hook", "install"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already installed"));
+
+    // Uninstall
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "hook", "uninstall"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("uninstalled"));
+
+    assert!(!hook.exists());
 }
