@@ -58,6 +58,7 @@ impl AiToolAdapter for WindsurfAdapter {
         Ok(NormalizedConfig {
             instructions,
             rules,
+            ..Default::default()
         })
     }
 

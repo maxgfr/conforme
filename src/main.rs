@@ -7,6 +7,8 @@ mod hash;
 mod help_ai;
 mod hook;
 mod markdown;
+mod mcp;
+mod skills;
 mod sync;
 
 use anyhow::Result;

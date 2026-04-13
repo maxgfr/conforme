@@ -625,6 +625,61 @@ Use handler pattern.
 }
 
 #[test]
+fn test_sync_skills_and_mcp() {
+    let agents_md = r#"# Instructions
+Use TypeScript.
+
+## Skill: deploy
+<!-- description: Deploy the application -->
+<!-- tools: Bash -->
+
+Run `npm run deploy`.
+
+## MCP: filesystem
+<!-- command: npx -->
+<!-- args: -y, @modelcontextprotocol/server-filesystem -->
+
+## Agent: reviewer
+<!-- description: Code review agent -->
+<!-- model: gpt-4o -->
+<!-- tools: codebase, terminal -->
+
+Review all changes for bugs.
+"#;
+    let dir = create_project_with_tools(agents_md, &["claude", "copilot", "codex"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    // Claude: skills + MCP
+    assert!(dir.path().join(".claude/skills/deploy/SKILL.md").exists());
+    let skill = fs::read_to_string(dir.path().join(".claude/skills/deploy/SKILL.md")).unwrap();
+    assert!(skill.contains("name: deploy"));
+    assert!(skill.contains("allowed-tools: Bash"));
+
+    assert!(dir.path().join(".mcp.json").exists());
+    let mcp = fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
+    assert!(mcp.contains("filesystem"));
+    assert!(mcp.contains("npx"));
+
+    // Copilot: prompts + agents + MCP
+    assert!(dir.path().join(".github/prompts/deploy.prompt.md").exists());
+    assert!(dir.path().join(".github/agents/reviewer.agent.md").exists());
+    let agent = fs::read_to_string(dir.path().join(".github/agents/reviewer.agent.md")).unwrap();
+    assert!(agent.contains("name: reviewer"));
+    assert!(agent.contains("model: gpt-4o"));
+
+    assert!(dir.path().join(".vscode/mcp.json").exists());
+    let mcp = fs::read_to_string(dir.path().join(".vscode/mcp.json")).unwrap();
+    assert!(mcp.contains("\"servers\""));
+
+    // Codex: skills
+    assert!(dir.path().join(".agents/skills/deploy/SKILL.md").exists());
+}
+
+#[test]
 fn test_help_ai() {
     conforme().arg("help-ai").assert().success().stdout(
         predicate::str::contains("Claude Code")

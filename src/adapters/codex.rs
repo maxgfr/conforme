@@ -35,6 +35,7 @@ impl AiToolAdapter for CodexAdapter {
         Ok(NormalizedConfig {
             instructions,
             rules: Vec::new(),
+            ..Default::default()
         })
     }
 
@@ -69,9 +70,17 @@ impl AiToolAdapter for CodexAdapter {
             content.push_str(&rule.content);
         }
 
-        Ok(vec![(
+        let mut files = vec![(
             project_root.join("AGENTS.md"),
             format!("{}\n", content.trim()),
-        )])
+        )];
+
+        // Generate skills as .agents/skills/<name>/SKILL.md (Codex format)
+        files.extend(crate::skills::generate_codex_skills(
+            project_root,
+            &config.skills,
+        )?);
+
+        Ok(files)
     }
 }

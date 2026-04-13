@@ -34,6 +34,7 @@ impl AiToolAdapter for AmpAdapter {
         Ok(NormalizedConfig {
             instructions,
             rules: Vec::new(),
+            ..Default::default()
         })
     }
 

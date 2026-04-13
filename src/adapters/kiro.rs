@@ -64,6 +64,7 @@ impl AiToolAdapter for KiroAdapter {
         Ok(NormalizedConfig {
             instructions,
             rules,
+            ..Default::default()
         })
     }
 

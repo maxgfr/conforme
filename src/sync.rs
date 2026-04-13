@@ -32,7 +32,7 @@ pub fn run_init(project_root: &Path, force: bool, verbose: bool) -> Result<()> {
                             if !config.instructions.is_empty() || !config.rules.is_empty() =>
                         {
                             // Write imported config as AGENTS.md
-                            let content = export_as_agents_md(&config);
+                            let content = markdown::export_as_agents_md(&config);
                             std::fs::write(&agents_md, content)?;
                             println!(
                                 "{} Imported existing config from {} into AGENTS.md",
@@ -299,41 +299,4 @@ fn check_sync_status(
         }
     }
     Ok(true)
-}
-
-/// Export a NormalizedConfig back to AGENTS.md format.
-fn export_as_agents_md(config: &crate::config::NormalizedConfig) -> String {
-    let mut out = String::new();
-
-    if !config.instructions.is_empty() {
-        out.push_str("# Project Instructions\n\n");
-        out.push_str(&config.instructions);
-        out.push('\n');
-    }
-
-    for rule in &config.rules {
-        out.push_str(&format!("\n## Rule: {}\n", rule.name));
-        match &rule.activation {
-            crate::config::ActivationMode::Always => {
-                out.push_str("<!-- activation: always -->\n");
-            }
-            crate::config::ActivationMode::GlobMatch(globs) => {
-                out.push_str(&format!("<!-- activation: glob {} -->\n", globs.join(",")));
-            }
-            crate::config::ActivationMode::AgentDecision { description } => {
-                out.push_str("<!-- activation: agent-decision -->\n");
-                if !description.is_empty() {
-                    out.push_str(&format!("<!-- description: {} -->\n", description));
-                }
-            }
-            crate::config::ActivationMode::Manual => {
-                out.push_str("<!-- activation: manual -->\n");
-            }
-        }
-        out.push('\n');
-        out.push_str(&rule.content);
-        out.push('\n');
-    }
-
-    out
 }

@@ -75,6 +75,7 @@ impl AiToolAdapter for ClaudeAdapter {
         Ok(NormalizedConfig {
             instructions,
             rules,
+            ..Default::default()
         })
     }
 
@@ -138,6 +139,18 @@ impl AiToolAdapter for ClaudeAdapter {
                 let content = frontmatter::serialize(&fields, &format!("{}\n", rule.content))?;
                 files.push((rules_dir.join(filename), content));
             }
+        }
+
+        // Generate skills as .claude/skills/<name>/SKILL.md
+        files.extend(crate::skills::generate_claude_skills(
+            project_root,
+            &config.skills,
+        )?);
+
+        // Generate MCP config as .mcp.json
+        if !config.mcp_servers.is_empty() {
+            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
+            files.push((project_root.join(".mcp.json"), format!("{}\n", mcp_json)));
         }
 
         Ok(files)

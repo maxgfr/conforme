@@ -8,7 +8,7 @@ conforme is a Rust CLI that synchronizes AI coding agent configurations across 1
 
 ```bash
 cargo build --release
-cargo test                     # 42 tests (13 unit + 29 integration)
+cargo test                     # 53 tests (23 unit + 30 integration)
 cargo clippy -- -D warnings    # lint — MUST pass before pushing
 cargo fmt -- --check           # format check
 ```
@@ -19,7 +19,7 @@ cargo fmt -- --check           # format check
 src/
   main.rs           — Entry point, dispatches subcommands
   cli.rs            — CLI arg parsing (clap derive)
-  config.rs         — NormalizedConfig, NormalizedRule, ActivationMode types
+  config.rs         — NormalizedConfig, NormalizedRule, NormalizedSkill, NormalizedAgent, NormalizedMcpServer, ActivationMode
   markdown.rs       — AGENTS.md parser (sections → rules via ## Rule: headings)
   frontmatter.rs    — gray_matter wrapper for YAML frontmatter parsing/serialization
   sync.rs           — Core sync engine: init, sync, check, status commands
@@ -27,6 +27,8 @@ src/
   hash.rs           — SHA-256 content hashing for change detection
   hook.rs           — Git pre-commit hook install/uninstall (like Husky)
   help_ai.rs        — Detailed help about all supported tools and formats
+  mcp.rs            — MCP config generation/parsing (JSON format for Claude, Cursor, Copilot, Roo)
+  skills.rs         — Skills (SKILL.md), agents (.agent.md), prompts (.prompt.md) generation
   adapters/
     mod.rs          — AiToolAdapter trait + registry + shared write_if_changed
     claude.rs       — Claude Code: CLAUDE.md + .claude/rules/*.md (paths: frontmatter)
@@ -71,6 +73,25 @@ Content.
 
 Activation modes: `always`, `glob <patterns>`, `agent-decision`, `manual`.
 If no activation comment: defaults to `always`.
+
+Also supports `## Skill:`, `## Agent:`, and `## MCP:` sections:
+
+```markdown
+## Skill: deploy
+<!-- description: Deploy the app -->
+<!-- tools: Bash -->
+Run npm run deploy.
+
+## Agent: reviewer
+<!-- description: Code review -->
+<!-- model: gpt-4o -->
+<!-- tools: codebase -->
+Review for bugs.
+
+## MCP: filesystem
+<!-- command: npx -->
+<!-- args: -y, @mcp/server-filesystem -->
+```
 
 ### Adapter categories
 

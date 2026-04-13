@@ -56,6 +56,7 @@ impl AiToolAdapter for AmazonQAdapter {
         Ok(NormalizedConfig {
             instructions,
             rules,
+            ..Default::default()
         })
     }
 

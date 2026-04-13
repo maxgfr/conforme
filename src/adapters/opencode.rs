@@ -35,6 +35,7 @@ impl AiToolAdapter for OpenCodeAdapter {
         Ok(NormalizedConfig {
             instructions,
             rules: Vec::new(),
+            ..Default::default()
         })
     }
 

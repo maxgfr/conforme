@@ -61,6 +61,7 @@ impl AiToolAdapter for ContinueDevAdapter {
         Ok(NormalizedConfig {
             instructions,
             rules,
+            ..Default::default()
         })
     }
 

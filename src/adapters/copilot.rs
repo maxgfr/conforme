@@ -86,6 +86,7 @@ impl AiToolAdapter for CopilotAdapter {
         Ok(NormalizedConfig {
             instructions,
             rules,
+            ..Default::default()
         })
     }
 
@@ -151,6 +152,27 @@ impl AiToolAdapter for CopilotAdapter {
                     files.push((instr_dir.join(filename), content));
                 }
             }
+        }
+
+        // Generate skills as .github/prompts/<name>.prompt.md
+        files.extend(crate::skills::generate_copilot_prompts(
+            project_root,
+            &config.skills,
+        )?);
+
+        // Generate agents as .github/agents/<name>.agent.md
+        files.extend(crate::skills::generate_copilot_agents(
+            project_root,
+            &config.agents,
+        )?);
+
+        // Generate MCP config as .vscode/mcp.json (Copilot uses `servers` key)
+        if !config.mcp_servers.is_empty() {
+            let mcp_json = crate::mcp::generate_copilot_mcp_json(&config.mcp_servers)?;
+            files.push((
+                project_root.join(".vscode").join("mcp.json"),
+                format!("{}\n", mcp_json),
+            ));
         }
 
         Ok(files)

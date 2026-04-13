@@ -131,11 +131,245 @@ General instructions that apply everywhere.
 | Agent Decision | `<!-- activation: agent-decision -->` | `description: "..."` | `trigger: model_decision` | in main file | `inclusion: auto` |
 | Manual | `<!-- activation: manual -->` | `alwaysApply: false` | `trigger: manual` | in main file | `inclusion: manual` |
 
+## Skills, Agents, and MCP sync
+
+Beyond rules, conforme syncs **skills** (reusable prompts), **custom agents**, and **MCP server configs**:
+
+```markdown
+## Skill: deploy
+<!-- description: Deploy the application to production -->
+<!-- tools: Bash -->
+
+Run `npm run build && npm run deploy`.
+
+## Agent: reviewer
+<!-- description: Code review agent -->
+<!-- model: gpt-4o -->
+<!-- tools: codebase, terminal -->
+
+Review all changes for correctness and security.
+
+## MCP: filesystem
+<!-- command: npx -->
+<!-- args: -y, @modelcontextprotocol/server-filesystem, /workspace -->
+```
+
+### What gets generated
+
+| Source | Claude Code | Copilot | Codex CLI |
+|--------|------------|---------|-----------|
+| `## Skill:` | `.claude/skills/<name>/SKILL.md` | `.github/prompts/<name>.prompt.md` | `.agents/skills/<name>/SKILL.md` |
+| `## Agent:` | — | `.github/agents/<name>.agent.md` | — |
+| `## MCP:` | `.mcp.json` | `.vscode/mcp.json` | — |
+
+MCP is also synced to `.cursor/mcp.json` and `.roo/mcp.json` when those tools are detected.
+
+## Tutorial: Node.js project
+
+### 1. Initialize
+
+```bash
+cd my-node-project
+npm init -y # if needed
+git init    # if needed
+
+# Install conforme
+brew install maxgfr/tap/conforme
+
+# Initialize
+conforme init
+```
+
+### 2. Configure AGENTS.md
+
+```markdown
+# My Node.js Project
+
+Use TypeScript with strict mode. Follow ESLint rules.
+Run `npm test` before suggesting changes are complete.
+
+## Rule: TypeScript
+<!-- activation: glob **/*.ts,**/*.tsx -->
+
+- Use strict TypeScript (`"strict": true` in tsconfig)
+- Prefer `interface` over `type` for object shapes
+- Use explicit return types on exported functions
+
+## Rule: Testing
+<!-- activation: glob **/*.test.ts,**/*.spec.ts -->
+
+- Use Vitest for unit tests
+- Mock external APIs, never call them in tests
+- Aim for >80% coverage on business logic
+
+## Skill: deploy
+<!-- description: Deploy to production -->
+<!-- tools: Bash -->
+
+Run `npm run build && npm run deploy`.
+
+## MCP: filesystem
+<!-- command: npx -->
+<!-- args: -y, @modelcontextprotocol/server-filesystem, . -->
+```
+
+### 3. Sync and install hook
+
+```bash
+conforme sync
+conforme hook install
+```
+
+### 4. Add to CI (GitHub Actions)
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+on: [push, pull_request]
+jobs:
+  check-ai-configs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install conforme
+        run: |
+          curl -L -o conforme https://github.com/maxgfr/conforme/releases/latest/download/conforme-linux-x64
+          chmod +x conforme
+          sudo mv conforme /usr/local/bin/
+      - name: Check AI configs in sync
+        run: conforme check
+```
+
+### 5. Add to package.json (alternative to conforme hook)
+
+```json
+{
+  "scripts": {
+    "prepare": "conforme hook install",
+    "conforme:sync": "conforme sync",
+    "conforme:check": "conforme check"
+  }
+}
+```
+
+Now `npm install` will automatically install the pre-commit hook.
+
+---
+
+## Tutorial: Rust project
+
+### 1. Initialize
+
+```bash
+cd my-rust-project
+cargo init # if needed
+git init   # if needed
+
+# Install conforme
+brew install maxgfr/tap/conforme
+
+# Initialize
+conforme init
+```
+
+### 2. Configure AGENTS.md
+
+```markdown
+# My Rust Project
+
+Use idiomatic Rust. Run `cargo clippy -- -D warnings` and `cargo test`
+before suggesting changes are complete.
+
+## Rule: Error Handling
+<!-- activation: glob **/*.rs -->
+
+- Use `anyhow::Result` for application code, `thiserror` for libraries
+- Never use `.unwrap()` in production code — use `?` or `.expect("reason")`
+- Return `Result` from all public functions that can fail
+
+## Rule: Testing
+<!-- activation: glob **/tests/**,**/*_test.rs -->
+
+- Use `#[test]` for unit tests, `tests/` directory for integration
+- Use `assert_eq!` with descriptive messages
+- Test error cases, not just happy paths
+
+## Rule: Unsafe Code
+<!-- activation: glob **/*.rs -->
+<!-- activation: agent-decision -->
+<!-- description: Apply when reviewing code that uses unsafe blocks -->
+
+- Every `unsafe` block must have a `// SAFETY:` comment
+- Prefer safe abstractions — only use unsafe when necessary
+- Document invariants that the caller must uphold
+
+## Skill: release
+<!-- description: Create a new release -->
+<!-- tools: Bash -->
+
+1. Run `cargo test`
+2. Run `cargo clippy -- -D warnings`
+3. Bump version in Cargo.toml
+4. Commit and tag: `git tag v$(cargo pkgid | cut -d# -f2)`
+5. Push: `git push && git push --tags`
+```
+
+### 3. Sync and install hook
+
+```bash
+conforme sync
+conforme hook install
+```
+
+### 4. Add to CI (GitHub Actions)
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+      - run: cargo clippy -- -D warnings
+
+  check-ai-configs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install conforme
+        run: |
+          curl -L -o conforme https://github.com/maxgfr/conforme/releases/latest/download/conforme-linux-x64
+          chmod +x conforme
+          sudo mv conforme /usr/local/bin/
+      - run: conforme check
+```
+
+### 5. Add to Makefile (alternative)
+
+```makefile
+.PHONY: setup sync check
+
+setup:
+	conforme hook install
+
+sync:
+	conforme sync
+
+check:
+	conforme check
+```
+
+---
+
 ## How it works
 
-1. **Parse**: Reads `AGENTS.md` and extracts instructions + rules with activation metadata
+1. **Parse**: Reads `AGENTS.md` and extracts instructions, rules, skills, agents, and MCP servers
 2. **Detect**: Scans for tool-specific directories (`.cursor/`, `.windsurf/`, `.kiro/`, etc.)
-3. **Generate**: Converts normalized rules to each tool's format (frontmatter, file structure)
+3. **Generate**: Converts normalized config to each tool's format (frontmatter, file structure, JSON)
 4. **Write**: Creates/updates files only if content changed (SHA-256 hash comparison)
 
 ## License

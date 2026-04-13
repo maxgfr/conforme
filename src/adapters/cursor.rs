@@ -58,6 +58,7 @@ impl AiToolAdapter for CursorAdapter {
         Ok(NormalizedConfig {
             instructions,
             rules,
+            ..Default::default()
         })
     }
 
@@ -95,6 +96,15 @@ impl AiToolAdapter for CursorAdapter {
             let fields = build_cursor_fields(rule);
             let content = frontmatter::serialize(&fields, &format!("{}\n", rule.content))?;
             files.push((rules_dir.join(filename), content));
+        }
+
+        // Generate MCP config as .cursor/mcp.json
+        if !config.mcp_servers.is_empty() {
+            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
+            files.push((
+                project_root.join(".cursor").join("mcp.json"),
+                format!("{}\n", mcp_json),
+            ));
         }
 
         Ok(files)

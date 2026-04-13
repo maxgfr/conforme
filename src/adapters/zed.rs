@@ -37,6 +37,7 @@ impl AiToolAdapter for ZedAdapter {
         Ok(NormalizedConfig {
             instructions,
             rules: Vec::new(),
+            ..Default::default()
         })
     }
 

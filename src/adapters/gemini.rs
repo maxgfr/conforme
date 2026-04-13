@@ -36,6 +36,7 @@ impl AiToolAdapter for GeminiAdapter {
         Ok(NormalizedConfig {
             instructions,
             rules: Vec::new(),
+            ..Default::default()
         })
     }
 

@@ -62,6 +62,7 @@ impl AiToolAdapter for RooCodeAdapter {
         Ok(NormalizedConfig {
             instructions,
             rules,
+            ..Default::default()
         })
     }
 
@@ -119,6 +120,15 @@ impl AiToolAdapter for RooCodeAdapter {
             content.push_str(&rule.content);
             files.push((rules_dir.join(filename), format!("{}\n", content.trim())));
             idx += 1;
+        }
+
+        // Generate MCP config as .roo/mcp.json
+        if !config.mcp_servers.is_empty() {
+            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
+            files.push((
+                project_root.join(".roo").join("mcp.json"),
+                format!("{}\n", mcp_json),
+            ));
         }
 
         Ok(files)
