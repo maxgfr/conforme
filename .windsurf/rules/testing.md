@@ -1,0 +1,12 @@
+---
+description: testing
+globs: tests/**
+trigger: glob
+---
+
+- Integration tests use `assert_cmd` + `tempfile` crates
+- Each adapter must have round-trip tests in `tests/roundtrip.rs`
+- MCP format tests belong in `src/mcp.rs` unit tests
+- Error case tests go in `tests/error_cases.rs`
+- Always assert on file paths AND content (not just existence)
+- When changing an output path (e.g. MCP location), update ALL tests that reference it
