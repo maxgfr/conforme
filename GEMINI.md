@@ -184,6 +184,7 @@ conforme add rule|skill|agent|mcp          # Add section to AGENTS.md
 conforme watch                             # Watch source and auto-sync
 conforme sync --from <tool>                # Use specific tool as source
 conforme sync --no-clean                   # Don't clean orphan files
+conforme migrate --source X --output Y    # Migrate config between tools
 ```
 
 ## Skills
