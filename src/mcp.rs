@@ -64,6 +64,7 @@ pub fn generate_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
 }
 
 /// Generate Copilot VS Code MCP format (uses `servers` key, not `mcpServers`).
+/// Supports `env` for stdio and `headers` for HTTP transports.
 pub fn generate_copilot_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
     if servers.is_empty() {
         return Ok(String::new());
@@ -90,55 +91,19 @@ pub fn generate_copilot_mcp_json(servers: &[NormalizedMcpServer]) -> Result<Stri
                     .collect();
                 entry.insert("args".to_string(), serde_json::Value::Array(json_args));
             }
-            McpTransport::Http { url, .. } => {
+            McpTransport::Http { url, headers } => {
                 entry.insert(
                     "type".to_string(),
                     serde_json::Value::String("http".to_string()),
                 );
                 entry.insert("url".to_string(), serde_json::Value::String(url.clone()));
-            }
-        }
-
-        mcp_servers.insert(server.name.clone(), serde_json::Value::Object(entry));
-    }
-
-    let root = serde_json::json!({ "servers": mcp_servers });
-    serde_json::to_string_pretty(&root).context("failed to serialize Copilot MCP config")
-}
-
-/// Generate OpenCode MCP format: { "mcp": { "name": { "type": "local", "command": ... } } }
-pub fn generate_opencode_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
-    if servers.is_empty() {
-        return Ok(String::new());
-    }
-
-    let mut mcp = serde_json::Map::new();
-
-    for server in servers {
-        let mut entry = serde_json::Map::new();
-
-        match &server.transport {
-            McpTransport::Stdio { command, args } => {
-                entry.insert(
-                    "type".to_string(),
-                    serde_json::Value::String("local".to_string()),
-                );
-                entry.insert(
-                    "command".to_string(),
-                    serde_json::Value::String(command.clone()),
-                );
-                let json_args: Vec<serde_json::Value> = args
-                    .iter()
-                    .map(|a| serde_json::Value::String(a.clone()))
-                    .collect();
-                entry.insert("args".to_string(), serde_json::Value::Array(json_args));
-            }
-            McpTransport::Http { url, .. } => {
-                entry.insert(
-                    "type".to_string(),
-                    serde_json::Value::String("remote".to_string()),
-                );
-                entry.insert("url".to_string(), serde_json::Value::String(url.clone()));
+                if !headers.is_empty() {
+                    let h: serde_json::Map<String, serde_json::Value> = headers
+                        .iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                        .collect();
+                    entry.insert("headers".to_string(), serde_json::Value::Object(h));
+                }
             }
         }
 
@@ -151,11 +116,123 @@ pub fn generate_opencode_mcp_json(servers: &[NormalizedMcpServer]) -> Result<Str
             entry.insert("env".to_string(), serde_json::Value::Object(env_obj));
         }
 
+        mcp_servers.insert(server.name.clone(), serde_json::Value::Object(entry));
+    }
+
+    let root = serde_json::json!({ "servers": mcp_servers });
+    serde_json::to_string_pretty(&root).context("failed to serialize Copilot MCP config")
+}
+
+/// Generate Windsurf MCP format (used inside the `mcp` object of opencode.json or standalone).
+/// Windsurf infers transport from shape: stdio uses `command`/`args`, HTTP uses `serverUrl`.
+/// No `type` field is emitted (Windsurf does not document one).
+pub fn generate_windsurf_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
+    if servers.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut mcp_servers = serde_json::Map::new();
+
+    for server in servers {
+        let mut entry = serde_json::Map::new();
+
+        match &server.transport {
+            McpTransport::Stdio { command, args } => {
+                entry.insert(
+                    "command".to_string(),
+                    serde_json::Value::String(command.clone()),
+                );
+                let json_args: Vec<serde_json::Value> = args
+                    .iter()
+                    .map(|a| serde_json::Value::String(a.clone()))
+                    .collect();
+                entry.insert("args".to_string(), serde_json::Value::Array(json_args));
+            }
+            McpTransport::Http { url, headers } => {
+                entry.insert(
+                    "serverUrl".to_string(),
+                    serde_json::Value::String(url.clone()),
+                );
+                if !headers.is_empty() {
+                    let h: serde_json::Map<String, serde_json::Value> = headers
+                        .iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                        .collect();
+                    entry.insert("headers".to_string(), serde_json::Value::Object(h));
+                }
+            }
+        }
+
+        if !server.env.is_empty() {
+            let env_obj: serde_json::Map<String, serde_json::Value> = server
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            entry.insert("env".to_string(), serde_json::Value::Object(env_obj));
+        }
+
+        mcp_servers.insert(server.name.clone(), serde_json::Value::Object(entry));
+    }
+
+    let root = serde_json::json!({ "mcpServers": mcp_servers });
+    serde_json::to_string_pretty(&root).context("failed to serialize Windsurf MCP config")
+}
+
+/// Build the OpenCode `mcp` object (not a full file — `opencode.json` is merged by the adapter).
+/// OpenCode format: stdio uses `command: [cmd, ...args]` as a single array;
+/// env var key is `environment` (not `env`); remote servers use `url`.
+pub fn build_opencode_mcp_object(
+    servers: &[NormalizedMcpServer],
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut mcp = serde_json::Map::new();
+
+    for server in servers {
+        let mut entry = serde_json::Map::new();
+
+        match &server.transport {
+            McpTransport::Stdio { command, args } => {
+                entry.insert(
+                    "type".to_string(),
+                    serde_json::Value::String("local".to_string()),
+                );
+                let mut combined: Vec<serde_json::Value> = Vec::with_capacity(args.len() + 1);
+                combined.push(serde_json::Value::String(command.clone()));
+                combined.extend(args.iter().map(|a| serde_json::Value::String(a.clone())));
+                entry.insert("command".to_string(), serde_json::Value::Array(combined));
+            }
+            McpTransport::Http { url, headers } => {
+                entry.insert(
+                    "type".to_string(),
+                    serde_json::Value::String("remote".to_string()),
+                );
+                entry.insert("url".to_string(), serde_json::Value::String(url.clone()));
+                if !headers.is_empty() {
+                    let h: serde_json::Map<String, serde_json::Value> = headers
+                        .iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                        .collect();
+                    entry.insert("headers".to_string(), serde_json::Value::Object(h));
+                }
+            }
+        }
+
+        if !server.env.is_empty() {
+            let env_obj: serde_json::Map<String, serde_json::Value> = server
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            entry.insert(
+                "environment".to_string(),
+                serde_json::Value::Object(env_obj),
+            );
+        }
+
         mcp.insert(server.name.clone(), serde_json::Value::Object(entry));
     }
 
-    let root = serde_json::json!({ "mcp": mcp });
-    serde_json::to_string_pretty(&root).context("failed to serialize OpenCode MCP config")
+    mcp
 }
 
 /// Generate Zed context_servers format: { "context_servers": { "name": { "command": ..., "args": [...] } } }
@@ -316,12 +393,10 @@ pub fn generate_gemini_mcp_json(servers: &[NormalizedMcpServer]) -> Result<Strin
     serde_json::to_string_pretty(&root).context("failed to serialize Gemini MCP config")
 }
 
-/// Generate OpenCode agents format for opencode.json: { "agent": { "name": { ... } } }
-pub fn generate_opencode_agents_json(agents: &[crate::config::NormalizedAgent]) -> Result<String> {
-    if agents.is_empty() {
-        return Ok(String::new());
-    }
-
+/// Build the OpenCode `agent` object for `opencode.json` (merged by the adapter).
+pub fn build_opencode_agent_object(
+    agents: &[crate::config::NormalizedAgent],
+) -> serde_json::Map<String, serde_json::Value> {
     let mut agent_map = serde_json::Map::new();
 
     for agent in agents {
@@ -355,12 +430,11 @@ pub fn generate_opencode_agents_json(agents: &[crate::config::NormalizedAgent]) 
         );
     }
 
-    let root = serde_json::json!({ "agent": agent_map });
-    serde_json::to_string_pretty(&root).context("failed to serialize OpenCode agents config")
+    agent_map
 }
 
 /// Generate Amazon Q agent JSON files.
-/// Each agent is a separate JSON file: `.amazonq/agents/<name>.json`
+/// Each agent is a separate JSON file: `.amazonq/cli-agents/<name>.json`
 pub fn generate_amazonq_agents_json(
     agents: &[crate::config::NormalizedAgent],
 ) -> Result<Vec<(String, String)>> {
@@ -554,21 +628,105 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_opencode_mcp() {
+    fn test_build_opencode_mcp_object() {
         let servers = vec![NormalizedMcpServer {
             name: "filesystem".to_string(),
             transport: McpTransport::Stdio {
                 command: "npx".to_string(),
                 args: vec!["-y".to_string(), "@mcp/fs".to_string()],
             },
+            env: BTreeMap::from([("API_KEY".to_string(), "secret".to_string())]),
+        }];
+        let mcp = build_opencode_mcp_object(&servers);
+        let entry = mcp.get("filesystem").unwrap().as_object().unwrap();
+        assert_eq!(entry.get("type").unwrap().as_str().unwrap(), "local");
+        let command = entry.get("command").unwrap().as_array().unwrap();
+        assert_eq!(command.len(), 3);
+        assert_eq!(command[0].as_str().unwrap(), "npx");
+        assert_eq!(command[1].as_str().unwrap(), "-y");
+        assert_eq!(command[2].as_str().unwrap(), "@mcp/fs");
+        assert!(entry.get("environment").is_some());
+        assert!(entry.get("env").is_none());
+    }
+
+    #[test]
+    fn test_build_opencode_mcp_object_http() {
+        let servers = vec![NormalizedMcpServer {
+            name: "api".to_string(),
+            transport: McpTransport::Http {
+                url: "https://api.example.com/mcp".to_string(),
+                headers: BTreeMap::from([("Authorization".to_string(), "Bearer x".to_string())]),
+            },
             env: BTreeMap::new(),
         }];
-        let result = generate_opencode_mcp_json(&servers).unwrap();
-        assert!(result.contains("\"mcp\""));
-        assert!(result.contains("\"type\": \"local\""));
-        assert!(result.contains("filesystem"));
-        assert!(result.contains("npx"));
-        assert!(!result.contains("mcpServers"));
+        let mcp = build_opencode_mcp_object(&servers);
+        let entry = mcp.get("api").unwrap().as_object().unwrap();
+        assert_eq!(entry.get("type").unwrap().as_str().unwrap(), "remote");
+        assert_eq!(
+            entry.get("url").unwrap().as_str().unwrap(),
+            "https://api.example.com/mcp"
+        );
+        assert!(entry.get("headers").is_some());
+    }
+
+    #[test]
+    fn test_generate_windsurf_mcp_stdio() {
+        let servers = vec![NormalizedMcpServer {
+            name: "fs".to_string(),
+            transport: McpTransport::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "@mcp/fs".to_string()],
+            },
+            env: BTreeMap::new(),
+        }];
+        let result = generate_windsurf_mcp_json(&servers).unwrap();
+        assert!(result.contains("\"mcpServers\""));
+        assert!(result.contains("\"command\": \"npx\""));
+        // Windsurf does NOT use "type" field
+        assert!(!result.contains("\"type\""));
+    }
+
+    #[test]
+    fn test_generate_windsurf_mcp_http() {
+        let servers = vec![NormalizedMcpServer {
+            name: "api".to_string(),
+            transport: McpTransport::Http {
+                url: "https://example.com/mcp".to_string(),
+                headers: BTreeMap::new(),
+            },
+            env: BTreeMap::new(),
+        }];
+        let result = generate_windsurf_mcp_json(&servers).unwrap();
+        // Windsurf uses "serverUrl" not "url"
+        assert!(result.contains("\"serverUrl\": \"https://example.com/mcp\""));
+        assert!(!result.contains("\"\"url\""));
+        assert!(!result.contains("\"type\""));
+    }
+
+    #[test]
+    fn test_generate_copilot_mcp_emits_env_and_headers() {
+        let servers = vec![
+            NormalizedMcpServer {
+                name: "local".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "node".to_string(),
+                    args: vec![],
+                },
+                env: BTreeMap::from([("X".to_string(), "1".to_string())]),
+            },
+            NormalizedMcpServer {
+                name: "remote".to_string(),
+                transport: McpTransport::Http {
+                    url: "https://example.com/mcp".to_string(),
+                    headers: BTreeMap::from([("Auth".to_string(), "Bearer y".to_string())]),
+                },
+                env: BTreeMap::new(),
+            },
+        ];
+        let result = generate_copilot_mcp_json(&servers).unwrap();
+        assert!(result.contains("\"env\""));
+        assert!(result.contains("\"headers\""));
+        assert!(result.contains("Bearer y"));
     }
 
     #[test]
@@ -644,7 +802,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_opencode_agents() {
+    fn test_build_opencode_agent_object() {
         let agents = vec![crate::config::NormalizedAgent {
             name: "reviewer".to_string(),
             description: "Code review".to_string(),
@@ -652,12 +810,17 @@ mod tests {
             model: Some("gpt-4o".to_string()),
             tools: vec![],
         }];
-        let result = generate_opencode_agents_json(&agents).unwrap();
-        assert!(result.contains("\"agent\""));
-        assert!(result.contains("\"reviewer\""));
-        assert!(result.contains("\"description\": \"Code review\""));
-        assert!(result.contains("\"mode\": \"subagent\""));
-        assert!(result.contains("\"model\": \"gpt-4o\""));
-        assert!(result.contains("\"prompt\": \"Review code.\""));
+        let map = build_opencode_agent_object(&agents);
+        let entry = map.get("reviewer").unwrap().as_object().unwrap();
+        assert_eq!(
+            entry.get("description").unwrap().as_str().unwrap(),
+            "Code review"
+        );
+        assert_eq!(entry.get("mode").unwrap().as_str().unwrap(), "subagent");
+        assert_eq!(entry.get("model").unwrap().as_str().unwrap(), "gpt-4o");
+        assert_eq!(
+            entry.get("prompt").unwrap().as_str().unwrap(),
+            "Review code."
+        );
     }
 }

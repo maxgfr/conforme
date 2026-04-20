@@ -10,4 +10,7 @@ paths:
 - When adding a new adapter, update ALL of: README.md tables, src/help_ai.rs, src/cli.rs tool count, CLAUDE.md architecture section
 - Provider docs must list all official documentation URLs for the tool
 - Test round-trips: `read()` output fed into `generate()` should produce identical files
-- MCP JSON keys per tool: Claude/Windsurf/Kiro/RooCode/AmazonQ/Gemini = `mcpServers`, Copilot = `servers`, OpenCode = `mcp`, Zed = `context_servers`, Amp = `amp.mcpServers`
+- MCP JSON keys per tool: Claude/Windsurf/Kiro/RooCode/AmazonQ/Gemini/Cursor/Continue.dev = `mcpServers`, Copilot = `servers`, OpenCode = `mcp` (inside `opencode.json`), Zed = `context_servers`, Amp = `amp.mcpServers`
+- OpenCode MCP specifics: `command` is a single array `[cmd, ...args]`, env key is `environment` (not `env`), servers live inside `opencode.json` at project root (conforme merges — never clobber user-authored keys)
+- Windsurf MCP specifics: no `type` field; HTTP transport uses `serverUrl` (not `url`)
+- Cursor subagents: `.md` extension (not `.mdc`); no `tools` frontmatter field — tool access is inherited from the parent agent

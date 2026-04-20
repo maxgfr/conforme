@@ -1,5 +1,4 @@
 ---
-allowed-tools: Read Grep Glob Bash WebFetch WebSearch Edit Write
 description: Verify all 13 provider adapters against their official documentation and fix any discrepancies
 name: verify-providers
 ---

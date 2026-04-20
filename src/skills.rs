@@ -221,7 +221,10 @@ pub fn generate_claude_agents(
     Ok(files)
 }
 
-/// Generate Cursor agent files in `.cursor/agents/<name>.mdc`.
+/// Generate Cursor agent files in `.cursor/agents/<name>.md`.
+/// Cursor subagents use `.md` (not `.mdc`) and support only `name`, `description`,
+/// `model`, `readonly`, `is_background`. The `tools` field is not recognized;
+/// tool access is inherited from the parent agent.
 pub fn generate_cursor_agents(
     project_root: &Path,
     agents: &[NormalizedAgent],
@@ -230,7 +233,7 @@ pub fn generate_cursor_agents(
     let mut files = Vec::new();
 
     for agent in agents {
-        let filename = format!("{}.mdc", sanitize_name(&agent.name));
+        let filename = format!("{}.md", sanitize_name(&agent.name));
         let mut fields = BTreeMap::new();
         fields.insert(
             "name".to_string(),
@@ -246,17 +249,6 @@ pub fn generate_cursor_agents(
             fields.insert(
                 "model".to_string(),
                 serde_yaml_ng::Value::String(model.clone()),
-            );
-        }
-        if !agent.tools.is_empty() {
-            let yaml_tools: Vec<serde_yaml_ng::Value> = agent
-                .tools
-                .iter()
-                .map(|t| serde_yaml_ng::Value::String(t.clone()))
-                .collect();
-            fields.insert(
-                "tools".to_string(),
-                serde_yaml_ng::Value::Sequence(yaml_tools),
             );
         }
 
@@ -454,7 +446,8 @@ pub fn generate_roocode_skills(
 }
 
 /// Generate OpenCode skill files in `.opencode/skills/<name>/SKILL.md`.
-/// OpenCode skills use `name`, `description`, and optional `allowed-tools`.
+/// OpenCode skills recognize only `name`, `description`, `license`, `compatibility`,
+/// and `metadata`. `allowed-tools` is not a recognized field.
 pub fn generate_opencode_skills(
     project_root: &Path,
     skills: &[NormalizedSkill],
@@ -475,15 +468,45 @@ pub fn generate_opencode_skills(
                 serde_yaml_ng::Value::String(skill.description.clone()),
             );
         }
-        if !skill.allowed_tools.is_empty() {
-            fields.insert(
-                "allowed-tools".to_string(),
-                serde_yaml_ng::Value::String(skill.allowed_tools.join(" ")),
-            );
-        }
 
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+    }
+
+    Ok(files)
+}
+
+/// Generate OpenCode subagent markdown files in `.opencode/agents/<name>.md`.
+/// OpenCode reads per-project agent markdown files from `.opencode/agents/`.
+pub fn generate_opencode_agents_md(
+    project_root: &Path,
+    agents: &[NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
+    let agents_dir = project_root.join(".opencode").join("agents");
+    let mut files = Vec::new();
+
+    for agent in agents {
+        let filename = format!("{}.md", sanitize_name(&agent.name));
+        let mut fields = BTreeMap::new();
+        if !agent.description.is_empty() {
+            fields.insert(
+                "description".to_string(),
+                serde_yaml_ng::Value::String(agent.description.clone()),
+            );
+        }
+        fields.insert(
+            "mode".to_string(),
+            serde_yaml_ng::Value::String("subagent".to_string()),
+        );
+        if let Some(model) = &agent.model {
+            fields.insert(
+                "model".to_string(),
+                serde_yaml_ng::Value::String(model.clone()),
+            );
+        }
+
+        let content = frontmatter::serialize(&fields, &format!("{}\n", agent.content))?;
+        files.push((agents_dir.join(filename), content));
     }
 
     Ok(files)

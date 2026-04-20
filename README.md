@@ -163,14 +163,14 @@ Review all changes for correctness and security.
 |---------|-------|--------|--------|-----|
 | Claude Code | `.claude/rules/*.md` | `.claude/skills/` + `.claude/commands/` | `.claude/agents/*.md` | `.mcp.json` |
 | GitHub Copilot | `.github/instructions/*.md` | `.github/prompts/*.prompt.md` | `.github/agents/*.agent.md` | `.vscode/mcp.json` |
-| Cursor | `.cursor/rules/*.mdc` | `.cursor/skills/` | `.cursor/agents/*.mdc` | `.cursor/mcp.json` |
+| Cursor | `.cursor/rules/*.mdc` | `.cursor/skills/` | `.cursor/agents/*.md` | `.cursor/mcp.json` |
 | Kiro (AWS) | `.kiro/steering/*.md` | `.kiro/skills/` | `.kiro/agents/*.md` | `.kiro/settings/mcp.json` |
 | Windsurf | `.windsurf/rules/*.md` | `.windsurf/skills/` | - | `.windsurf/mcp.json` |
 | Continue.dev | `.continue/rules/*.md` | - | - | `.continue/mcp.json` |
 | Roo Code | `.roo/rules/*.md` | `.roo/skills/` | - | `.roo/mcp.json` |
 | Amazon Q | `.amazonq/rules/*.md` | - | `.amazonq/cli-agents/*.json` | `.amazonq/mcp.json` |
 | Gemini CLI | `GEMINI.md` | `.gemini/skills/` | `.gemini/agents/*.md` | `.gemini/settings.json` |
-| OpenCode | native (AGENTS.md) | `.opencode/skills/` | `.opencode/agents.json` | `.opencode/mcp.json` |
+| OpenCode | native (AGENTS.md) | `.opencode/skills/` | `opencode.json#agent` + `.opencode/agents/*.md` | `opencode.json#mcp` |
 | Zed AI | `.rules` | - | - | `.zed/settings.json` |
 | Codex CLI | native (AGENTS.md) | `.agents/skills/` | - | - (global only) |
 | Amp | native (AGENTS.md) | `.agents/skills/` | - | `.amp/settings.json` |
@@ -190,7 +190,7 @@ When using Claude Code as source (`source = "claude"`), conforme also reads **cu
 | Windsurf | `.windsurf/skills/<name>/SKILL.md` | `name`, `description` |
 | Roo Code | `.roo/skills/<name>/SKILL.md` | `name`, `description` |
 | Gemini CLI | `.gemini/skills/<name>/SKILL.md` | `name`, `description` (no other fields) |
-| OpenCode | `.opencode/skills/<name>/SKILL.md` | `name`, `description`, `allowed-tools` |
+| OpenCode | `.opencode/skills/<name>/SKILL.md` | `name`, `description` (no `allowed-tools`) |
 | Codex CLI | `.agents/skills/<name>/SKILL.md` | `name`, `description` |
 | Amp | `.agents/skills/<name>/SKILL.md` | `name`, `description` (shared Codex format) |
 
@@ -204,10 +204,10 @@ Agents (sub-agents) are custom AI assistants with a model, tools, and system pro
 |------|------|--------|
 | Claude Code | `.claude/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
 | Copilot | `.github/agents/<name>.agent.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
-| Cursor | `.cursor/agents/<name>.mdc` | YAML frontmatter: `name`, `description`, `model`, `tools` |
+| Cursor | `.cursor/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model` (no `tools` — inherited) |
 | Kiro | `.kiro/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
 | Gemini CLI | `.gemini/agents/<name>.md` | YAML frontmatter: `name`, `description`, `kind: local`, `model`, `tools` |
-| OpenCode | `.opencode/agents.json` | JSON: `{ "agent": { "<name>": { "mode": "subagent", "model", "prompt" } } }` |
+| OpenCode | `opencode.json` (`agent` key) + `.opencode/agents/<name>.md` | JSON merged into `opencode.json`; markdown for per-project agents |
 | Amazon Q | `.amazonq/cli-agents/<name>.json` | JSON per agent: `{ "description", "model", "tools", "prompt" }` |
 
 Tools without agents support: Windsurf, Continue.dev, Roo Code, Codex CLI, Zed AI, Amp.
@@ -220,16 +220,16 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 |------|------|----------|-------------|
 | Claude Code | `.mcp.json` | `mcpServers` | `type: stdio/http`, with `env`, `headers` |
 | Cursor | `.cursor/mcp.json` | `mcpServers` | `type: stdio/http` |
-| Windsurf | `.windsurf/mcp.json` | `mcpServers` | `type: stdio/http` |
-| Copilot | `.vscode/mcp.json` | `servers` | Uses `servers` key (not `mcpServers`), no headers |
-| Continue.dev | `.continue/mcp.json` | `mcpServers` | `type: stdio/http` |
-| Kiro | `.kiro/settings/mcp.json` | `mcpServers` | Standard format with `disabled` field |
-| Roo Code | `.roo/mcp.json` | `mcpServers` | Standard format with `alwaysAllow` |
-| Amazon Q | `.amazonq/mcp.json` | `mcpServers` | Standard format |
+| Windsurf | `.windsurf/mcp.json` (best-effort project) / `~/.codeium/windsurf/mcp_config.json` (global) | `mcpServers` | No `type` field; HTTP uses `serverUrl` (not `url`) |
+| Copilot | `.vscode/mcp.json` | `servers` | Uses `servers` key (not `mcpServers`); supports `env` + `headers` |
+| Continue.dev | `.continue/mcpServers/mcp.json` | `mcpServers` | `type: stdio/http` |
+| Kiro | `.kiro/settings/mcp.json` | `mcpServers` | Standard format |
+| Roo Code | `.roo/mcp.json` | `mcpServers` | Standard format |
+| Amazon Q | `.amazonq/mcp.json` | `mcpServers` | Standard format (legacy workspace MCP file) |
 | Gemini CLI | `.gemini/settings.json` | `mcpServers` | No `type` field, uses `httpUrl` (not `url`) for HTTP |
-| OpenCode | `.opencode/mcp.json` | `mcp` | `type: local/remote` (not stdio/http) |
-| Zed AI | `.zed/settings.json` | `context_servers` | `source: "custom"` required, no `type` field |
-| Amp | `.amp/settings.json` | `mcpServers` | Standard format |
+| OpenCode | `opencode.json` (merged) | `mcp` | `type: local/remote`; `command` as single array; env key is `environment` |
+| Zed AI | `.zed/settings.json` | `context_servers` | No `type` field |
+| Amp | `.amp/settings.json` | `amp.mcpServers` | Dotted key |
 
 Tools without project-level MCP support: Codex CLI (global only via `~/.codex/config.toml` in TOML format).
 

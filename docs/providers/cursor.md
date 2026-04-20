@@ -16,7 +16,7 @@
 |---------|------|--------|
 | Rules | `.cursor/rules/*.mdc` | YAML frontmatter: `alwaysApply`, `globs`, `description` |
 | Skills | `.cursor/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` |
-| Agents | `.cursor/agents/<name>.mdc` | YAML frontmatter: `name`, `description`, `model`, `tools` |
+| Agents | `.cursor/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model` (`tools` not recognized; tool access inherited) |
 | MCP | `.cursor/mcp.json` | JSON: `{ "mcpServers": { "<name>": { "type": "stdio", "command", "args" } } }` |
 
 ## Activation modes
@@ -38,7 +38,10 @@
 
 ## Notes
 
-- `.mdc` is Cursor's custom markdown format (same as `.md` with YAML frontmatter)
+- `.mdc` is Cursor's custom markdown format used for **rules only** (same as `.md` with YAML frontmatter)
+- Subagents use plain `.md` (not `.mdc`) — per Cursor's v2.4 docs
+- Cursor subagents recognize only `name`, `description`, `model`, `readonly`, `is_background`. No `tools` field — tool access is inherited from the parent agent
+- `model` value must be `inherit`, `fast`, or a Cursor-recognized model identifier
 - Skills use the standard SKILL.md format with `name` and `description` only
 - Cursor reads AGENTS.md natively as fallback
 - MCP uses standard `mcpServers` JSON format with `type` field

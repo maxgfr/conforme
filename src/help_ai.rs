@@ -33,6 +33,7 @@ pub fn print_help_ai() {
             "Frontmatter: alwaysApply (bool), globs (string), description (string)",
             "4 rule types: Always, Auto Attached (globs), Agent Requested (description), Manual",
             "Skills synced to .cursor/skills/<name>/SKILL.md",
+            "Subagents synced to .cursor/agents/<name>.md (plain .md, no tools field)",
             "Reads AGENTS.md natively",
         ],
     );
@@ -119,9 +120,9 @@ pub fn print_help_ai() {
         "opencode",
         "AGENTS.md (native) + opencode.json",
         &[
-            "Skills synced to .opencode/skills/<name>/SKILL.md",
-            "MCP synced to .opencode/mcp.json (OpenCode format: type:local)",
-            "Agents synced to .opencode/agents.json (mode:subagent)",
+            "Skills synced to .opencode/skills/<name>/SKILL.md (name + description only)",
+            "MCP merged into opencode.json under `mcp` key (type:local/remote, command as single array, key `environment`)",
+            "Agents merged into opencode.json under `agent` key + per-agent .opencode/agents/<name>.md",
             "Also scans .claude/skills/, .agents/skills/",
         ],
     );

@@ -217,11 +217,13 @@ Review all changes for bugs.
         .assert()
         .success();
 
-    assert!(dir.path().join(".cursor/agents/reviewer.mdc").exists());
-    let agent = fs::read_to_string(dir.path().join(".cursor/agents/reviewer.mdc")).unwrap();
+    assert!(dir.path().join(".cursor/agents/reviewer.md").exists());
+    let agent = fs::read_to_string(dir.path().join(".cursor/agents/reviewer.md")).unwrap();
     assert!(agent.contains("name: reviewer"));
     assert!(agent.contains("description: Code review agent"));
     assert!(agent.contains("model: gpt-4o"));
+    // Cursor subagents do not recognize a `tools` frontmatter field.
+    assert!(!agent.contains("tools:"));
     assert!(agent.contains("Review all changes for bugs."));
 }
 
@@ -391,11 +393,16 @@ Be helpful.
         .assert()
         .success();
 
-    assert!(dir.path().join(".opencode/mcp.json").exists());
-    let mcp = fs::read_to_string(dir.path().join(".opencode/mcp.json")).unwrap();
-    assert!(mcp.contains("\"mcp\""));
-    assert!(mcp.contains("\"type\": \"local\""));
-    assert!(mcp.contains("test-server"));
+    // OpenCode reads MCP from opencode.json under the `mcp` key (not a standalone file).
+    let opencode_json = dir.path().join("opencode.json");
+    assert!(opencode_json.exists());
+    let content = fs::read_to_string(&opencode_json).unwrap();
+    assert!(content.contains("\"mcp\""));
+    assert!(content.contains("\"type\": \"local\""));
+    assert!(content.contains("test-server"));
+    // command is a single combined array, not separate command+args.
+    assert!(content.contains("\"command\": [\n"));
+    assert!(!content.contains("\"args\""));
 }
 
 #[test]
@@ -416,12 +423,21 @@ Review all changes for bugs.
         .assert()
         .success();
 
-    assert!(dir.path().join(".opencode/agents.json").exists());
-    let agents = fs::read_to_string(dir.path().join(".opencode/agents.json")).unwrap();
-    assert!(agents.contains("\"agent\""));
-    assert!(agents.contains("\"reviewer\""));
-    assert!(agents.contains("\"mode\": \"subagent\""));
-    assert!(agents.contains("gpt-4o"));
+    // Agents go into opencode.json under the `agent` key AND per-project markdown.
+    let opencode_json = dir.path().join("opencode.json");
+    assert!(opencode_json.exists());
+    let json_content = fs::read_to_string(&opencode_json).unwrap();
+    assert!(json_content.contains("\"agent\""));
+    assert!(json_content.contains("\"reviewer\""));
+    assert!(json_content.contains("\"mode\": \"subagent\""));
+    assert!(json_content.contains("gpt-4o"));
+
+    let md_agent = dir.path().join(".opencode/agents/reviewer.md");
+    assert!(md_agent.exists());
+    let md = fs::read_to_string(&md_agent).unwrap();
+    assert!(md.contains("description: Code review agent"));
+    assert!(md.contains("mode: subagent"));
+    assert!(md.contains("Review all changes for bugs."));
 }
 
 #[test]

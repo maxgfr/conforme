@@ -44,8 +44,9 @@
 ## Notes
 
 - MCP uses `"servers"` key (NOT `"mcpServers"`) -- unique among all tools
-- MCP does not support HTTP headers
+- MCP supports `env` on stdio and `headers` on HTTP transports (conforme emits both when set)
 - Prompts have optional `agent` field (values: `ask`, `edit`, `agent`, `plan`, or custom agent name)
 - Additional optional fields on instructions: `name`, `description`, `excludeAgent`
-- Additional optional fields on agents: `handoffs`, `mcp-servers`, `target`, `user-invokable`
+- Additional optional fields on agents: `handoffs`, `mcp-servers`, `target`, `user-invocable`, `disable-model-invocation`, `metadata`
+- `handoffs` is not supported on the Copilot cloud agent on GitHub.com (CLI only)
 - Copilot now has hooks support (CLI and cloud agent) -- not synced by conforme

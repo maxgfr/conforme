@@ -1084,7 +1084,7 @@ Review all changes for bugs.
     // Cursor: rules + agents + mcp
     assert!(dir.path().join(".cursor/rules/general.mdc").exists());
     assert!(dir.path().join(".cursor/rules/typescript.mdc").exists());
-    assert!(dir.path().join(".cursor/agents/reviewer.mdc").exists());
+    assert!(dir.path().join(".cursor/agents/reviewer.md").exists());
     assert!(dir.path().join(".cursor/mcp.json").exists());
 
     // Copilot: instructions + prompts + agents + mcp

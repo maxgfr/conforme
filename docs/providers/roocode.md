@@ -37,7 +37,7 @@ Mode-specific rules go in `.roo/rules-{modeSlug}/` directories (e.g., `.roo/rule
 ## Notes
 
 - Plain markdown only -- no YAML frontmatter in rules
-- Skills support `modes` field (optional array to restrict to specific modes like "code", "architect")
+- Mode targeting is controlled via directory placement (`.roo/skills-{mode}/`), not a frontmatter field
 - `.roo/` overrides `.agents/` at same level for skills discovery
 - Custom "modes" are different from "agents" -- configured via VS Code settings, not file-based
 - Reads AGENTS.md natively

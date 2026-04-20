@@ -12,7 +12,7 @@ conforme is a Rust CLI that synchronizes AI coding agent configurations across 1
 
 ```bash
 cargo build --release
-cargo test                     # 190 tests (112 unit + 50 integration + 17 error + 9 roundtrip)
+cargo test                     # 322 tests (117 lib + 121 bin + 58 integration + 17 error + 9 roundtrip)
 cargo clippy -- -D warnings    # lint — MUST pass before pushing
 cargo fmt -- --check           # format check
 conforme check                 # verify AI configs are in sync (dogfooding)
@@ -37,9 +37,10 @@ src/
   watch.rs           — File watcher for auto-sync (notify + debounce)
   help_ai.rs        — Detailed help about all supported tools and formats
   mcp.rs            — MCP config generation/parsing per tool:
-                       - Standard mcpServers: Claude, Windsurf, Kiro, Roo, Amazon Q
-                       - Copilot: "servers" key
-                       - OpenCode: "mcp" key, type local/remote
+                       - Standard mcpServers: Claude, Kiro, Roo, Amazon Q, Cursor, Continue.dev
+                       - Copilot: "servers" key (env + headers supported)
+                       - Windsurf: mcpServers, no type field, serverUrl for HTTP
+                       - OpenCode: "mcp" key merged into opencode.json, type local/remote, command as array, `environment` key
                        - Zed: "context_servers" key
                        - Gemini: mcpServers, no type field, httpUrl for HTTP
                        - Amp: "amp.mcpServers" key
@@ -47,7 +48,7 @@ src/
   adapters/
     mod.rs          — AiToolAdapter trait + registry + shared write_if_changed
     claude.rs       — Claude Code: CLAUDE.md + .claude/rules/*.md (paths: frontmatter)
-    cursor.rs       — Cursor: .cursor/rules/*.mdc (alwaysApply/globs/description)
+    cursor.rs       — Cursor: .cursor/rules/*.mdc (alwaysApply/globs/description); subagents at .cursor/agents/*.md
     windsurf.rs     — Windsurf: .windsurf/rules/*.md (trigger/description/globs)
     copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo)
     codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively
@@ -137,12 +138,13 @@ Review for bugs.
 
 | Tool | JSON key | Notes |
 |---|---|---|
-| Claude, Windsurf, Kiro, Roo, Amazon Q | `mcpServers` | Standard format |
-| Copilot | `servers` | VS Code format |
-| OpenCode | `mcp` | `type: local/remote` |
-| Zed | `context_servers` | No type field |
-| Gemini | `mcpServers` | No type field, uses `httpUrl` |
-| Amp | `amp.mcpServers` | Dotted key |
+| Claude, Kiro, Roo, Amazon Q, Cursor, Continue.dev | `mcpServers` | Standard format with `type: stdio/http` |
+| Copilot | `servers` | VS Code format; supports `env` + `headers` |
+| Windsurf | `mcpServers` | No `type` field; HTTP uses `serverUrl` (not `url`) |
+| OpenCode | `mcp` (inside `opencode.json`) | `type: local/remote`; `command` is a single array; env key is `environment` |
+| Zed | `context_servers` (inside `.zed/settings.json`) | No type field |
+| Gemini | `mcpServers` (inside `.gemini/settings.json`) | No type field, uses `httpUrl` for HTTP |
+| Amp | `amp.mcpServers` (inside `.amp/settings.json`) | Dotted key |
 
 ### Sync algorithm
 

@@ -114,9 +114,11 @@ impl AiToolAdapter for WindsurfAdapter {
             )?);
         }
 
-        // Generate MCP config as .windsurf/mcp.json
+        // Generate MCP config as .windsurf/mcp.json (best-effort project-level;
+        // Windsurf's canonical MCP config is global at ~/.codeium/windsurf/mcp_config.json).
+        // Uses Windsurf-specific schema: `serverUrl` for HTTP, no `type` field.
         if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
+            let mcp_json = crate::mcp::generate_windsurf_mcp_json(&config.mcp_servers)?;
             files.push((
                 project_root.join(".windsurf").join("mcp.json"),
                 format!("{}\n", mcp_json),

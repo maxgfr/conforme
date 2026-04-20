@@ -38,6 +38,6 @@ No activation modes. All rules are plain markdown, auto-loaded. Users can toggle
 - Agent path is `.amazonq/cli-agents/` (NOT `.amazonq/agents/`)
 - Global agents at `~/.aws/amazonq/cli-agents/<name>.json`
 - Agents can be generated via `/agent generate` command
-- Agent JSON supports: `tools`, `permissions`, `mcp-servers`, `resources` (glob patterns), `hooks`, `prompt`, `model`
+- Agent JSON supports: `tools`, `allowedTools`, `toolsSettings`, `toolAliases`, `mcpServers`, `resources` (glob patterns), `hooks`, `prompt`, `model`, `useLegacyMcpJson`
 - IDE version migrating to Kiro format
 - CLI has separate doc pages from IDE

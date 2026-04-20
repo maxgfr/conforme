@@ -18,7 +18,7 @@
 |---------|------|--------|
 | Rules | `.windsurf/rules/*.md` | YAML frontmatter: `trigger`, `description`, `globs` |
 | Skills | `.windsurf/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` |
-| MCP | `.windsurf/mcp.json` | JSON: `{ "mcpServers": { ... } }` (standard format) |
+| MCP | `.windsurf/mcp.json` (project, best-effort) / `~/.codeium/windsurf/mcp_config.json` (global) | JSON: `{ "mcpServers": { ... } }` — stdio uses `command`/`args`, HTTP uses `serverUrl`, no `type` field |
 
 ## Activation modes
 
@@ -43,4 +43,5 @@
 - Skills added in Wave 1.13.107 (January 2026)
 - No agents/subagents support
 - Reads AGENTS.md natively
-- Windsurf also has hooks (cascade hooks) but they are tool-specific, not synced
+- Windsurf's canonical MCP config is user-global at `~/.codeium/windsurf/mcp_config.json`; conforme additionally writes a project-level `.windsurf/mcp.json` as a best-effort. HTTP servers use `serverUrl` (not `url`) and no `type` field is emitted
+- Windsurf also has hooks (cascade hooks) and workflows but they are tool-specific, not synced

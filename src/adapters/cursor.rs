@@ -77,7 +77,7 @@ impl AiToolAdapter for CursorAdapter {
             }
         }
 
-        // Read agents from .cursor/agents/*.mdc
+        // Read agents from .cursor/agents/*.md (Cursor subagents use .md, not .mdc)
         let mut agents = Vec::new();
         let agents_dir = project_root.join(".cursor").join("agents");
         if agents_dir.is_dir() {
@@ -87,7 +87,7 @@ impl AiToolAdapter for CursorAdapter {
             entries.sort_by_key(|e| e.file_name());
             for entry in entries {
                 let path = entry.path();
-                if path.extension().is_some_and(|e| e == "mdc") {
+                if path.extension().is_some_and(|e| e == "md") {
                     let content = std::fs::read_to_string(&path)
                         .with_context(|| format!("failed to read {}", path.display()))?;
                     let (fields, body) = frontmatter::parse(&content)?;
@@ -446,10 +446,12 @@ mod tests {
             .iter()
             .find(|(p, _)| p.to_string_lossy().contains(".cursor/agents/"))
             .unwrap();
-        assert!(agent_file.0.ends_with("reviewer.mdc"));
+        assert!(agent_file.0.ends_with("reviewer.md"));
         assert!(agent_file.1.contains("name: reviewer"));
         assert!(agent_file.1.contains("description: Code review"));
         assert!(agent_file.1.contains("model: gpt-4o"));
+        // Cursor subagents do not use a `tools` frontmatter field
+        assert!(!agent_file.1.contains("tools:"));
         assert!(agent_file.1.contains("Review code."));
     }
 
