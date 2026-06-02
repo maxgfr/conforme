@@ -6,6 +6,8 @@
 
 - Rules: https://cursor.com/docs/rules
 - Skills: https://cursor.com/docs/context/skills
+- Subagents: https://cursor.com/docs/context/subagents
+- MCP: https://cursor.com/docs/context/mcp
 - Changelog (v2.4 - skills/subagents): https://cursor.com/changelog/2-4
 - Blog (agent best practices): https://cursor.com/blog/agent-best-practices
 - Forum: https://forum.cursor.com
@@ -44,4 +46,4 @@
 - `model` value must be `inherit`, `fast`, or a Cursor-recognized model identifier
 - Skills use the standard SKILL.md format with `name` and `description` only
 - Cursor reads AGENTS.md natively as fallback
-- MCP uses standard `mcpServers` JSON format with `type` field
+- MCP uses the standard `mcpServers` JSON format. Local servers use `type: "stdio"` + `command`/`args`; per Cursor's MCP docs, remote servers need only `url` (+ optional `headers`/`auth`) and omit `type`. conforme emits a `type: "http"` field on remote servers, which Cursor ignores

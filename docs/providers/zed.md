@@ -5,6 +5,7 @@
 ## Official docs
 
 - Rules: https://zed.dev/docs/ai/rules
+- Skills: https://zed.dev/docs/ai/skills
 - MCP (context servers): https://zed.dev/docs/ai/mcp
 - MCP extensions: https://zed.dev/docs/extensions/mcp-extensions
 - AI configuration: https://zed.dev/docs/ai/configuration
@@ -41,5 +42,5 @@ Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` 
   - Uses `"context_servers"` key (not `"mcpServers"`)
   - No `"type"` field
 - Zed has "Agent Profiles" but configured via settings, not project files
-- Skills support is planned (GitHub issue #49057) but not yet implemented
+- Zed now supports **skills** as a documented feature (`SKILL.md` files under `<worktree>/.agents/skills/`, and global `~/.agents/skills/`). conforme does not yet sync skills to Zed (`skills: false`); this is a deliberate coverage gap, not "unimplemented upstream"
 - Empty config generates `.rules` with just `\n`

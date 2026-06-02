@@ -39,7 +39,7 @@
 
 ## Notes
 
-- Character limits: 6,000 per rule, 12,000 total across active rules
+- Character limits: the global rules file (`~/.codeium/windsurf/memories/global_rules.md`) is limited to 6,000 characters; workspace rules (`.windsurf/rules/*.md`) are limited to 12,000 characters **per file**
 - Skills added in Wave 1.13.107 (January 2026)
 - No agents/subagents support
 - Reads AGENTS.md natively

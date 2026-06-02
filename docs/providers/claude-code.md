@@ -48,5 +48,7 @@
 
 - Commands (`.claude/commands/*.md`) are read as skills when Claude is source, propagated to other tools as SKILL.md
 - Hooks and permissions are Claude-specific, not synced to other tools
-- `allowed-tools` uses space-separated format: `"Read Bash Write"`
+- `allowed-tools` accepts a space- or comma-separated string (or a YAML list); conforme writes the space-separated form `"Read Bash Write"` and parses both on read
 - Rules without `paths` frontmatter are always-active (no agent-decision/manual distinction)
+- A project `CLAUDE.md` may also live at `./.claude/CLAUDE.md`; conforme reads/writes the root `./CLAUDE.md` (and still detects the project via a `.claude/` directory)
+- MCP: `type: "stdio"` is optional in `.mcp.json` (transport is inferred from `command`). HTTP transport accepts `"http"` (and the `"streamable-http"` alias); the older `"sse"` transport is deprecated — conforme still parses it on read

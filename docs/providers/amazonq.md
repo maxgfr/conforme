@@ -5,11 +5,9 @@
 ## Official docs
 
 - Project rules (IDE): https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/context-project-rules.html
-- Project rules (CLI, now Kiro): https://kiro.dev/docs/cli/steering/
-- Custom agents overview: https://kiro.dev/docs/cli/custom-agents/
-- Defining agents: https://kiro.dev/docs/cli/custom-agents/creating/
-- Agent config reference: https://github.com/aws/amazon-q-developer-cli/blob/main/docs/agent-format.md
-- Agent examples: https://kiro.dev/docs/cli/custom-agents/
+- Custom agents (CLI) overview: https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line-custom-agents.html
+- Custom agents config reference: https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line-custom-agents-configuration.html
+- Agent format reference (GitHub): https://github.com/aws/amazon-q-developer-cli/blob/main/docs/agent-format.md
 - MCP overview: https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/qdev-mcp.html
 - MCP CLI config: https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line-mcp-config-CLI.html
 
