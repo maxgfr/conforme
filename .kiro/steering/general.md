@@ -12,7 +12,7 @@ conforme is a Rust CLI that synchronizes AI coding agent configurations across 1
 
 ```bash
 cargo build --release
-cargo test                     # 322 tests (117 lib + 121 bin + 58 integration + 17 error + 9 roundtrip)
+cargo test                     # 328 tests (120 lib + 124 bin + 58 integration + 17 error + 9 roundtrip)
 cargo clippy -- -D warnings    # lint — MUST pass before pushing
 cargo fmt -- --check           # format check
 conforme check                 # verify AI configs are in sync (dogfooding)
@@ -37,7 +37,8 @@ src/
   watch.rs           — File watcher for auto-sync (notify + debounce)
   help_ai.rs        — Detailed help about all supported tools and formats
   mcp.rs            — MCP config generation/parsing per tool:
-                       - Standard mcpServers: Claude, Kiro, Roo, Amazon Q, Cursor, Continue.dev
+                       - Standard mcpServers: Claude, Kiro, Amazon Q, Cursor, Continue.dev
+                       - Roo Code: mcpServers, HTTP uses type "streamable-http" (not "http") — generate_roocode_mcp_json
                        - Copilot: "servers" key (env + headers supported)
                        - Windsurf: mcpServers, no type field, serverUrl for HTTP
                        - OpenCode: "mcp" key merged into opencode.json, type local/remote, command as array, `environment` key
@@ -138,7 +139,8 @@ Review for bugs.
 
 | Tool | JSON key | Notes |
 |---|---|---|
-| Claude, Kiro, Roo, Amazon Q, Cursor, Continue.dev | `mcpServers` | Standard format with `type: stdio/http` |
+| Claude, Kiro, Amazon Q, Cursor, Continue.dev | `mcpServers` | Standard format with `type: stdio/http` |
+| Roo Code | `mcpServers` | Standard format; HTTP uses `type: streamable-http` (not `http`) |
 | Copilot | `servers` | VS Code format; supports `env` + `headers` |
 | Windsurf | `mcpServers` | No `type` field; HTTP uses `serverUrl` (not `url`) |
 | OpenCode | `mcp` (inside `opencode.json`) | `type: local/remote`; `command` is a single array; env key is `environment` |

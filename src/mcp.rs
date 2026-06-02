@@ -6,6 +6,21 @@ use crate::config::{McpTransport, NormalizedMcpServer};
 /// Generate a `.mcp.json` file (Claude Code format) from normalized MCP servers.
 /// This is the common format: { "mcpServers": { "name": { ... } } }
 pub fn generate_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
+    build_mcpservers_json(servers, "http")
+}
+
+/// Generate Roo Code's `.roo/mcp.json`.
+/// Identical to the standard `mcpServers` format, except HTTP servers use
+/// `type: "streamable-http"`. Roo Code does not recognize a bare `"http"`
+/// transport — it only accepts `streamable-http` (modern) or `sse` (legacy).
+pub fn generate_roocode_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
+    build_mcpservers_json(servers, "streamable-http")
+}
+
+/// Shared builder for the standard `{ "mcpServers": { "name": { ... } } }` format.
+/// `http_type` is the value written for the `type` field of HTTP servers
+/// (`"http"` for most tools, `"streamable-http"` for Roo Code).
+fn build_mcpservers_json(servers: &[NormalizedMcpServer], http_type: &str) -> Result<String> {
     if servers.is_empty() {
         return Ok(String::new());
     }
@@ -34,7 +49,7 @@ pub fn generate_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
             McpTransport::Http { url, headers } => {
                 entry.insert(
                     "type".to_string(),
-                    serde_json::Value::String("http".to_string()),
+                    serde_json::Value::String(http_type.to_string()),
                 );
                 entry.insert("url".to_string(), serde_json::Value::String(url.clone()));
                 if !headers.is_empty() {
@@ -505,7 +520,10 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
 
         let transport_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
 
-        let transport = if transport_type == "http" || transport_type == "sse" {
+        let transport = if transport_type == "http"
+            || transport_type == "sse"
+            || transport_type == "streamable-http"
+        {
             let url = obj
                 .get("url")
                 .or_else(|| obj.get("httpUrl"))
@@ -594,6 +612,62 @@ mod tests {
         let result = generate_mcp_json(&servers).unwrap();
         assert!(result.contains("http"));
         assert!(result.contains("api.github.com"));
+    }
+
+    #[test]
+    fn test_generate_roocode_mcp_json_http_uses_streamable_http() {
+        let servers = vec![NormalizedMcpServer {
+            name: "context7".to_string(),
+            transport: McpTransport::Http {
+                url: "https://mcp.context7.com/mcp".to_string(),
+                headers: BTreeMap::from([("x-api-key".to_string(), "secret".to_string())]),
+            },
+            env: BTreeMap::new(),
+        }];
+        let result = generate_roocode_mcp_json(&servers).unwrap();
+        // Roo Code requires `streamable-http`, never a bare `http` type value.
+        assert!(result.contains("\"type\": \"streamable-http\""));
+        assert!(!result.contains("\"type\": \"http\""));
+        assert!(result.contains("mcpServers"));
+        assert!(result.contains("https://mcp.context7.com/mcp"));
+        assert!(result.contains("x-api-key"));
+    }
+
+    #[test]
+    fn test_generate_roocode_mcp_json_stdio_matches_standard() {
+        // For stdio servers Roo Code uses the same shape as the standard format.
+        let servers = vec![NormalizedMcpServer {
+            name: "fs".to_string(),
+            transport: McpTransport::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "@mcp/fs".to_string()],
+            },
+            env: BTreeMap::new(),
+        }];
+        assert_eq!(
+            generate_roocode_mcp_json(&servers).unwrap(),
+            generate_mcp_json(&servers).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_parse_mcp_json_streamable_http_roundtrip() {
+        // A Roo Code config with `streamable-http` must parse back to an HTTP transport.
+        let servers = vec![NormalizedMcpServer {
+            name: "ctx".to_string(),
+            transport: McpTransport::Http {
+                url: "https://example.com/mcp".to_string(),
+                headers: BTreeMap::new(),
+            },
+            env: BTreeMap::new(),
+        }];
+        let json = generate_roocode_mcp_json(&servers).unwrap();
+        let parsed = parse_mcp_json(&json).unwrap();
+        assert_eq!(parsed.len(), 1);
+        match &parsed[0].transport {
+            McpTransport::Http { url, .. } => assert_eq!(url, "https://example.com/mcp"),
+            other => panic!("expected HTTP transport, got {other:?}"),
+        }
     }
 
     #[test]

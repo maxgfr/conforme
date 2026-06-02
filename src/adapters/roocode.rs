@@ -133,8 +133,9 @@ impl AiToolAdapter for RooCodeAdapter {
         }
 
         // Generate MCP config as .roo/mcp.json
+        // Roo Code uses `type: "streamable-http"` for HTTP servers (not bare "http").
         if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
+            let mcp_json = crate::mcp::generate_roocode_mcp_json(&config.mcp_servers)?;
             files.push((
                 project_root.join(".roo").join("mcp.json"),
                 format!("{}\n", mcp_json),

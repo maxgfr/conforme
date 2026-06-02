@@ -224,7 +224,7 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | Copilot | `.vscode/mcp.json` | `servers` | Uses `servers` key (not `mcpServers`); supports `env` + `headers` |
 | Continue.dev | `.continue/mcpServers/mcp.json` | `mcpServers` | `type: stdio/http` |
 | Kiro | `.kiro/settings/mcp.json` | `mcpServers` | Standard format |
-| Roo Code | `.roo/mcp.json` | `mcpServers` | Standard format |
+| Roo Code | `.roo/mcp.json` | `mcpServers` | HTTP uses `type: streamable-http` (not `http`); legacy alias `sse` |
 | Amazon Q | `.amazonq/mcp.json` | `mcpServers` | Standard format (legacy workspace MCP file) |
 | Gemini CLI | `.gemini/settings.json` | `mcpServers` | No `type` field, uses `httpUrl` (not `url`) for HTTP |
 | OpenCode | `opencode.json` (merged) | `mcp` | `type: local/remote`; `command` as single array; env key is `environment` |
