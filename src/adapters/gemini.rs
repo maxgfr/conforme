@@ -49,10 +49,24 @@ impl AiToolAdapter for GeminiAdapter {
             String::new()
         };
 
+        // Read skills, agents, and MCP so a Gemini project round-trips as a source.
+        let skills =
+            crate::skills::read_skills_from_dir(&project_root.join(".gemini").join("skills"))?;
+        let agents =
+            crate::skills::read_agents_from_dir(&project_root.join(".gemini").join("agents"))?;
+        let mut mcp_servers = Vec::new();
+        let settings_path = project_root.join(".gemini").join("settings.json");
+        if settings_path.exists() {
+            let settings = std::fs::read_to_string(&settings_path)?;
+            mcp_servers = crate::mcp::parse_mcp_json(&settings)?;
+        }
+
         Ok(NormalizedConfig {
             instructions,
             rules: Vec::new(),
-            ..Default::default()
+            skills,
+            agents,
+            mcp_servers,
         })
     }
 
@@ -96,13 +110,33 @@ impl AiToolAdapter for GeminiAdapter {
             )?);
         }
 
-        // Generate MCP config as .gemini/settings.json (Gemini-specific format: no type field, httpUrl for HTTP)
+        // Merge MCP config into .gemini/settings.json (Gemini-specific format:
+        // no type field, httpUrl for HTTP). `.gemini/settings.json` is the
+        // general Gemini settings file (theme, context.fileName, …), so we read
+        // any existing file and replace only the managed `mcpServers` key rather
+        // than clobbering user-authored settings.
         if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_gemini_mcp_json(&config.mcp_servers)?;
-            files.push((
-                project_root.join(".gemini").join("settings.json"),
-                format!("{}\n", mcp_json),
-            ));
+            let config_path = project_root.join(".gemini").join("settings.json");
+            let existing = if config_path.exists() {
+                let content = std::fs::read_to_string(&config_path)
+                    .with_context(|| format!("failed to read {}", config_path.display()))?;
+                serde_json::from_str::<serde_json::Value>(&content)
+                    .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
+            } else {
+                serde_json::Value::Object(serde_json::Map::new())
+            };
+
+            let mut root_map = match existing {
+                serde_json::Value::Object(m) => m,
+                _ => serde_json::Map::new(),
+            };
+
+            let mcp_obj = crate::mcp::build_gemini_mcp_object(&config.mcp_servers);
+            root_map.insert("mcpServers".to_string(), serde_json::Value::Object(mcp_obj));
+
+            let json = serde_json::to_string_pretty(&serde_json::Value::Object(root_map))
+                .context("failed to serialize .gemini/settings.json")?;
+            files.push((config_path, format!("{}\n", json)));
         }
 
         Ok(files)
@@ -231,6 +265,7 @@ mod tests {
                 content: "Review code.".to_string(),
                 model: Some("gemini-3-flash".to_string()),
                 tools: vec!["read_file".to_string()],
+                ..Default::default()
             }],
             ..Default::default()
         };
@@ -259,5 +294,43 @@ mod tests {
         let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
         // Empty config should generate no files
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_generate_preserves_existing_gemini_settings() {
+        use crate::config::{McpTransport, NormalizedMcpServer};
+        let adapter = make_adapter();
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".gemini")).unwrap();
+        std::fs::write(
+            tmp.path().join(".gemini").join("settings.json"),
+            r#"{"theme":"GitHub","context":{"fileName":"GEMINI.md"}}"#,
+        )
+        .unwrap();
+
+        let config = NormalizedConfig {
+            mcp_servers: vec![NormalizedMcpServer {
+                name: "fs".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec![],
+                },
+                env: std::collections::BTreeMap::new(),
+            }],
+            ..Default::default()
+        };
+        let files = adapter.generate(tmp.path(), &config).unwrap();
+        let settings = files
+            .iter()
+            .find(|(p, _)| p.ends_with("settings.json"))
+            .unwrap();
+        // User-authored keys must be preserved
+        assert!(settings.1.contains("\"theme\""));
+        assert!(settings.1.contains("GitHub"));
+        assert!(settings.1.contains("\"context\""));
+        assert!(settings.1.contains("\"fileName\""));
+        // And the managed mcpServers key is written
+        assert!(settings.1.contains("\"mcpServers\""));
+        assert!(settings.1.contains("\"fs\""));
     }
 }

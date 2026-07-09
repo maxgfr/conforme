@@ -19,8 +19,8 @@
 |---------|------|--------|
 | Rules (steering) | `.kiro/steering/*.md` | YAML frontmatter: `inclusion`, `fileMatchPattern`, `name`, `description` |
 | Skills | `.kiro/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` |
-| Agents | `.kiro/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
-| MCP | `.kiro/settings/mcp.json` | JSON: `{ "mcpServers": { ... } }` (standard format with `disabled` field) |
+| Agents | `.kiro/agents/<name>.md` | YAML frontmatter: `description`, `model`, `tools` (no `name` — Kiro derives it from the file path) |
+| MCP | `.kiro/settings/mcp.json` | JSON: `{ "mcpServers": { ... } }` (Kiro also supports optional `disabled`/`autoApprove` per server; conforme does not emit them) |
 
 ## Activation modes
 
@@ -38,6 +38,7 @@
 - Capabilities: activation_modes, skills, agents, MCP
 - General instructions -> `general.md` with `inclusion: always`
 - `fileMatchPattern` accepts both string and YAML array
+- `read()` round-trips steering plus skills (`.kiro/skills/`), agents (`.kiro/agents/`), and MCP (`.kiro/settings/mcp.json`)
 
 ## Notes
 

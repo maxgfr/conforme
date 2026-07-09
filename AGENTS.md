@@ -10,7 +10,7 @@ conforme is a Rust CLI that synchronizes AI coding agent configurations across 1
 
 ```bash
 cargo build --release
-cargo test                     # 328 tests (120 lib + 124 bin + 58 integration + 17 error + 9 roundtrip)
+cargo test                     # 349 tests (127 lib + 131 bin + 58 integration + 17 error + 16 roundtrip)
 cargo clippy -- -D warnings    # lint — MUST pass before pushing
 cargo fmt -- --check           # format check
 conforme check                 # verify AI configs are in sync (dogfooding)
@@ -35,15 +35,19 @@ src/
   watch.rs           — File watcher for auto-sync (notify + debounce)
   help_ai.rs        — Detailed help about all supported tools and formats
   mcp.rs            — MCP config generation/parsing per tool:
-                       - Standard mcpServers: Claude, Kiro, Amazon Q, Cursor, Continue.dev
+                       - Standard mcpServers: Claude, Kiro, Amazon Q, Cursor
                        - Roo Code: mcpServers, HTTP uses type "streamable-http" (not "http") — generate_roocode_mcp_json
+                       - Continue.dev: mcpServers, HTTP uses type "streamable-http" (bare "http" is rejected) — generate_continue_mcp_json
+                       - Claude .mcp.json parsing accepts http/https, sse, streamable-http, and ws transports (all mapped to the HTTP variant)
                        - Copilot: "servers" key (env + headers supported)
                        - Windsurf: mcpServers, no type field, serverUrl for HTTP
                        - OpenCode: "mcp" key merged into opencode.json, type local/remote, command as array, `environment` key
                        - Zed: "context_servers" key
                        - Gemini: mcpServers, no type field, httpUrl for HTTP
                        - Amp: "amp.mcpServers" key
-  skills.rs         — Skills (SKILL.md) and agents generation per tool
+  skills.rs         — Skills (SKILL.md) and agents generation per tool; shared read helpers
+                       (read_skills_from_dir, read_agents_from_dir, parse_frontmatter_tool_list)
+                       used by adapters to round-trip skills/agents on read()
   adapters/
     mod.rs          — AiToolAdapter trait + registry + shared write_if_changed
     claude.rs       — Claude Code: CLAUDE.md + .claude/rules/*.md (paths: frontmatter)
@@ -109,6 +113,8 @@ Run npm run deploy.
 <!-- description: Code review -->
 <!-- model: gpt-4o -->
 <!-- tools: codebase -->
+<!-- color: cyan -->
+<!-- permission-mode: plan -->
 Review for bugs.
 
 ## MCP: filesystem
@@ -137,13 +143,14 @@ Review for bugs.
 
 | Tool | JSON key | Notes |
 |---|---|---|
-| Claude, Kiro, Amazon Q, Cursor, Continue.dev | `mcpServers` | Standard format with `type: stdio/http` |
+| Claude, Kiro, Amazon Q, Cursor | `mcpServers` | Standard format with `type: stdio/http` |
 | Roo Code | `mcpServers` | Standard format; HTTP uses `type: streamable-http` (not `http`) |
+| Continue.dev | `mcpServers` (inside `.continue/mcpServers/mcp.json`) | HTTP uses `type: streamable-http` (bare `http` is rejected) |
 | Copilot | `servers` | VS Code format; supports `env` + `headers` |
 | Windsurf | `mcpServers` | No `type` field; HTTP uses `serverUrl` (not `url`) |
-| OpenCode | `mcp` (inside `opencode.json`) | `type: local/remote`; `command` is a single array; env key is `environment` |
-| Zed | `context_servers` (inside `.zed/settings.json`) | No type field |
-| Gemini | `mcpServers` (inside `.gemini/settings.json`) | No type field, uses `httpUrl` for HTTP |
+| OpenCode | `mcp` (inside `opencode.json`) | `type: local/remote`; `command` is a single array; env key is `environment`; merged (preserves user keys) |
+| Zed | `context_servers` (inside `.zed/settings.json`) | No type field; merged into existing settings (preserves theme/keybindings/etc.) |
+| Gemini | `mcpServers` (inside `.gemini/settings.json`) | No type field, uses `httpUrl` for HTTP; merged into existing settings |
 | Amp | `amp.mcpServers` (inside `.amp/settings.json`) | Dotted key |
 
 ### Sync algorithm

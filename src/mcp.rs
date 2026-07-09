@@ -17,6 +17,15 @@ pub fn generate_roocode_mcp_json(servers: &[NormalizedMcpServer]) -> Result<Stri
     build_mcpservers_json(servers, "streamable-http")
 }
 
+/// Generate Continue.dev's MCP config (`.continue/mcpServers/mcp.json`).
+/// Identical to the standard `mcpServers` format, except HTTP servers use
+/// `type: "streamable-http"`. Continue only recognizes `stdio`, `sse`, and
+/// `streamable-http` transport values — a bare `"http"` is not accepted, so
+/// remote servers must be emitted as `streamable-http`.
+pub fn generate_continue_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
+    build_mcpservers_json(servers, "streamable-http")
+}
+
 /// Shared builder for the standard `{ "mcpServers": { "name": { ... } } }` format.
 /// `http_type` is the value written for the `type` field of HTTP servers
 /// (`"http"` for most tools, `"streamable-http"` for Roo Code).
@@ -250,12 +259,13 @@ pub fn build_opencode_mcp_object(
     mcp
 }
 
-/// Generate Zed context_servers format: { "context_servers": { "name": { "command": ..., "args": [...] } } }
-pub fn generate_zed_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
-    if servers.is_empty() {
-        return Ok(String::new());
-    }
-
+/// Build the Zed `context_servers` object (not a full file — `.zed/settings.json`
+/// is merged by the adapter so user-authored settings such as theme and
+/// keybindings are preserved). Flat shape: stdio uses `command`/`args`/`env`,
+/// remote uses `url`/`headers`; no `type` field.
+pub fn build_zed_context_servers_object(
+    servers: &[NormalizedMcpServer],
+) -> serde_json::Map<String, serde_json::Value> {
     let mut context_servers = serde_json::Map::new();
 
     for server in servers {
@@ -297,8 +307,7 @@ pub fn generate_zed_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> 
         context_servers.insert(server.name.clone(), serde_json::Value::Object(entry));
     }
 
-    let root = serde_json::json!({ "context_servers": context_servers });
-    serde_json::to_string_pretty(&root).context("failed to serialize Zed MCP config")
+    context_servers
 }
 
 /// Generate Amp MCP format: { "amp.mcpServers": { "name": { "command": ..., "args": [...] } } }
@@ -352,13 +361,12 @@ pub fn generate_amp_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> 
     serde_json::to_string_pretty(&root).context("failed to serialize Amp MCP config")
 }
 
-/// Generate Gemini CLI MCP format in `.gemini/settings.json`.
-/// Gemini uses `mcpServers` key but does NOT use `type` field, and uses `httpUrl` for HTTP servers.
-pub fn generate_gemini_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
-    if servers.is_empty() {
-        return Ok(String::new());
-    }
-
+/// Build the Gemini CLI `mcpServers` object (not a full file — `.gemini/settings.json`
+/// is merged by the adapter so user-authored settings are preserved).
+/// Gemini does NOT use a `type` field and uses `httpUrl` for HTTP servers.
+pub fn build_gemini_mcp_object(
+    servers: &[NormalizedMcpServer],
+) -> serde_json::Map<String, serde_json::Value> {
     let mut mcp_servers = serde_json::Map::new();
 
     for server in servers {
@@ -404,8 +412,7 @@ pub fn generate_gemini_mcp_json(servers: &[NormalizedMcpServer]) -> Result<Strin
         mcp_servers.insert(server.name.clone(), serde_json::Value::Object(entry));
     }
 
-    let root = serde_json::json!({ "mcpServers": mcp_servers });
-    serde_json::to_string_pretty(&root).context("failed to serialize Gemini MCP config")
+    mcp_servers
 }
 
 /// Build the OpenCode `agent` object for `opencode.json` (merged by the adapter).
@@ -484,6 +491,19 @@ pub fn generate_amazonq_agents_json(
                 serde_json::Value::String(agent.content.clone()),
             );
         }
+        // Give the generated agent access to the rules conforme also writes to
+        // `.amazonq/rules/`, and let it pick up MCP servers from the sibling
+        // `.amazonq/mcp.json` (both otherwise invisible to a bare agent file).
+        entry.insert(
+            "resources".to_string(),
+            serde_json::Value::Array(vec![serde_json::Value::String(
+                "file://.amazonq/rules/**/*.md".to_string(),
+            )]),
+        );
+        entry.insert(
+            "useLegacyMcpJson".to_string(),
+            serde_json::Value::Bool(true),
+        );
 
         let filename = format!("{}.json", crate::config::sanitize_name(&agent.name));
         let json = serde_json::to_string_pretty(&entry)
@@ -494,8 +514,11 @@ pub fn generate_amazonq_agents_json(
     Ok(files)
 }
 
-/// Parse a `.mcp.json` file (Claude Code / standard format).
-#[allow(dead_code)]
+/// Parse an MCP config file into normalized servers. Handles every key conforme
+/// emits — `mcpServers` (standard), `servers` (Copilot/VS Code), and
+/// `context_servers` (Zed) — and infers the transport from the entry's shape
+/// when there is no explicit `type` field (Gemini `httpUrl`, Windsurf `serverUrl`,
+/// Zed remote `url`).
 pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
     let root: serde_json::Value =
         serde_json::from_str(content).context("failed to parse MCP JSON")?;
@@ -504,6 +527,8 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
         "mcpServers"
     } else if root.get("servers").is_some() {
         "servers"
+    } else if root.get("context_servers").is_some() {
+        "context_servers"
     } else {
         return Ok(Vec::new());
     };
@@ -518,19 +543,21 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
         let obj = value.as_object();
         let Some(obj) = obj else { continue };
 
-        let transport_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
+        let transport_type = obj.get("type").and_then(|v| v.as_str());
+        let url_value = obj
+            .get("url")
+            .or_else(|| obj.get("httpUrl"))
+            .or_else(|| obj.get("serverUrl"))
+            .and_then(|v| v.as_str());
+        // An entry is HTTP if it declares a remote transport type OR — when no
+        // `type` is present — if it carries a URL rather than a command.
+        let is_http = matches!(
+            transport_type,
+            Some("http") | Some("https") | Some("sse") | Some("streamable-http") | Some("ws")
+        ) || (transport_type.is_none() && url_value.is_some());
 
-        let transport = if transport_type == "http"
-            || transport_type == "sse"
-            || transport_type == "streamable-http"
-        {
-            let url = obj
-                .get("url")
-                .or_else(|| obj.get("httpUrl"))
-                .or_else(|| obj.get("serverUrl"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+        let transport = if is_http {
+            let url = url_value.unwrap_or("").to_string();
             let headers = obj
                 .get("headers")
                 .and_then(|v| v.as_object())
@@ -648,6 +675,59 @@ mod tests {
             generate_roocode_mcp_json(&servers).unwrap(),
             generate_mcp_json(&servers).unwrap()
         );
+    }
+
+    #[test]
+    fn test_generate_continue_mcp_json_http_uses_streamable_http() {
+        // Continue.dev rejects a bare `http` transport — HTTP servers must use
+        // `streamable-http` (or `sse`).
+        let servers = vec![NormalizedMcpServer {
+            name: "context7".to_string(),
+            transport: McpTransport::Http {
+                url: "https://mcp.context7.com/mcp".to_string(),
+                headers: BTreeMap::new(),
+            },
+            env: BTreeMap::new(),
+        }];
+        let result = generate_continue_mcp_json(&servers).unwrap();
+        assert!(result.contains("\"type\": \"streamable-http\""));
+        assert!(!result.contains("\"type\": \"http\""));
+        assert!(result.contains("mcpServers"));
+        assert!(result.contains("https://mcp.context7.com/mcp"));
+    }
+
+    #[test]
+    fn test_generate_continue_mcp_json_stdio_matches_standard() {
+        // For stdio servers Continue uses the same shape as the standard format.
+        let servers = vec![NormalizedMcpServer {
+            name: "fs".to_string(),
+            transport: McpTransport::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "@mcp/fs".to_string()],
+            },
+            env: BTreeMap::new(),
+        }];
+        assert_eq!(
+            generate_continue_mcp_json(&servers).unwrap(),
+            generate_mcp_json(&servers).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_parse_mcp_json_ws_transport() {
+        // A WebSocket MCP server (`type: "ws"`) must parse as an HTTP transport,
+        // not fall through to a broken stdio server with an empty command.
+        let json = r#"{
+            "mcpServers": {
+                "socket": { "type": "ws", "url": "wss://example.com/mcp" }
+            }
+        }"#;
+        let parsed = parse_mcp_json(json).unwrap();
+        assert_eq!(parsed.len(), 1);
+        match &parsed[0].transport {
+            McpTransport::Http { url, .. } => assert_eq!(url, "wss://example.com/mcp"),
+            other => panic!("expected HTTP transport for ws, got {other:?}"),
+        }
     }
 
     #[test]
@@ -813,7 +893,9 @@ mod tests {
             },
             env: BTreeMap::new(),
         }];
-        let result = generate_zed_mcp_json(&servers).unwrap();
+        let obj = build_zed_context_servers_object(&servers);
+        let result =
+            serde_json::to_string_pretty(&serde_json::json!({ "context_servers": obj })).unwrap();
         assert!(result.contains("\"context_servers\""));
         assert!(result.contains("\"command\": \"npx\""));
         assert!(!result.contains("\"source\""));
@@ -832,7 +914,9 @@ mod tests {
             },
             env: BTreeMap::new(),
         }];
-        let result = generate_gemini_mcp_json(&servers).unwrap();
+        let obj = build_gemini_mcp_object(&servers);
+        let result =
+            serde_json::to_string_pretty(&serde_json::json!({ "mcpServers": obj })).unwrap();
         assert!(result.contains("\"mcpServers\""));
         assert!(result.contains("\"command\": \"npx\""));
         assert!(result.contains("\"fs\""));
@@ -850,7 +934,9 @@ mod tests {
             },
             env: BTreeMap::new(),
         }];
-        let result = generate_gemini_mcp_json(&servers).unwrap();
+        let obj = build_gemini_mcp_object(&servers);
+        let result =
+            serde_json::to_string_pretty(&serde_json::json!({ "mcpServers": obj })).unwrap();
         // Gemini uses "httpUrl" not "url"
         assert!(result.contains("\"httpUrl\": \"https://example.com/mcp\""));
         assert!(!result.contains("\"url\""));
@@ -865,6 +951,7 @@ mod tests {
             content: "Review code.".to_string(),
             model: Some("claude-sonnet".to_string()),
             tools: vec!["codebase".to_string()],
+            ..Default::default()
         }];
         let result = generate_amazonq_agents_json(&agents).unwrap();
         assert_eq!(result.len(), 1);
@@ -873,6 +960,9 @@ mod tests {
         assert!(result[0].1.contains("\"model\": \"claude-sonnet\""));
         assert!(result[0].1.contains("\"prompt\": \"Review code.\""));
         assert!(result[0].1.contains("\"codebase\""));
+        // Generated agents load the synced rules and legacy MCP config.
+        assert!(result[0].1.contains("file://.amazonq/rules/**/*.md"));
+        assert!(result[0].1.contains("\"useLegacyMcpJson\": true"));
     }
 
     #[test]
@@ -883,6 +973,7 @@ mod tests {
             content: "Review code.".to_string(),
             model: Some("gpt-4o".to_string()),
             tools: vec![],
+            ..Default::default()
         }];
         let map = build_opencode_agent_object(&agents);
         let entry = map.get("reviewer").unwrap().as_object().unwrap();

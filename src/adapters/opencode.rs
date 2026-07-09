@@ -46,13 +46,15 @@ impl AiToolAdapter for OpenCodeAdapter {
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
-        // OpenCode reads AGENTS.md natively
-        let agents_md = project_root.join("AGENTS.md");
-        let instructions = if agents_md.exists() {
-            std::fs::read_to_string(&agents_md)?.trim().to_string()
-        } else {
-            String::new()
-        };
+        // OpenCode reads AGENTS.md natively, falling back to CLAUDE.md.
+        let instructions = ["AGENTS.md", "CLAUDE.md"]
+            .iter()
+            .map(|name| project_root.join(name))
+            .find(|path| path.exists())
+            .map(std::fs::read_to_string)
+            .transpose()?
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
         Ok(NormalizedConfig {
             instructions,
             rules: Vec::new(),
@@ -219,6 +221,7 @@ mod tests {
                 content: "Review code.".to_string(),
                 model: Some("gpt-4o".to_string()),
                 tools: vec![],
+                ..Default::default()
             }],
             ..Default::default()
         };

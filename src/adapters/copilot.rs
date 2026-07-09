@@ -103,10 +103,56 @@ impl AiToolAdapter for CopilotAdapter {
             }
         }
 
+        // Read prompt files (.github/prompts/<name>.prompt.md) back as skills.
+        let mut skills = Vec::new();
+        let prompts_dir = project_root.join(".github").join("prompts");
+        if prompts_dir.is_dir() {
+            let mut entries: Vec<_> = std::fs::read_dir(&prompts_dir)?
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
+                let path = entry.path();
+                let fname = path.file_name().unwrap_or_default().to_string_lossy();
+                if let Some(name) = fname.strip_suffix(".prompt.md") {
+                    let content = std::fs::read_to_string(&path)
+                        .with_context(|| format!("failed to read {}", path.display()))?;
+                    let (fields, body) = frontmatter::parse(&content)?;
+                    let description = fields
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let allowed_tools =
+                        crate::skills::parse_frontmatter_tool_list(fields.get("tools"));
+                    skills.push(crate::config::NormalizedSkill {
+                        name: name.to_string(),
+                        description,
+                        content: body.trim().to_string(),
+                        allowed_tools,
+                    });
+                }
+            }
+        }
+
+        // Read subagents (.github/agents/<name>.agent.md).
+        let agents =
+            crate::skills::read_agents_from_dir(&project_root.join(".github").join("agents"))?;
+
+        // Read MCP servers from .vscode/mcp.json (VS Code `servers` key).
+        let mut mcp_servers = Vec::new();
+        let mcp_path = project_root.join(".vscode").join("mcp.json");
+        if mcp_path.exists() {
+            let mcp_content = std::fs::read_to_string(&mcp_path)?;
+            mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
+        }
+
         Ok(NormalizedConfig {
             instructions,
             rules,
-            ..Default::default()
+            skills,
+            agents,
+            mcp_servers,
         })
     }
 
@@ -332,6 +378,7 @@ mod tests {
                 content: "Review code.".to_string(),
                 model: Some("gpt-4o".to_string()),
                 tools: vec!["codebase".to_string()],
+                ..Default::default()
             }],
         };
         let root = Path::new("/tmp/test");

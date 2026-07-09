@@ -37,6 +37,7 @@
 - Capabilities: activation_modes, skills, agents, MCP
 - General instructions -> `general.mdc` with `alwaysApply: true`
 - File extension is `.mdc` (not `.md`)
+- `read()` round-trips rules, skills (`.cursor/skills/`), subagents (`.cursor/agents/`), and MCP (`.cursor/mcp.json`)
 
 ## Notes
 

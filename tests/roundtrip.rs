@@ -3,9 +3,70 @@
 //! round-trip a NormalizedConfig through write → read.
 
 use conforme::adapters::AiToolAdapter;
-use conforme::config::{ActivationMode, NormalizedConfig, NormalizedRule};
+use conforme::config::{
+    ActivationMode, McpTransport, NormalizedAgent, NormalizedConfig, NormalizedMcpServer,
+    NormalizedRule, NormalizedSkill,
+};
 use std::fs;
 use tempfile::TempDir;
+
+/// A config exercising skills, an agent, and both MCP transports — used to
+/// verify the read()/generate() round-trip for those features.
+fn rich_config() -> NormalizedConfig {
+    NormalizedConfig {
+        instructions: "Be helpful.".to_string(),
+        rules: vec![],
+        skills: vec![NormalizedSkill {
+            name: "deploy".to_string(),
+            description: "Deploy the app".to_string(),
+            content: "Run deploy.".to_string(),
+            allowed_tools: vec![],
+        }],
+        agents: vec![NormalizedAgent {
+            name: "reviewer".to_string(),
+            description: "Review code".to_string(),
+            content: "Look for bugs.".to_string(),
+            model: Some("sonnet".to_string()),
+            tools: vec!["Read".to_string(), "Grep".to_string()],
+            ..Default::default()
+        }],
+        mcp_servers: vec![
+            NormalizedMcpServer {
+                name: "fs".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@mcp/fs".to_string()],
+                },
+                env: Default::default(),
+            },
+            NormalizedMcpServer {
+                name: "api".to_string(),
+                transport: McpTransport::Http {
+                    url: "https://example.com/mcp".to_string(),
+                    headers: Default::default(),
+                },
+                env: Default::default(),
+            },
+        ],
+    }
+}
+
+fn mcp_names(config: &NormalizedConfig) -> Vec<String> {
+    let mut names: Vec<String> = config.mcp_servers.iter().map(|s| s.name.clone()).collect();
+    names.sort();
+    names
+}
+
+fn find_http_url(config: &NormalizedConfig, name: &str) -> Option<String> {
+    config
+        .mcp_servers
+        .iter()
+        .find(|s| s.name == name)
+        .and_then(|s| match &s.transport {
+            McpTransport::Http { url, .. } => Some(url.clone()),
+            _ => None,
+        })
+}
 
 fn roundtrip_config() -> NormalizedConfig {
     NormalizedConfig {
@@ -202,6 +263,141 @@ fn test_roundtrip_amazonq() {
     assert_eq!(read_config.instructions, "Follow AWS best practices.");
     assert_eq!(read_config.rules.len(), 1);
     assert!(read_config.rules[0].content.contains("Use IAM roles."));
+}
+
+#[test]
+fn test_roundtrip_claude_agent_color() {
+    // Claude-specific color + permissionMode must survive write → read.
+    let adapter = conforme::adapters::claude::ClaudeAdapter;
+    let dir = TempDir::new().unwrap();
+    setup_tool(&dir, "claude");
+
+    let config = NormalizedConfig {
+        agents: vec![NormalizedAgent {
+            name: "reviewer".to_string(),
+            description: "Review code".to_string(),
+            content: "Look for bugs.".to_string(),
+            model: Some("opus".to_string()),
+            tools: vec!["Read".to_string(), "Grep".to_string()],
+            color: Some("cyan".to_string()),
+            permission_mode: Some("plan".to_string()),
+        }],
+        ..Default::default()
+    };
+    adapter.write(dir.path(), &config).unwrap();
+    let read_config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(read_config.agents.len(), 1);
+    let agent = &read_config.agents[0];
+    assert_eq!(agent.color.as_deref(), Some("cyan"));
+    assert_eq!(agent.permission_mode.as_deref(), Some("plan"));
+    assert_eq!(agent.model.as_deref(), Some("opus"));
+    assert_eq!(agent.tools, vec!["Read", "Grep"]);
+}
+
+#[test]
+fn test_roundtrip_cursor_skills() {
+    let adapter = conforme::adapters::cursor::CursorAdapter;
+    let dir = TempDir::new().unwrap();
+    setup_tool(&dir, "cursor");
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    let read_config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.skills[0].name, "deploy");
+    assert_eq!(read_config.skills[0].description, "Deploy the app");
+    // Cursor writes subagents (.md) and mcp.json too.
+    assert_eq!(read_config.agents.len(), 1);
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+}
+
+#[test]
+fn test_roundtrip_copilot_skills_agents_mcp() {
+    let adapter = conforme::adapters::copilot::CopilotAdapter;
+    let dir = TempDir::new().unwrap();
+    setup_tool(&dir, "copilot");
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    let read_config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.skills[0].name, "deploy");
+    assert_eq!(read_config.agents.len(), 1);
+    assert_eq!(read_config.agents[0].name, "reviewer");
+    assert_eq!(read_config.agents[0].model.as_deref(), Some("sonnet"));
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+    assert_eq!(
+        find_http_url(&read_config, "api").as_deref(),
+        Some("https://example.com/mcp")
+    );
+}
+
+#[test]
+fn test_roundtrip_amazonq_agents_mcp() {
+    let adapter = conforme::adapters::amazonq::AmazonQAdapter;
+    let dir = TempDir::new().unwrap();
+    setup_tool(&dir, "amazonq");
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    let read_config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(read_config.agents.len(), 1);
+    assert_eq!(read_config.agents[0].name, "reviewer");
+    assert_eq!(read_config.agents[0].content, "Look for bugs.");
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+}
+
+#[test]
+fn test_roundtrip_kiro_skills_agents_mcp() {
+    let adapter = conforme::adapters::kiro::KiroAdapter;
+    let dir = TempDir::new().unwrap();
+    setup_tool(&dir, "kiro");
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    let read_config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.agents.len(), 1);
+    assert_eq!(read_config.agents[0].name, "reviewer");
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+}
+
+#[test]
+fn test_roundtrip_gemini_skills_agents_mcp() {
+    let adapter = conforme::adapters::gemini::GeminiAdapter;
+    let dir = TempDir::new().unwrap();
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    let read_config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.agents.len(), 1);
+    assert_eq!(read_config.agents[0].name, "reviewer");
+    // Gemini writes httpUrl (no type) — parser must still recover the HTTP URL.
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+    assert_eq!(
+        find_http_url(&read_config, "api").as_deref(),
+        Some("https://example.com/mcp")
+    );
+}
+
+#[test]
+fn test_roundtrip_zed_skills_mcp() {
+    let adapter = conforme::adapters::zed::ZedAdapter;
+    let dir = TempDir::new().unwrap();
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    let read_config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.skills[0].name, "deploy");
+    // Zed context_servers with a bare `url` (no type) must parse as HTTP.
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+    assert_eq!(
+        find_http_url(&read_config, "api").as_deref(),
+        Some("https://example.com/mcp")
+    );
 }
 
 // Test that sync → check is consistent (idempotency through the trait)

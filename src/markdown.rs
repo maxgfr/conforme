@@ -155,6 +155,8 @@ fn build_agent(name: &str, lines: &[String]) -> NormalizedAgent {
     let mut description = String::new();
     let mut model = None;
     let mut tools = Vec::new();
+    let mut color = None;
+    let mut permission_mode = None;
     let mut content_lines = Vec::new();
 
     for line in lines {
@@ -178,6 +180,16 @@ fn build_agent(name: &str, lines: &[String]) -> NormalizedAgent {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
+        } else if let Some(inner) = trimmed
+            .strip_prefix("<!-- color:")
+            .and_then(|s| s.strip_suffix("-->"))
+        {
+            color = Some(inner.trim().to_string());
+        } else if let Some(inner) = trimmed
+            .strip_prefix("<!-- permission-mode:")
+            .and_then(|s| s.strip_suffix("-->"))
+        {
+            permission_mode = Some(inner.trim().to_string());
         } else {
             content_lines.push(line.as_str());
         }
@@ -189,6 +201,8 @@ fn build_agent(name: &str, lines: &[String]) -> NormalizedAgent {
         content: content_lines.join("\n").trim().to_string(),
         model,
         tools,
+        color,
+        permission_mode,
     }
 }
 
@@ -345,6 +359,12 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
         }
         if !agent.tools.is_empty() {
             out.push_str(&format!("<!-- tools: {} -->\n", agent.tools.join(", ")));
+        }
+        if let Some(color) = &agent.color {
+            out.push_str(&format!("<!-- color: {} -->\n", color));
+        }
+        if let Some(permission_mode) = &agent.permission_mode {
+            out.push_str(&format!("<!-- permission-mode: {} -->\n", permission_mode));
         }
         out.push('\n');
         out.push_str(&agent.content);

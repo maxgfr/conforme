@@ -42,6 +42,6 @@
 
 - `globs` uses YAML array format `["**/*.ts"]`, not comma-separated string
 - Has a `regex` frontmatter field for content-based matching (not yet supported by conforme)
-- Continue.dev also supports agents via `.continue/agents/` (local) and cloud, but not file-based in the standard way
-- MCP can also be configured via `config.yaml` under `mcpServers:` key
+- A Continue "agent" is the whole assistant (models + rules + MCP tools) defined in `config.yaml`, not a per-file subagent — Continue has no `.continue/agents/*.md` directory, so conforme sets `agents: false`
+- MCP: written to `.continue/mcpServers/mcp.json`. Continue only accepts the `stdio`, `sse`, and `streamable-http` transport types — it does **not** recognize a bare `http`, so conforme emits `type: "streamable-http"` for HTTP servers. Can also be configured via `config.yaml` under a `mcpServers:` block
 - Rules can have `regex` field for content-based pattern matching

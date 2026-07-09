@@ -144,7 +144,8 @@ pub fn print_help_ai() {
         ".rules + .zed/settings.json",
         &[
             "Fallback chain: .rules → .cursorrules → .windsurfrules → .clinerules → .github/copilot-instructions.md → AGENT.md → AGENTS.md → CLAUDE.md → GEMINI.md",
-            "MCP synced to .zed/settings.json (context_servers format)",
+            "MCP merged into .zed/settings.json (context_servers format, preserves existing settings)",
+            "Skills synced to shared .agents/skills/<name>/SKILL.md",
             "Single .rules file, no frontmatter",
         ],
     );

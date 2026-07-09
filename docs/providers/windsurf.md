@@ -45,3 +45,4 @@
 - Reads AGENTS.md natively
 - Windsurf's canonical MCP config is user-global at `~/.codeium/windsurf/mcp_config.json`; conforme additionally writes a project-level `.windsurf/mcp.json` as a best-effort. HTTP servers use `serverUrl` (not `url`) and no `type` field is emitted
 - Windsurf also has hooks (cascade hooks) and workflows but they are tool-specific, not synced
+- Following Windsurf's acquisition by Cognition, `docs.windsurf.com/*` now 307-redirects to `docs.devin.ai/desktop/cascade/*` (still resolves). The preferred rules path is moving to `.devin/rules/*.md`, with `.windsurf/rules/*.md` (and root `.windsurfrules`) supported as a legacy fallback — conforme still writes `.windsurf/rules/`

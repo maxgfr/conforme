@@ -107,9 +107,11 @@ impl AiToolAdapter for ContinueDevAdapter {
             files.push((rules_dir.join(filename), content));
         }
 
-        // Generate MCP config as .continue/mcpServers/mcp.json
+        // Generate MCP config as .continue/mcpServers/mcp.json.
+        // Continue only accepts `stdio`, `sse`, and `streamable-http` transports —
+        // HTTP servers must be emitted as `streamable-http`, not a bare `http`.
         if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
+            let mcp_json = crate::mcp::generate_continue_mcp_json(&config.mcp_servers)?;
             files.push((
                 project_root
                     .join(".continue")

@@ -5,6 +5,125 @@ use std::path::{Path, PathBuf};
 use crate::config::{sanitize_name, NormalizedAgent, NormalizedSkill};
 use crate::frontmatter;
 
+/// Parse a frontmatter tool list that may be a scalar string (space- or
+/// comma-separated) or a YAML sequence. Shared by the per-tool skill/agent readers.
+pub(crate) fn parse_frontmatter_tool_list(value: Option<&serde_yaml_ng::Value>) -> Vec<String> {
+    match value {
+        Some(serde_yaml_ng::Value::String(s)) => s
+            .split_whitespace()
+            .flat_map(|t| t.split(','))
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect(),
+        Some(serde_yaml_ng::Value::Sequence(seq)) => seq
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Read `<dir>/<name>/SKILL.md` skill files into `NormalizedSkill`s.
+/// Mirrors the SKILL.md folder layout every per-rule adapter writes, so `read()`
+/// can round-trip the skills that `generate()` produced.
+pub(crate) fn read_skills_from_dir(skills_dir: &Path) -> Result<Vec<NormalizedSkill>> {
+    let mut skills = Vec::new();
+    if !skills_dir.is_dir() {
+        return Ok(skills);
+    }
+    let mut entries: Vec<_> = std::fs::read_dir(skills_dir)?
+        .filter_map(|e| e.ok())
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let skill_dir = entry.path();
+        if !skill_dir.is_dir() {
+            continue;
+        }
+        let skill_file = skill_dir.join("SKILL.md");
+        if !skill_file.exists() {
+            continue;
+        }
+        let content = std::fs::read_to_string(&skill_file)?;
+        let (fields, body) = frontmatter::parse(&content)?;
+        let name = fields
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                skill_dir
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            });
+        let description = fields
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let allowed_tools = parse_frontmatter_tool_list(fields.get("allowed-tools"));
+        skills.push(NormalizedSkill {
+            name,
+            description,
+            content: body.trim().to_string(),
+            allowed_tools,
+        });
+    }
+    Ok(skills)
+}
+
+/// Read `<dir>/*.md` agent files into `NormalizedAgent`s (the common frontmatter
+/// subset: `name`, `description`, `model`, `tools`). Used by adapters whose
+/// subagents live one-per-markdown-file.
+pub(crate) fn read_agents_from_dir(agents_dir: &Path) -> Result<Vec<NormalizedAgent>> {
+    let mut agents = Vec::new();
+    if !agents_dir.is_dir() {
+        return Ok(agents);
+    }
+    let mut entries: Vec<_> = std::fs::read_dir(agents_dir)?
+        .filter_map(|e| e.ok())
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "md") {
+            let content = std::fs::read_to_string(&path)?;
+            let (fields, body) = frontmatter::parse(&content)?;
+            let name = fields
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| {
+                    path.file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string()
+                });
+            let description = fields
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let model = fields
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let tools = parse_frontmatter_tool_list(fields.get("tools"));
+            agents.push(NormalizedAgent {
+                name,
+                description,
+                content: body.trim().to_string(),
+                model,
+                tools,
+                ..Default::default()
+            });
+        }
+    }
+    Ok(agents)
+}
+
 /// Generate Claude Code skill files in `.claude/skills/<name>/SKILL.md`.
 pub fn generate_claude_skills(
     project_root: &Path,
@@ -213,6 +332,18 @@ pub fn generate_claude_agents(
                 serde_yaml_ng::Value::String(agent.tools.join(", ")),
             );
         }
+        if let Some(color) = &agent.color {
+            fields.insert(
+                "color".to_string(),
+                serde_yaml_ng::Value::String(color.clone()),
+            );
+        }
+        if let Some(permission_mode) = &agent.permission_mode {
+            fields.insert(
+                "permissionMode".to_string(),
+                serde_yaml_ng::Value::String(permission_mode.clone()),
+            );
+        }
 
         let content = frontmatter::serialize(&fields, &format!("{}\n", agent.content))?;
         files.push((agents_dir.join(filename), content));
@@ -269,11 +400,9 @@ pub fn generate_kiro_agents(
 
     for agent in agents {
         let filename = format!("{}.md", sanitize_name(&agent.name));
+        // Kiro derives the agent name from the file path — the custom-agent
+        // frontmatter has no `name` field, so we do not emit one.
         let mut fields = BTreeMap::new();
-        fields.insert(
-            "name".to_string(),
-            serde_yaml_ng::Value::String(sanitize_name(&agent.name)),
-        );
         if !agent.description.is_empty() {
             fields.insert(
                 "description".to_string(),
@@ -571,6 +700,7 @@ mod tests {
             content: "Review for bugs.".to_string(),
             model: Some("gpt-4o".to_string()),
             tools: vec!["codebase".to_string()],
+            ..Default::default()
         }];
         let files = generate_copilot_agents(Path::new("/tmp/test"), &agents).unwrap();
         assert_eq!(files.len(), 1);

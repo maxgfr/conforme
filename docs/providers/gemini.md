@@ -36,15 +36,17 @@ No activation modes. Single GEMINI.md file, all content always-on.
 - No activation modes
 - All rules merged into single GEMINI.md
 - Empty config -> no file generated (avoids empty GEMINI.md)
+- `read()` round-trips instructions plus skills (`.gemini/skills/`), agents (`.gemini/agents/`), and MCP (`.gemini/settings.json`)
 
 ## Notes
 
-- **Skills frontmatter: ONLY `name` and `description`** -- Gemini docs say "do not include any other fields"
+- **Skills frontmatter: `name` and `description`** -- the Gemini skills tutorial documents only these two as required; conforme emits just those two
 - **MCP format differs from standard:**
   - No `type` field (neither `stdio` nor `http`)
   - HTTP servers use `httpUrl` (not `url`)
   - Headers supported for HTTP
-- Agent frontmatter includes `kind: local` (required)
-- Agent frontmatter also supports `temperature`, `max_turns`
+  - `.gemini/settings.json` is the general Gemini settings file (theme, `context.fileName`, …), so conforme **merges** the `mcpServers` key into any existing file rather than overwriting it
+- Agent frontmatter includes `kind: local` (required; `kind` also accepts `remote`)
+- Agent frontmatter also supports `temperature`, `max_turns`, `timeout_mins`, and `mcpServers`; `model` defaults to `inherit`
 - Hierarchical: `~/.gemini/GEMINI.md` -> project -> subdirs
 - Supports `@file.md` imports in GEMINI.md

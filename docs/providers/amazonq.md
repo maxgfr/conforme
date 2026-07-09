@@ -16,7 +16,7 @@
 | Feature | Path | Format |
 |---------|------|--------|
 | Rules | `.amazonq/rules/*.md` | Plain markdown (NO frontmatter) |
-| Agents | `.amazonq/cli-agents/<name>.json` | JSON: `{ "description", "model", "tools", "prompt" }` |
+| Agents | `.amazonq/cli-agents/<name>.json` | JSON: `{ "description", "model", "tools", "prompt", "resources", "useLegacyMcpJson" }` |
 | MCP | `.amazonq/mcp.json` | JSON: `{ "mcpServers": { ... } }` (standard format) |
 
 ## Activation modes
@@ -37,5 +37,7 @@ No activation modes. All rules are plain markdown, auto-loaded. Users can toggle
 - Global agents at `~/.aws/amazonq/cli-agents/<name>.json`
 - Agents can be generated via `/agent generate` command
 - Agent JSON supports: `tools`, `allowedTools`, `toolsSettings`, `toolAliases`, `mcpServers`, `resources` (glob patterns), `hooks`, `prompt`, `model`, `useLegacyMcpJson`
+- conforme-generated agents include `resources: ["file://.amazonq/rules/**/*.md"]` (so they load the synced rules) and `useLegacyMcpJson: true` (so they pick up `.amazonq/mcp.json`)
+- `read()` round-trips: it parses back `.amazonq/cli-agents/*.json` (agents) and `.amazonq/mcp.json` (MCP), not just the rules
 - IDE version migrating to Kiro format
 - CLI has separate doc pages from IDE

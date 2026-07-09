@@ -22,7 +22,7 @@
 | Rules (glob) | `.claude/rules/*.md` | YAML frontmatter: `paths` (glob array) |
 | Skills | `.claude/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description`, `allowed-tools` |
 | Commands | `.claude/commands/*.md` | YAML frontmatter: `description`, `allowed-tools`, `model` |
-| Agents | `.claude/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
+| Agents | `.claude/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model`, `tools`, `color`, `permissionMode` |
 | MCP | `.mcp.json` | JSON: `{ "mcpServers": { "<name>": { "type": "stdio", "command", "args" } } }` |
 | Hooks | `.claude/settings.json` | JSON: `{ "hooks": { "PreToolUse": [...], "PostToolUse": [...] } }` |
 | Settings | `.claude/settings.json` | JSON: `{ "permissions": { "allow": [...], "deny": [...] }, "model": "sonnet" }` |
@@ -51,4 +51,6 @@
 - `allowed-tools` accepts a space- or comma-separated string (or a YAML list); conforme writes the space-separated form `"Read Bash Write"` and parses both on read
 - Rules without `paths` frontmatter are always-active (no agent-decision/manual distinction)
 - A project `CLAUDE.md` may also live at `./.claude/CLAUDE.md`; conforme reads/writes the root `./CLAUDE.md` (and still detects the project via a `.claude/` directory)
-- MCP: `type: "stdio"` is optional in `.mcp.json` (transport is inferred from `command`). HTTP transport accepts `"http"` (and the `"streamable-http"` alias); the older `"sse"` transport is deprecated — conforme still parses it on read
+- MCP: `type: "stdio"` is optional in `.mcp.json` (transport is inferred from `command`). HTTP transport accepts `"http"` (and the `"streamable-http"` alias); the older `"sse"` transport is deprecated and the `"ws"` (WebSocket) transport is also parsed on read — conforme maps all remote transports to its HTTP variant (`url` + `headers`)
+- `tools` (subagents) and `allowed-tools` (skills/commands) accept a space-separated string, a comma-separated string, or a YAML list; conforme parses all three forms on read
+- Subagent `color` (`red`/`blue`/`green`/`yellow`/`purple`/`orange`/`pink`/`cyan`) and `permissionMode` (`default`/`acceptEdits`/`plan`/`bypassPermissions`) are preserved on the Claude read→write round-trip (and carried through AGENTS.md as `<!-- color: -->` / `<!-- permission-mode: -->` comments); they are Claude-specific and not mapped to other tools

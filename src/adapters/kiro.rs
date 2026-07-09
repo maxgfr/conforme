@@ -81,10 +81,24 @@ impl AiToolAdapter for KiroAdapter {
             }
         }
 
+        // Read skills, agents, and MCP so a Kiro project round-trips as a source.
+        let skills =
+            crate::skills::read_skills_from_dir(&project_root.join(".kiro").join("skills"))?;
+        let agents =
+            crate::skills::read_agents_from_dir(&project_root.join(".kiro").join("agents"))?;
+        let mut mcp_servers = Vec::new();
+        let mcp_path = project_root.join(".kiro").join("settings").join("mcp.json");
+        if mcp_path.exists() {
+            let mcp_content = std::fs::read_to_string(&mcp_path)?;
+            mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
+        }
+
         Ok(NormalizedConfig {
             instructions,
             rules,
-            ..Default::default()
+            skills,
+            agents,
+            mcp_servers,
         })
     }
 
@@ -393,6 +407,7 @@ mod tests {
                 content: "Review code.".to_string(),
                 model: Some("gpt-4o".to_string()),
                 tools: vec!["codebase".to_string()],
+                ..Default::default()
             }],
         };
         let root = Path::new("/tmp/test");

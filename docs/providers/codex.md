@@ -21,7 +21,7 @@
 |---------|------|--------|
 | Instructions | `AGENTS.md` (native) | Markdown |
 | Skills | `.agents/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` |
-| MCP | `~/.codex/config.toml` (global) | TOML: `[mcp_servers.<name>]` (NOT project-level JSON) |
+| MCP | `~/.codex/config.toml` (global) or `.codex/config.toml` (project) | TOML: `[mcp_servers.<name>]` (NOT JSON) |
 
 ## Activation modes
 
@@ -32,7 +32,8 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - File: `src/adapters/codex.rs`
 - ID: `codex`
 - Capabilities: skills
-- No activation modes, no agents, no project-level MCP
+- No activation modes, no agents
+- Does not generate MCP config for Codex (Codex MCP is TOML, not JSON — see Notes); Codex itself supports MCP at both global `~/.codex/config.toml` and project `.codex/config.toml`
 - Reads AGENTS.md natively
 - Skills in `.agents/skills/` (shared format used by Amp and others)
 

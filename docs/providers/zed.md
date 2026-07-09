@@ -20,6 +20,7 @@
 | Feature | Path | Format |
 |---------|------|--------|
 | Rules | `.rules` | Single plain markdown file (no frontmatter) |
+| Skills | `.agents/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` (shared `.agents/skills/` location) |
 | MCP | `.zed/settings.json` | JSON: `{ "context_servers": { "<name>": { "command", "args" } } }` |
 
 ## Activation modes
@@ -32,15 +33,18 @@ Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` 
 
 - File: `src/adapters/zed.rs`
 - ID: `zed`
-- Capabilities: MCP only
-- No activation modes, no skills, no agents
+- Capabilities: skills, MCP
+- No activation modes, no agents
 - All rules merged into single `.rules` file
+- Skills synced to the shared `.agents/skills/<name>/SKILL.md` location; `read()` reads them back
 
 ## Notes
 
 - **MCP format is unique:**
   - Uses `"context_servers"` key (not `"mcpServers"`)
   - No `"type"` field
+  - Flat shape: stdio uses `command`/`args`/`env`, remote uses `url`/`headers` (no `source` wrapper, no nested command object — that is an older, superseded Zed schema)
+  - `.zed/settings.json` holds the user's entire Zed configuration, so conforme **merges** the `context_servers` key into any existing file rather than overwriting it
 - Zed has "Agent Profiles" but configured via settings, not project files
-- Zed now supports **skills** as a documented feature (`SKILL.md` files under `<worktree>/.agents/skills/`, and global `~/.agents/skills/`). conforme does not yet sync skills to Zed (`skills: false`); this is a deliberate coverage gap, not "unimplemented upstream"
+- Zed **skills** are a documented feature: `SKILL.md` folders under `<worktree>/.agents/skills/` (project) and `~/.agents/skills/` (global). conforme syncs skills to the shared project `.agents/skills/` path (the same location Codex/Amp use) with `name` + `description` frontmatter
 - Empty config generates `.rules` with just `\n`

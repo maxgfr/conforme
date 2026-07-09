@@ -52,13 +52,21 @@ pub enum McpTransport {
 }
 
 /// A normalized custom agent definition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct NormalizedAgent {
     pub name: String,
     pub description: String,
     pub content: String,
     pub model: Option<String>,
     pub tools: Vec<String>,
+    /// Claude-specific: subagent accent color
+    /// (`red`, `blue`, `green`, `yellow`, `purple`, `orange`, `pink`, `cyan`).
+    /// Preserved for round-trip fidelity; not mapped to other tools.
+    pub color: Option<String>,
+    /// Claude-specific: subagent permission mode
+    /// (`default`, `acceptEdits`, `plan`, `bypassPermissions`).
+    /// Preserved for round-trip fidelity; not mapped to other tools.
+    pub permission_mode: Option<String>,
 }
 
 /// Full normalized configuration: instructions + rules + skills + MCP + agents.

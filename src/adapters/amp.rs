@@ -39,13 +39,16 @@ impl AiToolAdapter for AmpAdapter {
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
-        // Amp reads AGENTS.md natively
-        let agents_md = project_root.join("AGENTS.md");
-        let instructions = if agents_md.exists() {
-            std::fs::read_to_string(&agents_md)?.trim().to_string()
-        } else {
-            String::new()
-        };
+        // Amp reads AGENTS.md natively, falling back to AGENT.md (singular) then
+        // CLAUDE.md when AGENTS.md is absent — matching Amp's documented lookup order.
+        let instructions = ["AGENTS.md", "AGENT.md", "CLAUDE.md"]
+            .iter()
+            .map(|name| project_root.join(name))
+            .find(|path| path.exists())
+            .map(std::fs::read_to_string)
+            .transpose()?
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
         Ok(NormalizedConfig {
             instructions,
             rules: Vec::new(),
@@ -127,6 +130,33 @@ mod tests {
         );
         assert!(files[0].1.contains("name: deploy"));
         assert!(files[0].1.contains("description: Deploy the app"));
+    }
+
+    #[test]
+    fn test_read_falls_back_to_agent_md_then_claude_md() {
+        let adapter = make_adapter();
+
+        // AGENT.md (singular) is used when AGENTS.md is absent.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("AGENT.md"), "From AGENT.md").unwrap();
+        assert_eq!(
+            adapter.read(tmp.path()).unwrap().instructions,
+            "From AGENT.md"
+        );
+
+        // CLAUDE.md is used when neither AGENTS.md nor AGENT.md exist.
+        let tmp2 = tempfile::tempdir().unwrap();
+        std::fs::write(tmp2.path().join("CLAUDE.md"), "From CLAUDE.md").unwrap();
+        assert_eq!(
+            adapter.read(tmp2.path()).unwrap().instructions,
+            "From CLAUDE.md"
+        );
+
+        // AGENTS.md takes priority over the fallbacks.
+        let tmp3 = tempfile::tempdir().unwrap();
+        std::fs::write(tmp3.path().join("AGENTS.md"), "Primary").unwrap();
+        std::fs::write(tmp3.path().join("AGENT.md"), "Fallback").unwrap();
+        assert_eq!(adapter.read(tmp3.path()).unwrap().instructions, "Primary");
     }
 
     #[test]

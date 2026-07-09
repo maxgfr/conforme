@@ -121,6 +121,7 @@ impl AiToolAdapter for CursorAdapter {
                         content: body.trim().to_string(),
                         model,
                         tools,
+                        ..Default::default()
                     });
                 }
             }
@@ -134,10 +135,14 @@ impl AiToolAdapter for CursorAdapter {
             mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
         }
 
+        // Read skills from .cursor/skills/<name>/SKILL.md
+        let skills =
+            crate::skills::read_skills_from_dir(&project_root.join(".cursor").join("skills"))?;
+
         Ok(NormalizedConfig {
             instructions,
             rules,
-            skills: Vec::new(),
+            skills,
             agents,
             mcp_servers,
         })
@@ -173,7 +178,7 @@ impl AiToolAdapter for CursorAdapter {
             )?);
         }
 
-        // Generate agents as .cursor/agents/<name>.mdc
+        // Generate agents as .cursor/agents/<name>.md (Cursor subagents use .md, not .mdc)
         if !config.agents.is_empty() {
             files.extend(crate::skills::generate_cursor_agents(
                 project_root,
@@ -437,6 +442,7 @@ mod tests {
                 content: "Review code.".to_string(),
                 model: Some("gpt-4o".to_string()),
                 tools: vec!["codebase".to_string()],
+                ..Default::default()
             }],
         };
         let root = Path::new("/tmp/test");

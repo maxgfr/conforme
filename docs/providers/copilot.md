@@ -4,7 +4,7 @@
 
 ## Official docs
 
-- Custom instructions: https://docs.github.com/copilot/customizing-copilot/adding-custom-instructions-for-github-copilot
+- Custom instructions: https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions
 - Custom agents config: https://docs.github.com/en/copilot/reference/custom-agents-configuration
 - CLI skills: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-skills
 - Cloud agent skills: https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/create-skills
@@ -40,6 +40,7 @@
 - Capabilities: activation_modes, skills, agents, MCP
 - Always/AgentDecision/Manual rules -> inlined in `copilot-instructions.md`
 - GlobMatch rules -> separate `.instructions.md` files
+- `read()` round-trips instructions/rules plus prompts (`.github/prompts/*.prompt.md` → skills), subagents (`.github/agents/*.agent.md`), and MCP (`.vscode/mcp.json`)
 
 ## Notes
 

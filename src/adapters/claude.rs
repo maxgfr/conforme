@@ -9,6 +9,28 @@ use crate::config::{
 };
 use crate::frontmatter;
 
+/// Parse a frontmatter tool list that may be either a scalar string
+/// (space- or comma-separated, e.g. `Read, Bash Write`) or a YAML sequence
+/// (`- Read` / `- Bash`). Claude Code accepts all of these forms for the
+/// `tools` (subagents) and `allowed-tools` (skills/commands) fields, so the
+/// reader must handle every one to round-trip correctly.
+fn parse_tool_list(value: Option<&serde_yaml_ng::Value>) -> Vec<String> {
+    match value {
+        Some(serde_yaml_ng::Value::String(s)) => s
+            .split_whitespace()
+            .flat_map(|t| t.split(','))
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect(),
+        Some(serde_yaml_ng::Value::Sequence(seq)) => seq
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 pub struct ClaudeAdapter;
 
 impl AiToolAdapter for ClaudeAdapter {
@@ -120,17 +142,7 @@ impl AiToolAdapter for ClaudeAdapter {
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
-                        let allowed_tools = fields
-                            .get("allowed-tools")
-                            .and_then(|v| v.as_str())
-                            .map(|s| {
-                                s.split_whitespace()
-                                    .flat_map(|t| t.split(','))
-                                    .map(|t| t.trim().to_string())
-                                    .filter(|t| !t.is_empty())
-                                    .collect()
-                            })
-                            .unwrap_or_default();
+                        let allowed_tools = parse_tool_list(fields.get("allowed-tools"));
                         skills.push(NormalizedSkill {
                             name,
                             description,
@@ -164,16 +176,7 @@ impl AiToolAdapter for ClaudeAdapter {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let allowed_tools = fields
-                        .get("allowed-tools")
-                        .and_then(|v| v.as_str())
-                        .map(|s| {
-                            s.split(',')
-                                .map(|t| t.trim().to_string())
-                                .filter(|t| !t.is_empty())
-                                .collect()
-                        })
-                        .unwrap_or_default();
+                    let allowed_tools = parse_tool_list(fields.get("allowed-tools"));
                     skills.push(NormalizedSkill {
                         name,
                         description,
@@ -211,23 +214,23 @@ impl AiToolAdapter for ClaudeAdapter {
                         .get("model")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
-                    let tools = fields
-                        .get("tools")
+                    let tools = parse_tool_list(fields.get("tools"));
+                    let color = fields
+                        .get("color")
                         .and_then(|v| v.as_str())
-                        .map(|s| {
-                            s.split_whitespace()
-                                .flat_map(|t| t.split(','))
-                                .map(|t| t.trim().to_string())
-                                .filter(|t| !t.is_empty())
-                                .collect()
-                        })
-                        .unwrap_or_default();
+                        .map(|s| s.to_string());
+                    let permission_mode = fields
+                        .get("permissionMode")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     agents.push(NormalizedAgent {
                         name,
                         description,
                         content: body.trim().to_string(),
                         model,
                         tools,
+                        color,
+                        permission_mode,
                     });
                 }
             }
@@ -461,6 +464,7 @@ mod tests {
                 content: "Review code.".to_string(),
                 model: Some("gpt-4o".to_string()),
                 tools: vec!["codebase".to_string()],
+                ..Default::default()
             }],
         };
         let root = Path::new("/tmp/test");
@@ -522,5 +526,33 @@ mod tests {
         // Should still produce CLAUDE.md even if empty
         assert_eq!(files.len(), 1);
         assert!(files[0].0.ends_with("CLAUDE.md"));
+    }
+
+    #[test]
+    fn test_parse_tool_list_all_forms() {
+        use serde_yaml_ng::Value;
+        // Comma-separated string
+        assert_eq!(
+            parse_tool_list(Some(&Value::String("Read, Bash, Write".to_string()))),
+            vec!["Read", "Bash", "Write"]
+        );
+        // Space-separated string (the form conforme writes for subagents/skills)
+        assert_eq!(
+            parse_tool_list(Some(&Value::String("Read Bash Write".to_string()))),
+            vec!["Read", "Bash", "Write"]
+        );
+        // Mixed comma + space (must not collapse into one token)
+        assert_eq!(
+            parse_tool_list(Some(&Value::String("Read, Bash Write".to_string()))),
+            vec!["Read", "Bash", "Write"]
+        );
+        // YAML sequence (Claude's own `--agents` JSON / list-style frontmatter)
+        let seq = Value::Sequence(vec![
+            Value::String("Read".to_string()),
+            Value::String("Grep".to_string()),
+        ]);
+        assert_eq!(parse_tool_list(Some(&seq)), vec!["Read", "Grep"]);
+        // Missing field
+        assert!(parse_tool_list(None).is_empty());
     }
 }

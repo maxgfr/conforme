@@ -72,9 +72,82 @@ impl AiToolAdapter for AmazonQAdapter {
             }
         }
 
+        // Read agents from .amazonq/cli-agents/<name>.json
+        let mut agents = Vec::new();
+        let agents_dir = project_root.join(".amazonq").join("cli-agents");
+        if agents_dir.is_dir() {
+            let mut entries: Vec<_> = std::fs::read_dir(&agents_dir)?
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
+                let path = entry.path();
+                if path.extension().is_none_or(|e| e != "json") {
+                    continue;
+                }
+                let content = std::fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read {}", path.display()))?;
+                let value: serde_json::Value = match serde_json::from_str(&content) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let Some(obj) = value.as_object() else {
+                    continue;
+                };
+                let name = obj
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        path.file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string()
+                    });
+                let description = obj
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let model = obj.get("model").and_then(|v| v.as_str()).map(String::from);
+                let tools = obj
+                    .get("tools")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let agent_content = obj
+                    .get("prompt")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                agents.push(crate::config::NormalizedAgent {
+                    name,
+                    description,
+                    content: agent_content,
+                    model,
+                    tools,
+                    ..Default::default()
+                });
+            }
+        }
+
+        // Read MCP servers from .amazonq/mcp.json
+        let mut mcp_servers = Vec::new();
+        let mcp_path = project_root.join(".amazonq").join("mcp.json");
+        if mcp_path.exists() {
+            let mcp_content = std::fs::read_to_string(&mcp_path)?;
+            mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
+        }
+
         Ok(NormalizedConfig {
             instructions,
             rules,
+            agents,
+            mcp_servers,
             ..Default::default()
         })
     }
@@ -192,6 +265,7 @@ mod tests {
                 content: "Review code.".to_string(),
                 model: Some("claude-sonnet".to_string()),
                 tools: vec!["codebase".to_string()],
+                ..Default::default()
             }],
             ..Default::default()
         };
