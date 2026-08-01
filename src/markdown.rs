@@ -246,15 +246,18 @@ fn build_mcp(name: &str, lines: &[String]) -> Option<NormalizedMcpServer> {
         }
     }
 
+    // A `## MCP:` section without either a `url:` or a `command:` comment does
+    // not describe a usable server, so it is skipped rather than emitted empty.
     let transport = if let Some(u) = url {
         McpTransport::Http {
             url: u,
             headers: std::collections::BTreeMap::new(),
         }
-    } else if let Some(cmd) = command {
-        McpTransport::Stdio { command: cmd, args }
     } else {
-        return None;
+        McpTransport::Stdio {
+            command: command?,
+            args,
+        }
     };
 
     Some(NormalizedMcpServer {
@@ -527,6 +530,29 @@ Review code for correctness.
         assert!(matches!(
             &config.mcp_servers[0].transport,
             McpTransport::Http { url, .. } if url == "https://api.github.com/mcp"
+        ));
+    }
+
+    #[test]
+    fn test_parse_mcp_without_command_or_url_is_skipped() {
+        // A `## MCP:` section that declares neither `command:` nor `url:` cannot
+        // describe a usable server, so it must be dropped rather than emitted
+        // as a stdio server with an empty command.
+        let content = "## MCP: broken\n<!-- args: -y, @mcp/thing -->\n\n";
+        let config = parse_agents_md(content).unwrap();
+        assert!(config.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn test_parse_mcp_url_wins_over_command() {
+        // When both are present the HTTP transport takes precedence.
+        let content =
+            "## MCP: both\n<!-- url: https://example.com/mcp -->\n<!-- command: npx -->\n\n";
+        let config = parse_agents_md(content).unwrap();
+        assert_eq!(config.mcp_servers.len(), 1);
+        assert!(matches!(
+            &config.mcp_servers[0].transport,
+            McpTransport::Http { url, .. } if url == "https://example.com/mcp"
         ));
     }
 }

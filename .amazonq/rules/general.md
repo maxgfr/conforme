@@ -8,7 +8,7 @@ conforme is a Rust CLI that synchronizes AI coding agent configurations across 1
 
 ```bash
 cargo build --release
-cargo test                     # 362 tests (130 lib + 134 bin + 58 integration + 17 error + 23 roundtrip)
+cargo test                     # 366 tests (132 lib + 136 bin + 58 integration + 17 error + 23 roundtrip)
 cargo clippy -- -D warnings    # lint — MUST pass before pushing
 cargo fmt -- --check           # format check
 conforme check                 # verify AI configs are in sync (dogfooding)
