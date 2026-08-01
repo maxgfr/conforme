@@ -259,6 +259,115 @@ pub fn build_opencode_mcp_object(
     mcp
 }
 
+/// Parse the OpenCode `mcp` object from an `opencode.json` value back into
+/// normalized servers. OpenCode's shape is unique enough that the generic
+/// [`parse_mcp_json`] reader cannot handle it: `type` is `local`/`remote`
+/// (not `stdio`/`http`), `command` is a single `[cmd, ...args]` array, and the
+/// env key is `environment`.
+pub fn parse_opencode_mcp_object(mcp: &serde_json::Value) -> Vec<NormalizedMcpServer> {
+    let Some(obj) = mcp.as_object() else {
+        return Vec::new();
+    };
+
+    let mut result = Vec::new();
+    for (name, value) in obj {
+        let Some(entry) = value.as_object() else {
+            continue;
+        };
+
+        let server_type = entry.get("type").and_then(|v| v.as_str());
+        let url = entry.get("url").and_then(|v| v.as_str());
+        let is_remote = server_type == Some("remote") || (server_type.is_none() && url.is_some());
+
+        let transport = if is_remote {
+            let headers = entry
+                .get("headers")
+                .and_then(|v| v.as_object())
+                .map(|h| {
+                    h.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
+                .unwrap_or_default();
+            McpTransport::Http {
+                url: url.unwrap_or("").to_string(),
+                headers,
+            }
+        } else {
+            // `command` is a single array whose first element is the executable.
+            let parts: Vec<String> = entry
+                .get("command")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut parts = parts.into_iter();
+            McpTransport::Stdio {
+                command: parts.next().unwrap_or_default(),
+                args: parts.collect(),
+            }
+        };
+
+        let env: BTreeMap<String, String> = entry
+            .get("environment")
+            .and_then(|v| v.as_object())
+            .map(|e| {
+                e.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        result.push(NormalizedMcpServer {
+            name: name.clone(),
+            transport,
+            env,
+        });
+    }
+
+    result
+}
+
+/// Parse the OpenCode `agent` object from an `opencode.json` value back into
+/// normalized agents (the inverse of [`build_opencode_agent_object`]).
+pub fn parse_opencode_agent_object(
+    agent: &serde_json::Value,
+) -> Vec<crate::config::NormalizedAgent> {
+    let Some(obj) = agent.as_object() else {
+        return Vec::new();
+    };
+
+    let mut result = Vec::new();
+    for (name, value) in obj {
+        let Some(entry) = value.as_object() else {
+            continue;
+        };
+        result.push(crate::config::NormalizedAgent {
+            name: name.clone(),
+            description: entry
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            content: entry
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            model: entry
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            ..Default::default()
+        });
+    }
+
+    result
+}
+
 /// Build the Zed `context_servers` object (not a full file — `.zed/settings.json`
 /// is merged by the adapter so user-authored settings such as theme and
 /// keybindings are preserved). Flat shape: stdio uses `command`/`args`/`env`,
@@ -310,12 +419,13 @@ pub fn build_zed_context_servers_object(
     context_servers
 }
 
-/// Generate Amp MCP format: { "amp.mcpServers": { "name": { "command": ..., "args": [...] } } }
-pub fn generate_amp_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
-    if servers.is_empty() {
-        return Ok(String::new());
-    }
-
+/// Build the Amp `amp.mcpServers` object (not a full file — `.amp/settings.json`
+/// is merged by the adapter so user-authored workspace settings are preserved).
+/// Amp infers the transport from the entry's shape: stdio uses `command`/`args`,
+/// remote uses `url` (+ optional `headers`). No `type` field is emitted.
+pub fn build_amp_mcp_object(
+    servers: &[NormalizedMcpServer],
+) -> serde_json::Map<String, serde_json::Value> {
     let mut mcp_servers = serde_json::Map::new();
 
     for server in servers {
@@ -357,8 +467,7 @@ pub fn generate_amp_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> 
         mcp_servers.insert(server.name.clone(), serde_json::Value::Object(entry));
     }
 
-    let root = serde_json::json!({ "amp.mcpServers": mcp_servers });
-    serde_json::to_string_pretty(&root).context("failed to serialize Amp MCP config")
+    mcp_servers
 }
 
 /// Build the Gemini CLI `mcpServers` object (not a full file — `.gemini/settings.json`
@@ -515,10 +624,10 @@ pub fn generate_amazonq_agents_json(
 }
 
 /// Parse an MCP config file into normalized servers. Handles every key conforme
-/// emits — `mcpServers` (standard), `servers` (Copilot/VS Code), and
-/// `context_servers` (Zed) — and infers the transport from the entry's shape
-/// when there is no explicit `type` field (Gemini `httpUrl`, Windsurf `serverUrl`,
-/// Zed remote `url`).
+/// emits — `mcpServers` (standard), `servers` (Copilot/VS Code),
+/// `context_servers` (Zed) and `amp.mcpServers` (Amp) — and infers the transport
+/// from the entry's shape when there is no explicit `type` field (Gemini
+/// `httpUrl`, Windsurf `serverUrl`, Zed/Amp remote `url`).
 pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
     let root: serde_json::Value =
         serde_json::from_str(content).context("failed to parse MCP JSON")?;
@@ -529,6 +638,8 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
         "servers"
     } else if root.get("context_servers").is_some() {
         "context_servers"
+    } else if root.get("amp.mcpServers").is_some() {
+        "amp.mcpServers"
     } else {
         return Ok(Vec::new());
     };
@@ -963,6 +1074,79 @@ mod tests {
         // Generated agents load the synced rules and legacy MCP config.
         assert!(result[0].1.contains("file://.amazonq/rules/**/*.md"));
         assert!(result[0].1.contains("\"useLegacyMcpJson\": true"));
+    }
+
+    #[test]
+    fn test_parse_opencode_mcp_object_roundtrip() {
+        // OpenCode's shape (`type: local`, `command` array, `environment`) is not
+        // parseable by the generic reader, so it has its own inverse.
+        let servers = vec![
+            NormalizedMcpServer {
+                name: "fs".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@mcp/fs".to_string()],
+                },
+                env: BTreeMap::from([("API_KEY".to_string(), "secret".to_string())]),
+            },
+            NormalizedMcpServer {
+                name: "api".to_string(),
+                transport: McpTransport::Http {
+                    url: "https://example.com/mcp".to_string(),
+                    headers: BTreeMap::from([("Auth".to_string(), "Bearer x".to_string())]),
+                },
+                env: BTreeMap::new(),
+            },
+        ];
+        let obj = build_opencode_mcp_object(&servers);
+        let parsed = parse_opencode_mcp_object(&serde_json::Value::Object(obj));
+        assert_eq!(parsed.len(), 2);
+
+        let fs = parsed.iter().find(|s| s.name == "fs").unwrap();
+        match &fs.transport {
+            McpTransport::Stdio { command, args } => {
+                assert_eq!(command, "npx");
+                assert_eq!(args, &["-y".to_string(), "@mcp/fs".to_string()]);
+            }
+            other => panic!("expected stdio, got {other:?}"),
+        }
+        assert_eq!(fs.env.get("API_KEY").map(String::as_str), Some("secret"));
+
+        let api = parsed.iter().find(|s| s.name == "api").unwrap();
+        match &api.transport {
+            McpTransport::Http { url, headers } => {
+                assert_eq!(url, "https://example.com/mcp");
+                assert_eq!(headers.get("Auth").map(String::as_str), Some("Bearer x"));
+            }
+            other => panic!("expected http, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_mcp_json_amp_key() {
+        // Amp keys its servers under the dotted `amp.mcpServers` and emits no
+        // `type` field — both must survive the read path.
+        let servers = vec![NormalizedMcpServer {
+            name: "linear".to_string(),
+            transport: McpTransport::Http {
+                url: "https://mcp.linear.app/mcp".to_string(),
+                headers: BTreeMap::new(),
+            },
+            env: BTreeMap::new(),
+        }];
+        let json = serde_json::to_string_pretty(
+            &serde_json::json!({ "amp.mcpServers": build_amp_mcp_object(&servers) }),
+        )
+        .unwrap();
+        assert!(!json.contains("\"type\""));
+
+        let parsed = parse_mcp_json(&json).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "linear");
+        match &parsed[0].transport {
+            McpTransport::Http { url, .. } => assert_eq!(url, "https://mcp.linear.app/mcp"),
+            other => panic!("expected http, got {other:?}"),
+        }
     }
 
     #[test]

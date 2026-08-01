@@ -400,6 +400,143 @@ fn test_roundtrip_zed_skills_mcp() {
     );
 }
 
+#[test]
+fn test_roundtrip_windsurf_skills_mcp() {
+    let adapter = conforme::adapters::windsurf::WindsurfAdapter;
+    let dir = TempDir::new().unwrap();
+    setup_tool(&dir, "windsurf");
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    let read_config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.skills[0].name, "deploy");
+    // Windsurf writes `serverUrl` and no `type` — the parser must still
+    // recognise the remote server as HTTP.
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+    assert_eq!(
+        find_http_url(&read_config, "api").as_deref(),
+        Some("https://example.com/mcp")
+    );
+}
+
+#[test]
+fn test_roundtrip_continuedev_mcp() {
+    let adapter = conforme::adapters::continuedev::ContinueDevAdapter;
+    let dir = TempDir::new().unwrap();
+    setup_tool(&dir, "continue");
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    let read_config = adapter.read(dir.path()).unwrap();
+
+    // Continue emits `type: streamable-http` — it must parse back as HTTP.
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+    assert_eq!(
+        find_http_url(&read_config, "api").as_deref(),
+        Some("https://example.com/mcp")
+    );
+}
+
+#[test]
+fn test_roundtrip_roocode_skills_mcp() {
+    let adapter = conforme::adapters::roocode::RooCodeAdapter;
+    let dir = TempDir::new().unwrap();
+    setup_tool(&dir, "roocode");
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    let read_config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.skills[0].name, "deploy");
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+    assert_eq!(
+        find_http_url(&read_config, "api").as_deref(),
+        Some("https://example.com/mcp")
+    );
+}
+
+#[test]
+fn test_roundtrip_codex_skills() {
+    let adapter = conforme::adapters::codex::CodexAdapter;
+    let dir = TempDir::new().unwrap();
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    let read_config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.skills[0].name, "deploy");
+    assert_eq!(read_config.skills[0].content, "Run deploy.");
+}
+
+#[test]
+fn test_roundtrip_amp_skills_mcp() {
+    let adapter = conforme::adapters::amp::AmpAdapter;
+    let dir = TempDir::new().unwrap();
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    let read_config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.skills[0].name, "deploy");
+    // Amp keys its servers under `amp.mcpServers` with no `type` field.
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+    assert_eq!(
+        find_http_url(&read_config, "api").as_deref(),
+        Some("https://example.com/mcp")
+    );
+}
+
+#[test]
+fn test_amp_settings_merge_preserves_user_keys() {
+    let adapter = conforme::adapters::amp::AmpAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".amp")).unwrap();
+    fs::write(
+        dir.path().join(".amp").join("settings.json"),
+        r#"{ "amp.notifications.enabled": true }"#,
+    )
+    .unwrap();
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+
+    let settings = fs::read_to_string(dir.path().join(".amp").join("settings.json")).unwrap();
+    assert!(settings.contains("amp.notifications.enabled"));
+    assert!(settings.contains("amp.mcpServers"));
+}
+
+#[test]
+fn test_roundtrip_opencode_skills_agents_mcp() {
+    let adapter = conforme::adapters::opencode::OpenCodeAdapter;
+    let dir = TempDir::new().unwrap();
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    let read_config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.skills[0].name, "deploy");
+    assert_eq!(read_config.agents.len(), 1);
+    assert_eq!(read_config.agents[0].name, "reviewer");
+    // OpenCode stores `command` as a single [cmd, ...args] array with
+    // `type: local`/`remote`, so it needs its own parser.
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+    assert_eq!(
+        find_http_url(&read_config, "api").as_deref(),
+        Some("https://example.com/mcp")
+    );
+    let fs_server = read_config
+        .mcp_servers
+        .iter()
+        .find(|s| s.name == "fs")
+        .unwrap();
+    match &fs_server.transport {
+        McpTransport::Stdio { command, args } => {
+            assert_eq!(command, "npx");
+            assert_eq!(args, &["-y".to_string(), "@mcp/fs".to_string()]);
+        }
+        other => panic!("expected stdio transport, got {other:?}"),
+    }
+}
+
 // Test that sync → check is consistent (idempotency through the trait)
 #[test]
 fn test_write_then_generate_matches() {

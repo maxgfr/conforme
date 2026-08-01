@@ -74,9 +74,21 @@ impl AiToolAdapter for WindsurfAdapter {
             }
         }
 
+        // Read skills and MCP back so a Windsurf project round-trips as a source.
+        let skills =
+            crate::skills::read_skills_from_dir(&project_root.join(".windsurf").join("skills"))?;
+        let mut mcp_servers = Vec::new();
+        let mcp_path = project_root.join(".windsurf").join("mcp.json");
+        if mcp_path.exists() {
+            let mcp_content = std::fs::read_to_string(&mcp_path)?;
+            mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
+        }
+
         Ok(NormalizedConfig {
             instructions,
             rules,
+            skills,
+            mcp_servers,
             ..Default::default()
         })
     }

@@ -37,6 +37,9 @@ impl AiToolAdapter for CopilotAdapter {
     fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
         vec![
             project_root.join(".github").join("instructions"),
+            project_root.join(".github").join("skills"),
+            // Legacy: conforme used to emit skills as `.github/prompts/*.prompt.md`.
+            // Kept managed so stale prompt files are cleaned up on the next sync.
             project_root.join(".github").join("prompts"),
             project_root.join(".github").join("agents"),
         ]
@@ -103,10 +106,16 @@ impl AiToolAdapter for CopilotAdapter {
             }
         }
 
-        // Read prompt files (.github/prompts/<name>.prompt.md) back as skills.
-        let mut skills = Vec::new();
+        // Read skills from .github/skills/<name>/SKILL.md.
+        let mut skills =
+            crate::skills::read_skills_from_dir(&project_root.join(".github").join("skills"))?;
+
+        // Legacy fallback: earlier conforme versions emitted skills as
+        // `.github/prompts/<name>.prompt.md`. Only consulted when no
+        // `.github/skills/` entries exist, so a migrated project does not
+        // surface each skill twice.
         let prompts_dir = project_root.join(".github").join("prompts");
-        if prompts_dir.is_dir() {
+        if skills.is_empty() && prompts_dir.is_dir() {
             let mut entries: Vec<_> = std::fs::read_dir(&prompts_dir)?
                 .filter_map(|e| e.ok())
                 .collect();
@@ -206,8 +215,8 @@ impl AiToolAdapter for CopilotAdapter {
             }
         }
 
-        // Generate skills as .github/prompts/<name>.prompt.md
-        files.extend(crate::skills::generate_copilot_prompts(
+        // Generate skills as .github/skills/<name>/SKILL.md
+        files.extend(crate::skills::generate_copilot_skills(
             project_root,
             &config.skills,
         )?);
@@ -355,13 +364,20 @@ mod tests {
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
 
-        let prompt_file = files
+        // Copilot documents skills at `.github/skills/<name>/SKILL.md`;
+        // `.github/prompts/*.prompt.md` is a separate VS Code prompt-file feature.
+        let skill_file = files.iter().find(|(p, _)| p.ends_with("SKILL.md")).unwrap();
+        assert!(skill_file
+            .0
+            .to_string_lossy()
+            .contains(".github/skills/deploy/SKILL.md"));
+        assert!(skill_file.1.contains("name: deploy"));
+        assert!(skill_file.1.contains("description: Deploy app"));
+        assert!(skill_file.1.contains("allowed-tools: Bash"));
+        assert!(skill_file.1.contains("Run deploy."));
+        assert!(!files
             .iter()
-            .find(|(p, _)| p.ends_with("deploy.prompt.md"))
-            .unwrap();
-        assert!(prompt_file.0.to_string_lossy().contains(".github/prompts/"));
-        assert!(prompt_file.1.contains("description: Deploy app"));
-        assert!(prompt_file.1.contains("Run deploy."));
+            .any(|(p, _)| p.to_string_lossy().contains(".github/prompts/")));
     }
 
     #[test]

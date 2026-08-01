@@ -41,9 +41,15 @@ impl AiToolAdapter for CodexAdapter {
         } else {
             String::new()
         };
+        // Read skills back from the shared `.agents/skills/` location so a Codex
+        // project round-trips as a source.
+        let skills =
+            crate::skills::read_skills_from_dir(&project_root.join(".agents").join("skills"))?;
+
         Ok(NormalizedConfig {
             instructions,
             rules: Vec::new(),
+            skills,
             ..Default::default()
         })
     }

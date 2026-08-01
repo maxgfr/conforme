@@ -13,7 +13,7 @@ conforme is a Rust CLI that synchronizes AI coding agent configurations across 1
 
 ```bash
 cargo build --release
-cargo test                     # 349 tests (127 lib + 131 bin + 58 integration + 17 error + 16 roundtrip)
+cargo test                     # 362 tests (130 lib + 134 bin + 58 integration + 17 error + 23 roundtrip)
 cargo clippy -- -D warnings    # lint — MUST pass before pushing
 cargo fmt -- --check           # format check
 conforme check                 # verify AI configs are in sync (dogfooding)
@@ -47,7 +47,9 @@ src/
                        - OpenCode: "mcp" key merged into opencode.json, type local/remote, command as array, `environment` key
                        - Zed: "context_servers" key
                        - Gemini: mcpServers, no type field, httpUrl for HTTP
-                       - Amp: "amp.mcpServers" key
+                       - Amp: "amp.mcpServers" key merged into .amp/settings.json — build_amp_mcp_object
+                       - parse_mcp_json reads back mcpServers / servers / context_servers / amp.mcpServers
+                       - OpenCode needs its own inverse (parse_opencode_mcp_object / parse_opencode_agent_object)
   skills.rs         — Skills (SKILL.md) and agents generation per tool; shared read helpers
                        (read_skills_from_dir, read_agents_from_dir, parse_frontmatter_tool_list)
                        used by adapters to round-trip skills/agents on read()
@@ -56,7 +58,7 @@ src/
     claude.rs       — Claude Code: CLAUDE.md + .claude/rules/*.md (paths: frontmatter)
     cursor.rs       — Cursor: .cursor/rules/*.mdc (alwaysApply/globs/description); subagents at .cursor/agents/*.md
     windsurf.rs     — Windsurf: .windsurf/rules/*.md (trigger/description/globs)
-    copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo)
+    copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md
     codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively
     opencode.rs     — OpenCode: reads AGENTS.md natively
     roocode.rs      — Roo Code / Cline: .roo/rules/*.md (plain Markdown)
@@ -68,7 +70,7 @@ src/
     amp.rs          — Amp (Sourcegraph): reads AGENTS.md natively
 tests/
   integration.rs    — CLI integration tests (assert_cmd + tempfile)
-  roundtrip.rs      — Write→read round-trip tests for all per-rule adapters
+  roundtrip.rs      — Write→read round-trip tests for every adapter (rules, skills, agents, MCP)
   error_cases.rs    — Edge cases, MCP sync, agents sync, activation modes
 docs/
   providers/        — One doc per supported tool with official URLs, config format, adapter notes
@@ -154,7 +156,7 @@ Review for bugs.
 | OpenCode | `mcp` (inside `opencode.json`) | `type: local/remote`; `command` is a single array; env key is `environment`; merged (preserves user keys) |
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; merged into existing settings (preserves theme/keybindings/etc.) |
 | Gemini | `mcpServers` (inside `.gemini/settings.json`) | No type field, uses `httpUrl` for HTTP; merged into existing settings |
-| Amp | `amp.mcpServers` (inside `.amp/settings.json`) | Dotted key |
+| Amp | `amp.mcpServers` (inside `.amp/settings.json`) | Dotted key; no type field; merged into existing settings |
 
 ### Sync algorithm
 

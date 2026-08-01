@@ -35,6 +35,7 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - No activation modes
 - Reads AGENTS.md natively, falls back to CLAUDE.md
 - Writes MCP and agent definitions into `opencode.json` at the project root, preserving any existing keys
+- `read()` round-trips AGENTS.md plus skills (`.opencode/skills/`), agents (`.opencode/agents/*.md`, falling back to the `agent` key in `opencode.json`), and MCP (the `mcp` key in `opencode.json`)
 
 ## Notes
 

@@ -74,9 +74,21 @@ impl AiToolAdapter for ContinueDevAdapter {
             }
         }
 
+        // Read MCP back so a Continue project round-trips as a source.
+        let mut mcp_servers = Vec::new();
+        let mcp_path = project_root
+            .join(".continue")
+            .join("mcpServers")
+            .join("mcp.json");
+        if mcp_path.exists() {
+            let mcp_content = std::fs::read_to_string(&mcp_path)?;
+            mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
+        }
+
         Ok(NormalizedConfig {
             instructions,
             rules,
+            mcp_servers,
             ..Default::default()
         })
     }

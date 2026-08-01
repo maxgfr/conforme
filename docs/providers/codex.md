@@ -4,15 +4,15 @@
 
 ## Official docs
 
-- AGENTS.md guide: https://developers.openai.com/codex/guides/agents-md
-- Skills: https://developers.openai.com/codex/skills
-- MCP configuration: https://developers.openai.com/codex/mcp
-- CLI reference: https://developers.openai.com/codex/cli/reference
-- CLI features: https://developers.openai.com/codex/cli/features
-- Config basics: https://developers.openai.com/codex/config-basic
-- Advanced config: https://developers.openai.com/codex/config-advanced
-- Config reference: https://developers.openai.com/codex/config-reference
-- Changelog: https://developers.openai.com/codex/changelog
+- AGENTS.md guide: https://learn.chatgpt.com/docs/agent-configuration/agents-md
+- Skills: https://learn.chatgpt.com/docs/build-skills
+- MCP configuration: https://learn.chatgpt.com/docs/extend/mcp
+- CLI reference: https://learn.chatgpt.com/docs/developer-commands
+- CLI features: https://learn.chatgpt.com/docs/codex/cli
+- Config basics: https://learn.chatgpt.com/docs/config-file/config-basic
+- Advanced config: https://learn.chatgpt.com/docs/config-file/config-advanced
+- Config reference: https://learn.chatgpt.com/docs/config-file/config-reference
+- Changelog: https://learn.chatgpt.com/docs/changelog
 - GitHub: https://github.com/openai/codex
 
 ## Config files
@@ -36,6 +36,7 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - Does not generate MCP config for Codex (Codex MCP is TOML, not JSON — see Notes); Codex itself supports MCP at both global `~/.codex/config.toml` and project `.codex/config.toml`
 - Reads AGENTS.md natively
 - Skills in `.agents/skills/` (shared format used by Amp and others)
+- `read()` round-trips AGENTS.md plus skills (`.agents/skills/`)
 
 ## Notes
 

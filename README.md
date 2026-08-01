@@ -162,16 +162,16 @@ Review all changes for correctness and security.
 | Adapter | Rules | Skills | Agents | MCP |
 |---------|-------|--------|--------|-----|
 | Claude Code | `.claude/rules/*.md` | `.claude/skills/` + `.claude/commands/` | `.claude/agents/*.md` | `.mcp.json` |
-| GitHub Copilot | `.github/instructions/*.md` | `.github/prompts/*.prompt.md` | `.github/agents/*.agent.md` | `.vscode/mcp.json` |
+| GitHub Copilot | `.github/instructions/*.md` | `.github/skills/` | `.github/agents/*.agent.md` | `.vscode/mcp.json` |
 | Cursor | `.cursor/rules/*.mdc` | `.cursor/skills/` | `.cursor/agents/*.md` | `.cursor/mcp.json` |
 | Kiro (AWS) | `.kiro/steering/*.md` | `.kiro/skills/` | `.kiro/agents/*.md` | `.kiro/settings/mcp.json` |
 | Windsurf | `.windsurf/rules/*.md` | `.windsurf/skills/` | - | `.windsurf/mcp.json` |
-| Continue.dev | `.continue/rules/*.md` | - | - | `.continue/mcp.json` |
+| Continue.dev | `.continue/rules/*.md` | - | - | `.continue/mcpServers/mcp.json` |
 | Roo Code | `.roo/rules/*.md` | `.roo/skills/` | - | `.roo/mcp.json` |
 | Amazon Q | `.amazonq/rules/*.md` | - | `.amazonq/cli-agents/*.json` | `.amazonq/mcp.json` |
 | Gemini CLI | `GEMINI.md` | `.gemini/skills/` | `.gemini/agents/*.md` | `.gemini/settings.json` |
 | OpenCode | native (AGENTS.md) | `.opencode/skills/` | `opencode.json#agent` + `.opencode/agents/*.md` | `opencode.json#mcp` |
-| Zed AI | `.rules` | - | - | `.zed/settings.json` |
+| Zed AI | `.rules` | `.agents/skills/` | - | `.zed/settings.json` |
 | Codex CLI | native (AGENTS.md) | `.agents/skills/` | - | - (global only) |
 | Amp | native (AGENTS.md) | `.agents/skills/` | - | `.amp/settings.json` |
 
@@ -185,7 +185,7 @@ When using Claude Code as source (`source = "claude"`), conforme also reads **cu
 |------|------|-------------|
 | Claude Code | `.claude/skills/<name>/SKILL.md` | `name`, `description`, `allowed-tools` |
 | Cursor | `.cursor/skills/<name>/SKILL.md` | `name`, `description` |
-| Copilot | `.github/prompts/<name>.prompt.md` | `description`, `tools` |
+| Copilot | `.github/skills/<name>/SKILL.md` | `name`, `description`, `allowed-tools` |
 | Kiro | `.kiro/skills/<name>/SKILL.md` | `name`, `description` |
 | Windsurf | `.windsurf/skills/<name>/SKILL.md` | `name`, `description` |
 | Roo Code | `.roo/skills/<name>/SKILL.md` | `name`, `description` |
@@ -222,16 +222,16 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | Cursor | `.cursor/mcp.json` | `mcpServers` | `type: stdio/http` |
 | Windsurf | `.windsurf/mcp.json` (best-effort project) / `~/.codeium/windsurf/mcp_config.json` (global) | `mcpServers` | No `type` field; HTTP uses `serverUrl` (not `url`) |
 | Copilot | `.vscode/mcp.json` | `servers` | Uses `servers` key (not `mcpServers`); supports `env` + `headers` |
-| Continue.dev | `.continue/mcpServers/mcp.json` | `mcpServers` | `type: stdio/http` |
+| Continue.dev | `.continue/mcpServers/mcp.json` | `mcpServers` | HTTP uses `type: streamable-http` (a bare `http` is rejected) |
 | Kiro | `.kiro/settings/mcp.json` | `mcpServers` | Standard format |
 | Roo Code | `.roo/mcp.json` | `mcpServers` | HTTP uses `type: streamable-http` (not `http`); legacy alias `sse` |
 | Amazon Q | `.amazonq/mcp.json` | `mcpServers` | Standard format (legacy workspace MCP file) |
-| Gemini CLI | `.gemini/settings.json` | `mcpServers` | No `type` field, uses `httpUrl` (not `url`) for HTTP |
+| Gemini CLI | `.gemini/settings.json` (merged) | `mcpServers` | No `type` field, uses `httpUrl` (not `url`) for HTTP |
 | OpenCode | `opencode.json` (merged) | `mcp` | `type: local/remote`; `command` as single array; env key is `environment` |
-| Zed AI | `.zed/settings.json` | `context_servers` | No `type` field |
-| Amp | `.amp/settings.json` | `amp.mcpServers` | Dotted key |
+| Zed AI | `.zed/settings.json` (merged) | `context_servers` | No `type` field; remote uses `url` + `headers` |
+| Amp | `.amp/settings.json` (merged) | `amp.mcpServers` | Dotted key; no `type` field |
 
-Tools without project-level MCP support: Codex CLI (global only via `~/.codex/config.toml` in TOML format).
+Tools without JSON MCP config: Codex CLI — its MCP lives in TOML (`[mcp_servers.<name>]`) at `~/.codex/config.toml` (global) or `.codex/config.toml` (project), so conforme does not generate it.
 
 ## Examples
 
@@ -328,11 +328,11 @@ conforme hook install  # Pre-commit hook runs `conforme check`
 This generates:
 - `.cursor/rules/typescript.mdc` with `globs: "**/*.ts, **/*.tsx"`
 - `.cursor/skills/deploy/SKILL.md`
-- `.cursor/agents/reviewer.mdc`
+- `.cursor/agents/reviewer.md`
 - `.cursor/mcp.json`
 - `.windsurf/rules/typescript.md` with `trigger: glob`
 - `.github/copilot-instructions.md` + `.github/instructions/typescript.instructions.md`
-- `.github/prompts/deploy.prompt.md`
+- `.github/skills/deploy/SKILL.md`
 - `.github/agents/reviewer.agent.md`
 - `.kiro/steering/typescript.md` with `inclusion: fileMatch`
 - `GEMINI.md`, `.rules`, `.roo/rules/`, `.amazonq/rules/`, etc.

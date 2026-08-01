@@ -11,7 +11,7 @@
 - Agent mode: https://docs.continue.dev/ide-extensions/agent/how-to-customize
 - Config reference: https://docs.continue.dev/reference
 - Customization overview: https://docs.continue.dev/customize/overview
-- Changelog: https://changelog.continue.dev/
+- Changelog: https://docs.continue.dev/changelog
 
 ## Config files
 
@@ -37,6 +37,7 @@
 - No skills support, no agents support
 - General instructions -> `general.md` with `alwaysApply: true` + `name: General`
 - `name` field is REQUIRED in frontmatter
+- `read()` round-trips rules plus MCP (`.continue/mcpServers/mcp.json`)
 
 ## Notes
 

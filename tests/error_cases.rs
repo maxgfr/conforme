@@ -103,8 +103,21 @@ Run npm run deploy.
         .assert()
         .success();
 
-    assert!(dir.path().join(".claude/skills/deploy/SKILL.md").exists());
-    assert!(dir.path().join(".github/prompts/deploy.prompt.md").exists());
+    let claude_skill = dir.path().join(".claude/skills/deploy/SKILL.md");
+    assert!(claude_skill.exists());
+    let claude_content = std::fs::read_to_string(&claude_skill).unwrap();
+    assert!(claude_content.contains("name: deploy"));
+    assert!(claude_content.contains("Run npm run deploy."));
+
+    // Copilot skills live at .github/skills/<name>/SKILL.md
+    let copilot_skill = dir.path().join(".github/skills/deploy/SKILL.md");
+    assert!(copilot_skill.exists());
+    let copilot_content = std::fs::read_to_string(&copilot_skill).unwrap();
+    assert!(copilot_content.contains("name: deploy"));
+    assert!(copilot_content.contains("description: Deploy the app"));
+    assert!(copilot_content.contains("allowed-tools: Bash"));
+    assert!(copilot_content.contains("Run npm run deploy."));
+    assert!(!dir.path().join(".github/prompts").exists());
 }
 
 // ===== Empty instructions, no rules =====

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 use crate::adapters::AiToolAdapter;
@@ -49,9 +49,23 @@ impl AiToolAdapter for AmpAdapter {
             .transpose()?
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
+
+        // Read skills (.agents/skills/) and MCP (.amp/settings.json, keyed under
+        // `amp.mcpServers`) back so an Amp project round-trips as a source.
+        let skills =
+            crate::skills::read_skills_from_dir(&project_root.join(".agents").join("skills"))?;
+        let mut mcp_servers = Vec::new();
+        let settings_path = project_root.join(".amp").join("settings.json");
+        if settings_path.exists() {
+            let settings = std::fs::read_to_string(&settings_path)?;
+            mcp_servers = crate::mcp::parse_mcp_json(&settings)?;
+        }
+
         Ok(NormalizedConfig {
             instructions,
             rules: Vec::new(),
+            skills,
+            mcp_servers,
             ..Default::default()
         })
     }
@@ -73,13 +87,35 @@ impl AiToolAdapter for AmpAdapter {
             )?);
         }
 
-        // Generate MCP config as .amp/settings.json (amp.mcpServers format)
+        // Merge MCP config into .amp/settings.json under the `amp.mcpServers` key.
+        // That file is Amp's whole workspace settings blob, so we read any
+        // existing file and replace only the managed key rather than clobbering
+        // user-authored settings.
         if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_amp_mcp_json(&config.mcp_servers)?;
-            files.push((
-                project_root.join(".amp").join("settings.json"),
-                format!("{}\n", mcp_json),
-            ));
+            let settings_path = project_root.join(".amp").join("settings.json");
+            let existing = if settings_path.exists() {
+                let content = std::fs::read_to_string(&settings_path)
+                    .with_context(|| format!("failed to read {}", settings_path.display()))?;
+                serde_json::from_str::<serde_json::Value>(&content)
+                    .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
+            } else {
+                serde_json::Value::Object(serde_json::Map::new())
+            };
+
+            let mut root_map = match existing {
+                serde_json::Value::Object(m) => m,
+                _ => serde_json::Map::new(),
+            };
+
+            let mcp_obj = crate::mcp::build_amp_mcp_object(&config.mcp_servers);
+            root_map.insert(
+                "amp.mcpServers".to_string(),
+                serde_json::Value::Object(mcp_obj),
+            );
+
+            let json = serde_json::to_string_pretty(&serde_json::Value::Object(root_map))
+                .context("failed to serialize .amp/settings.json")?;
+            files.push((settings_path, format!("{}\n", json)));
         }
 
         Ok(files)

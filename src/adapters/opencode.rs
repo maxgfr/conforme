@@ -55,10 +55,42 @@ impl AiToolAdapter for OpenCodeAdapter {
             .transpose()?
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
+
+        // Read skills back from `.opencode/skills/`.
+        let skills =
+            crate::skills::read_skills_from_dir(&project_root.join(".opencode").join("skills"))?;
+
+        // Read agents back from `.opencode/agents/*.md`, falling back to the
+        // `agent` key in `opencode.json` when no markdown agents exist.
+        let mut agents =
+            crate::skills::read_agents_from_dir(&project_root.join(".opencode").join("agents"))?;
+
+        // MCP servers live inside `opencode.json` under the `mcp` key, in
+        // OpenCode's own shape (`type: local/remote`, `command` array,
+        // `environment`) — not the standard `mcpServers` layout.
+        let mut mcp_servers = Vec::new();
+        let config_path = project_root.join("opencode.json");
+        if config_path.exists() {
+            let content = std::fs::read_to_string(&config_path)
+                .with_context(|| format!("failed to read {}", config_path.display()))?;
+            if let Ok(root) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(mcp) = root.get("mcp") {
+                    mcp_servers = crate::mcp::parse_opencode_mcp_object(mcp);
+                }
+                if agents.is_empty() {
+                    if let Some(agent) = root.get("agent") {
+                        agents = crate::mcp::parse_opencode_agent_object(agent);
+                    }
+                }
+            }
+        }
+
         Ok(NormalizedConfig {
             instructions,
             rules: Vec::new(),
-            ..Default::default()
+            skills,
+            agents,
+            mcp_servers,
         })
     }
 

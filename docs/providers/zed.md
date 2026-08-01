@@ -4,11 +4,11 @@
 
 ## Official docs
 
-- Rules: https://zed.dev/docs/ai/rules
+- Rules: https://zed.dev/docs/ai/instructions
 - Skills: https://zed.dev/docs/ai/skills
 - MCP (context servers): https://zed.dev/docs/ai/mcp
 - MCP extensions: https://zed.dev/docs/extensions/mcp-extensions
-- AI configuration: https://zed.dev/docs/ai/configuration
+- AI configuration: https://zed.dev/docs/ai/quick-start
 - Agent panel: https://zed.dev/docs/ai/agent-panel
 - Agent settings: https://zed.dev/docs/ai/agent-settings
 - External agents: https://zed.dev/docs/ai/external-agents
@@ -46,5 +46,7 @@ Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` 
   - Flat shape: stdio uses `command`/`args`/`env`, remote uses `url`/`headers` (no `source` wrapper, no nested command object — that is an older, superseded Zed schema)
   - `.zed/settings.json` holds the user's entire Zed configuration, so conforme **merges** the `context_servers` key into any existing file rather than overwriting it
 - Zed has "Agent Profiles" but configured via settings, not project files
+- The old `zed.dev/docs/ai/rules` page is gone (404): as of Zed v1.4.0 reusable rules were replaced by **Skills** and always-on rules by **Instructions**. `.rules` itself still works as a project instruction file — it is just documented on the Instructions page now
+- Personal instructions live at `~/.config/zed/AGENTS.md` (macOS/Linux) or `%APPDATA%\Zed\AGENTS.md`; project instruction files override them
 - Zed **skills** are a documented feature: `SKILL.md` folders under `<worktree>/.agents/skills/` (project) and `~/.agents/skills/` (global). conforme syncs skills to the shared project `.agents/skills/` path (the same location Codex/Amp use) with `name` + `description` frontmatter
 - Empty config generates `.rules` with just `\n`

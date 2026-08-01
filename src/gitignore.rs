@@ -32,6 +32,9 @@ fn adapter_gitignore_patterns(id: &str) -> Vec<&'static str> {
         "copilot" => vec![
             ".github/copilot-instructions.md",
             ".github/instructions/",
+            ".github/skills/",
+            // Legacy path: conforme emitted skills here before Copilot documented
+            // `.github/skills/`. Listed so migrating projects stay ignored.
             ".github/prompts/",
             ".github/agents/",
             ".vscode/mcp.json",

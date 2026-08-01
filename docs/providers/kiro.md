@@ -18,7 +18,7 @@
 | Feature | Path | Format |
 |---------|------|--------|
 | Rules (steering) | `.kiro/steering/*.md` | YAML frontmatter: `inclusion`, `fileMatchPattern`, `name`, `description` |
-| Skills | `.kiro/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` |
+| Skills | `.kiro/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` (required); `license`, `compatibility`, `metadata` (optional) |
 | Agents | `.kiro/agents/<name>.md` | YAML frontmatter: `description`, `model`, `tools` (no `name` — Kiro derives it from the file path) |
 | MCP | `.kiro/settings/mcp.json` | JSON: `{ "mcpServers": { ... } }` (Kiro also supports optional `disabled`/`autoApprove` per server; conforme does not emit them) |
 
@@ -48,3 +48,5 @@
 - `auto` (agent-decision) rules must include both `name` and `description`
 - Kiro reads AGENTS.md natively
 - CLI agent JSON format differs from IDE markdown format
+- The CLI and the IDE share the same MCP paths and schema (`.kiro/settings/mcp.json` workspace, `~/.kiro/settings/mcp.json` global); precedence is agent config > workspace > global
+- Remote MCP servers additionally accept `headers`, `oauth` and `oauthScopes`; conforme emits only `url` + `headers`

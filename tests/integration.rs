@@ -664,8 +664,12 @@ Review all changes for bugs.
     assert!(mcp.contains("filesystem"));
     assert!(mcp.contains("npx"));
 
-    // Copilot: prompts + agents + MCP
-    assert!(dir.path().join(".github/prompts/deploy.prompt.md").exists());
+    // Copilot: skills + agents + MCP
+    let copilot_skill = dir.path().join(".github/skills/deploy/SKILL.md");
+    assert!(copilot_skill.exists());
+    let copilot_skill_content = fs::read_to_string(&copilot_skill).unwrap();
+    assert!(copilot_skill_content.contains("name: deploy"));
+    assert!(copilot_skill_content.contains("allowed-tools: Bash"));
     assert!(dir.path().join(".github/agents/reviewer.agent.md").exists());
     let agent = fs::read_to_string(dir.path().join(".github/agents/reviewer.agent.md")).unwrap();
     assert!(agent.contains("name: reviewer"));
@@ -1087,9 +1091,9 @@ Review all changes for bugs.
     assert!(dir.path().join(".cursor/agents/reviewer.md").exists());
     assert!(dir.path().join(".cursor/mcp.json").exists());
 
-    // Copilot: instructions + prompts + agents + mcp
+    // Copilot: instructions + skills + agents + mcp
     assert!(dir.path().join(".github/copilot-instructions.md").exists());
-    assert!(dir.path().join(".github/prompts/deploy.prompt.md").exists());
+    assert!(dir.path().join(".github/skills/deploy/SKILL.md").exists());
     assert!(dir.path().join(".github/agents/reviewer.agent.md").exists());
     assert!(dir.path().join(".vscode/mcp.json").exists());
 

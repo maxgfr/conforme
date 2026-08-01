@@ -218,18 +218,26 @@ pub fn generate_codex_skills(
     Ok(files)
 }
 
-/// Generate Copilot prompt files in `.github/prompts/<name>.prompt.md`.
-pub fn generate_copilot_prompts(
+/// Generate GitHub Copilot skill files in `.github/skills/<name>/SKILL.md`.
+///
+/// Copilot documents skills at `.github/skills/<skill-name>/SKILL.md` (the same
+/// location for Copilot CLI and the cloud agent), with `name` and `description`
+/// required and `allowed-tools` available to pre-approve tools. This supersedes
+/// the older `.github/prompts/<name>.prompt.md` layout conforme used to emit —
+/// prompt files are a separate VS Code feature, not Copilot's skills format.
+pub fn generate_copilot_skills(
     project_root: &Path,
     skills: &[NormalizedSkill],
 ) -> Result<Vec<(PathBuf, String)>> {
-    let prompts_dir = project_root.join(".github").join("prompts");
+    let skills_dir = project_root.join(".github").join("skills");
     let mut files = Vec::new();
 
     for skill in skills {
-        let filename = format!("{}.prompt.md", sanitize_name(&skill.name));
-        // Copilot prompts use frontmatter with description and tools
+        let skill_name = sanitize_name(&skill.name);
+        let skill_path = skills_dir.join(&skill_name).join("SKILL.md");
+
         let mut fields = BTreeMap::new();
+        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
         if !skill.description.is_empty() {
             fields.insert(
                 "description".to_string(),
@@ -237,19 +245,14 @@ pub fn generate_copilot_prompts(
             );
         }
         if !skill.allowed_tools.is_empty() {
-            let yaml_tools: Vec<serde_yaml_ng::Value> = skill
-                .allowed_tools
-                .iter()
-                .map(|t| serde_yaml_ng::Value::String(t.clone()))
-                .collect();
             fields.insert(
-                "tools".to_string(),
-                serde_yaml_ng::Value::Sequence(yaml_tools),
+                "allowed-tools".to_string(),
+                serde_yaml_ng::Value::String(skill.allowed_tools.join(" ")),
             );
         }
 
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
-        files.push((prompts_dir.join(filename), content));
+        files.push((skill_path, content));
     }
 
     Ok(files)
@@ -690,6 +693,27 @@ mod tests {
         assert!(files[0].1.contains("name: deploy"));
         assert!(files[0].1.contains("description: Deploy the app"));
         assert!(files[0].1.contains("allowed-tools: Bash"));
+    }
+
+    #[test]
+    fn test_generate_copilot_skill() {
+        // Copilot documents skills at `.github/skills/<name>/SKILL.md`.
+        let skills = vec![NormalizedSkill {
+            name: "Deploy App".to_string(),
+            description: "Deploy the app".to_string(),
+            content: "Run npm run deploy".to_string(),
+            allowed_tools: vec!["shell".to_string(), "bash".to_string()],
+        }];
+        let files = generate_copilot_skills(Path::new("/tmp/test"), &skills).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0]
+            .0
+            .to_string_lossy()
+            .ends_with(".github/skills/deploy-app/SKILL.md"));
+        assert!(files[0].1.contains("name: deploy-app"));
+        assert!(files[0].1.contains("description: Deploy the app"));
+        assert!(files[0].1.contains("allowed-tools: shell bash"));
+        assert!(files[0].1.contains("Run npm run deploy"));
     }
 
     #[test]

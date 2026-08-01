@@ -4,13 +4,13 @@
 
 ## Official docs
 
-- Rules/Memories: https://docs.windsurf.com/windsurf/cascade/memories
-- AGENTS.md: https://docs.windsurf.com/windsurf/cascade/agents-md
-- Skills: https://docs.windsurf.com/windsurf/cascade/skills
-- MCP: https://docs.windsurf.com/windsurf/cascade/mcp
-- Hooks: https://docs.windsurf.com/windsurf/cascade/hooks
-- Workflows: https://docs.windsurf.com/windsurf/cascade/workflows
-- Changelog: https://windsurf.com/changelog
+- Rules/Memories: https://docs.devin.ai/desktop/cascade/memories
+- AGENTS.md: https://docs.devin.ai/desktop/cascade/agents-md
+- Skills: https://docs.devin.ai/desktop/cascade/skills
+- MCP: https://docs.devin.ai/desktop/cascade/mcp
+- Hooks: https://docs.devin.ai/desktop/cascade/hooks
+- Workflows: https://docs.devin.ai/desktop/cascade/workflows
+- Changelog: https://docs.devin.ai/desktop/changelog
 
 ## Config files
 
@@ -36,6 +36,7 @@
 - Capabilities: activation_modes, skills, MCP
 - No agents support
 - General instructions -> `general.md` with `trigger: always_on`
+- `read()` round-trips rules plus skills (`.windsurf/skills/`) and MCP (`.windsurf/mcp.json`)
 
 ## Notes
 
@@ -45,4 +46,5 @@
 - Reads AGENTS.md natively
 - Windsurf's canonical MCP config is user-global at `~/.codeium/windsurf/mcp_config.json`; conforme additionally writes a project-level `.windsurf/mcp.json` as a best-effort. HTTP servers use `serverUrl` (not `url`) and no `type` field is emitted
 - Windsurf also has hooks (cascade hooks) and workflows but they are tool-specific, not synced
-- Following Windsurf's acquisition by Cognition, `docs.windsurf.com/*` now 307-redirects to `docs.devin.ai/desktop/cascade/*` (still resolves). The preferred rules path is moving to `.devin/rules/*.md`, with `.windsurf/rules/*.md` (and root `.windsurfrules`) supported as a legacy fallback — conforme still writes `.windsurf/rules/`
+- Following Windsurf's acquisition by Cognition, the docs now live at `docs.devin.ai/desktop/cascade/*` (the old `docs.windsurf.com/*` URLs 307-redirect there). The preferred rules path is `.devin/rules/*.md`, which takes precedence, with `.windsurf/rules/*.md` (and root `.windsurfrules`) supported as a legacy fallback — conforme still writes `.windsurf/rules/`
+- The documented `globs` example is a single pattern (`globs: **/*.test.ts`); conforme writes multiple patterns as a comma-separated string, the historical Windsurf form

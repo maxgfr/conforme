@@ -4,13 +4,13 @@
 
 ## Official docs
 
-- Custom instructions (rules): https://roocodeinc.github.io/Roo-Code/features/custom-instructions
-- Skills: https://roocodeinc.github.io/Roo-Code/features/skills
-- MCP overview: https://roocodeinc.github.io/Roo-Code/features/mcp/overview
-- Using MCP: https://roocodeinc.github.io/Roo-Code/features/mcp/using-mcp-in-roo
-- MCP transports: https://roocodeinc.github.io/Roo-Code/features/mcp/server-transports
-- Custom modes: https://roocodeinc.github.io/Roo-Code/features/custom-modes
-- FAQ: https://roocodeinc.github.io/Roo-Code/faq
+- Custom instructions (rules): https://roocodeinc.github.io/Roo-Code/features/custom-instructions/
+- Skills: https://roocodeinc.github.io/Roo-Code/features/skills/
+- MCP overview: https://roocodeinc.github.io/Roo-Code/features/mcp/overview/
+- Using MCP: https://roocodeinc.github.io/Roo-Code/features/mcp/using-mcp-in-roo/
+- MCP transports: https://roocodeinc.github.io/Roo-Code/features/mcp/server-transports/
+- Custom modes: https://roocodeinc.github.io/Roo-Code/features/custom-modes/
+- FAQ: https://roocodeinc.github.io/Roo-Code/faq/
 
 > Note: the official docs moved from `docs.roocode.com` to `roocodeinc.github.io/Roo-Code` (the old host 301-redirects).
 
@@ -36,6 +36,7 @@ Mode-specific rules go in `.roo/rules-{modeSlug}/` directories (e.g., `.roo/rule
 - No activation modes, no agents
 - Uses numeric prefixes for ordering: `00-general.md`, `01-rule-name.md`
 - Glob/agent-decision info stored as HTML comments (`<!-- Intended scope: ... -->`)
+- `read()` round-trips rules plus skills (`.roo/skills/`) and MCP (`.roo/mcp.json`)
 
 ## Notes
 
