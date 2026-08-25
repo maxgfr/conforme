@@ -8,6 +8,19 @@ use crate::frontmatter;
 
 pub struct WindsurfAdapter;
 
+/// Cascade reads rules from `.devin/rules/` first and falls back to the legacy
+/// `.windsurf/rules/`. When a project already carries a `.devin/` directory the
+/// `.windsurf/` copy would be shadowed, so conforme follows the same precedence:
+/// write (and read) `.devin/rules/` when that directory exists, otherwise keep
+/// the legacy layout that existing projects rely on.
+fn rules_dir(project_root: &Path) -> PathBuf {
+    if project_root.join(".devin").is_dir() {
+        project_root.join(".devin").join("rules")
+    } else {
+        project_root.join(".windsurf").join("rules")
+    }
+}
+
 impl AiToolAdapter for WindsurfAdapter {
     fn name(&self) -> &str {
         "Windsurf"
@@ -18,7 +31,9 @@ impl AiToolAdapter for WindsurfAdapter {
     }
 
     fn detect(&self, project_root: &Path) -> bool {
-        project_root.join(".windsurf").is_dir() || project_root.join(".windsurfrules").exists()
+        project_root.join(".windsurf").is_dir()
+            || project_root.join(".devin").is_dir()
+            || project_root.join(".windsurfrules").exists()
     }
 
     fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
@@ -31,17 +46,23 @@ impl AiToolAdapter for WindsurfAdapter {
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
-        vec![
-            project_root.join(".windsurf").join("rules"),
-            project_root.join(".windsurf").join("skills"),
-        ]
+        let mut dirs = vec![rules_dir(project_root)];
+        // When a project has migrated to `.devin/rules/`, stale rules conforme
+        // previously generated under `.windsurf/rules/` must go too, or Cascade
+        // would keep two divergent copies of the same rule set.
+        let legacy = project_root.join(".windsurf").join("rules");
+        if !dirs.contains(&legacy) && legacy.is_dir() {
+            dirs.push(legacy);
+        }
+        dirs.push(project_root.join(".windsurf").join("skills"));
+        dirs
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let mut instructions = String::new();
         let mut rules = Vec::new();
 
-        let rules_dir = project_root.join(".windsurf").join("rules");
+        let rules_dir = rules_dir(project_root);
         if rules_dir.is_dir() {
             let mut entries: Vec<_> = std::fs::read_dir(&rules_dir)?
                 .filter_map(|e| e.ok())
@@ -98,7 +119,7 @@ impl AiToolAdapter for WindsurfAdapter {
         project_root: &Path,
         config: &NormalizedConfig,
     ) -> Result<Vec<(PathBuf, String)>> {
-        let rules_dir = project_root.join(".windsurf").join("rules");
+        let rules_dir = rules_dir(project_root);
         let mut files = Vec::new();
 
         if !config.instructions.is_empty() {
@@ -231,6 +252,66 @@ fn build_windsurf_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_n
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_rules_go_to_devin_when_present() {
+        let adapter = WindsurfAdapter;
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".devin")).unwrap();
+
+        let config = crate::config::NormalizedConfig {
+            instructions: "Be helpful.".to_string(),
+            rules: vec![crate::config::NormalizedRule {
+                name: "TypeScript".to_string(),
+                content: "Use strict mode.".to_string(),
+                activation: crate::config::ActivationMode::Always,
+            }],
+            ..Default::default()
+        };
+
+        let files = adapter.generate(tmp.path(), &config).unwrap();
+        assert!(files
+            .iter()
+            .all(|(p, _)| p.starts_with(tmp.path().join(".devin"))));
+        assert!(adapter.detect(tmp.path()));
+
+        adapter.write(tmp.path(), &config).unwrap();
+        let read_back = adapter.read(tmp.path()).unwrap();
+        assert_eq!(read_back.instructions, "Be helpful.");
+        assert_eq!(read_back.rules.len(), 1);
+    }
+
+    #[test]
+    fn test_rules_stay_in_windsurf_without_devin() {
+        let adapter = WindsurfAdapter;
+        let tmp = tempfile::tempdir().unwrap();
+        let config = crate::config::NormalizedConfig {
+            instructions: "Be helpful.".to_string(),
+            ..Default::default()
+        };
+
+        let files = adapter.generate(tmp.path(), &config).unwrap();
+        assert_eq!(
+            files[0].0,
+            tmp.path()
+                .join(".windsurf")
+                .join("rules")
+                .join("general.md")
+        );
+    }
+
+    #[test]
+    fn test_managed_dirs_include_legacy_rules_after_devin_migration() {
+        let adapter = WindsurfAdapter;
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".devin")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".windsurf").join("rules")).unwrap();
+
+        let dirs = adapter.managed_directories(tmp.path());
+        assert!(dirs.contains(&tmp.path().join(".devin").join("rules")));
+        assert!(dirs.contains(&tmp.path().join(".windsurf").join("rules")));
+    }
+
     use crate::config::{
         ActivationMode, McpTransport, NormalizedConfig, NormalizedMcpServer, NormalizedRule,
     };

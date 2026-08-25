@@ -1,15 +1,15 @@
 ---
 name: verify-providers
-description: Verify all 13 provider adapters against their official documentation and fix any discrepancies
+description: Verify all 14 provider adapters against their official documentation and fix any discrepancies
 allowed-tools: Read Grep Glob Bash WebFetch WebSearch Edit Write
 ---
 
 Audit every conforme provider adapter against the latest upstream documentation.
-For each of the 13 tools, follow these steps:
+For each of the 14 tools, follow these steps:
 
 ## 1. Read the adapter code and provider docs
 
-For each tool (claude, cursor, copilot, windsurf, continuedev, kiro, amazonq, codex, opencode, gemini, zed, amp, roocode):
+For each tool (claude, cursor, copilot, windsurf, continuedev, kiro, amazonq, codex, opencode, gemini, zed, amp, roocode, deepseek):
 
 - Read `src/adapters/<tool>.rs`
 - Read `docs/providers/<tool>.md`

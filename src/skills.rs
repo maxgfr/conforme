@@ -644,6 +644,39 @@ pub fn generate_opencode_agents_md(
     Ok(files)
 }
 
+/// Generate DeepSeek Harness skill files in `.dsh/skills/<name>/SKILL.md`.
+/// The harness filesystem skill provider scans `<projectRoot>/.dsh/skills` first
+/// and interprets required `name` and `description`, plus optional `whenToUse`,
+/// `metadata`, `disable-model-invocation` and `user-invocable`. `allowed-tools`
+/// is not a recognized field, and names must be kebab-case.
+pub fn generate_deepseek_skills(
+    project_root: &Path,
+    skills: &[NormalizedSkill],
+) -> Result<Vec<(PathBuf, String)>> {
+    let skills_dir = project_root.join(".dsh").join("skills");
+    let mut files = Vec::new();
+
+    for skill in skills {
+        let skill_name = sanitize_name(&skill.name);
+        let skill_dir = skills_dir.join(&skill_name);
+        let skill_path = skill_dir.join("SKILL.md");
+
+        let mut fields = BTreeMap::new();
+        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
+        if !skill.description.is_empty() {
+            fields.insert(
+                "description".to_string(),
+                serde_yaml_ng::Value::String(skill.description.clone()),
+            );
+        }
+
+        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
+        files.push((skill_path, content));
+    }
+
+    Ok(files)
+}
+
 /// Generate Gemini CLI skill files in `.gemini/skills/<name>/SKILL.md`.
 /// Gemini skills use ONLY `name` and `description` (no other fields allowed).
 pub fn generate_gemini_skills(

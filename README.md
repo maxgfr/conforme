@@ -1,6 +1,6 @@
 # conforme
 
-Sync your AI coding config from any tool to all 13 others. Write once, apply everywhere.
+Sync your AI coding config from any tool to all 14 others. Write once, apply everywhere.
 
 AGENTS.md is governed by the [Agentic AI Foundation](https://www.linuxfoundation.org/press/linux-foundation-announces-the-formation-of-the-agentic-ai-foundation) (Linux Foundation) with 146+ member organizations including Anthropic, OpenAI, Google, AWS, and Microsoft.
 
@@ -27,7 +27,7 @@ cargo install --path .
 
 You can set your source tool once in `.conformerc.toml` or pass it on the command line with `--from`. If no source is specified, conforme defaults to `AGENTS.md`.
 
-## Supported tools (13)
+## Supported tools (14)
 
 ### Tools with per-rule config files
 
@@ -35,7 +35,7 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 |------|--------------|-------------|-----------|
 | Claude Code | `CLAUDE.md` + `.claude/rules/*.md` | `paths` (glob array) | via `@AGENTS.md` include |
 | Cursor | `.cursor/rules/*.mdc` | `alwaysApply`, `globs`, `description` | Native |
-| Windsurf | `.windsurf/rules/*.md` | `trigger`, `description`, `globs` | Native |
+| Windsurf | `.devin/rules/*.md` (or legacy `.windsurf/rules/*.md`) | `trigger`, `description`, `globs` | Native |
 | GitHub Copilot | `.github/copilot-instructions.md` + `.github/instructions/` | `applyTo`, `excludeAgent` | Native |
 | Continue.dev | `.continue/rules/*.md` | `name`, `globs` (array), `alwaysApply` | Not yet |
 | Kiro (AWS) | `.kiro/steering/*.md` | `inclusion`, `fileMatchPattern`, `name`, `description` | Native |
@@ -51,6 +51,7 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 | Gemini CLI | `GEMINI.md` | Configurable to read AGENTS.md via settings.json |
 | Zed AI | `.rules` | Fallback chain: `.rules` → `.cursorrules` → `AGENTS.md` → `CLAUDE.md` |
 | Amp (Sourcegraph) | `AGENTS.md` | Falls back to `AGENT.md` or `CLAUDE.md` |
+| DeepSeek Harness (`dsh`) | `AGENTS.md` | Falls back to `CLAUDE.md`; skills in `.dsh/skills/` |
 
 ## Quick start
 
@@ -165,7 +166,7 @@ Review all changes for correctness and security.
 | GitHub Copilot | `.github/instructions/*.md` | `.github/skills/` | `.github/agents/*.agent.md` | `.vscode/mcp.json` |
 | Cursor | `.cursor/rules/*.mdc` | `.cursor/skills/` | `.cursor/agents/*.md` | `.cursor/mcp.json` |
 | Kiro (AWS) | `.kiro/steering/*.md` | `.kiro/skills/` | `.kiro/agents/*.md` | `.kiro/settings/mcp.json` |
-| Windsurf | `.windsurf/rules/*.md` | `.windsurf/skills/` | - | `.windsurf/mcp.json` |
+| Windsurf | `.devin/rules/*.md` or `.windsurf/rules/*.md` | `.windsurf/skills/` | - | `.windsurf/mcp.json` |
 | Continue.dev | `.continue/rules/*.md` | - | - | `.continue/mcpServers/mcp.json` |
 | Roo Code | `.roo/rules/*.md` | `.roo/skills/` | - | `.roo/mcp.json` |
 | Amazon Q | `.amazonq/rules/*.md` | - | `.amazonq/cli-agents/*.json` | `.amazonq/mcp.json` |
@@ -174,6 +175,7 @@ Review all changes for correctness and security.
 | Zed AI | `.rules` | `.agents/skills/` | - | `.zed/settings.json` |
 | Codex CLI | native (AGENTS.md) | `.agents/skills/` | - | `.codex/config.toml` |
 | Amp | native (AGENTS.md) | `.agents/skills/` | - | `.amp/settings.json` |
+| DeepSeek Harness | native (AGENTS.md) | `.dsh/skills/` | - | - (user-level `cordis.patch.yml`) |
 
 ### Skills format equivalence
 
@@ -193,6 +195,7 @@ When using Claude Code as source (`source = "claude"`), conforme also reads **cu
 | OpenCode | `.opencode/skills/<name>/SKILL.md` | `name`, `description` (no `allowed-tools`) |
 | Codex CLI | `.agents/skills/<name>/SKILL.md` | `name`, `description` |
 | Amp | `.agents/skills/<name>/SKILL.md` | `name`, `description` (shared Codex format) |
+| DeepSeek Harness | `.dsh/skills/<name>/SKILL.md` | `name`, `description` (kebab-case name) |
 
 Tools without skills support: Continue.dev, Zed AI, Amazon Q.
 
@@ -210,7 +213,7 @@ Agents (sub-agents) are custom AI assistants with a model, tools, and system pro
 | OpenCode | `opencode.json` (`agent` key) + `.opencode/agents/<name>.md` | JSON merged into `opencode.json`; markdown for per-project agents |
 | Amazon Q | `.amazonq/cli-agents/<name>.json` | JSON per agent: `{ "description", "model", "tools", "prompt" }` |
 
-Tools without agents support: Windsurf, Continue.dev, Roo Code, Codex CLI, Zed AI, Amp.
+Tools without agents support: Windsurf, Continue.dev, Roo Code, Codex CLI, Zed AI, Amp, DeepSeek Harness.
 
 ### MCP format equivalence
 
@@ -231,6 +234,7 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | Zed AI | `.zed/settings.json` (merged) | `context_servers` | No `type` field; remote uses `url` + `headers` |
 | Amp | `.amp/settings.json` (merged) | `amp.mcpServers` | Dotted key; no `type` field |
 | Codex CLI | `.codex/config.toml` (merged) | `[mcp_servers.<name>]` | TOML; atomic merge preserves unrelated settings, comments, target-only servers, and Codex-specific options |
+| DeepSeek Harness | _(not project-scoped)_ | — | MCP servers are `@deepseek-ai/dsh-mcp-client` plugin entries in the user-level `cordis.patch.yml` under `$DSH_HOME`, so conforme generates nothing |
 
 ## Examples
 

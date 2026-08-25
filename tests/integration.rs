@@ -37,6 +37,7 @@ fn create_project_with_tools(agents_md: &str, tools: &[&str]) -> TempDir {
             "amazonq" => fs::create_dir_all(dir.path().join(".amazonq")).unwrap(),
             "kiro" => fs::create_dir_all(dir.path().join(".kiro")).unwrap(),
             "amp" => fs::create_dir_all(dir.path().join(".amp")).unwrap(),
+            "deepseek" => fs::create_dir_all(dir.path().join(".dsh")).unwrap(),
             _ => {}
         }
     }
@@ -519,13 +520,36 @@ Use IAM roles.
 }
 
 #[test]
-fn test_sync_all_11_tools() {
+fn test_sync_deepseek_skills() {
+    let agents_md = "# Instructions\nGlobal.\n\n## Skill: Deploy App\n<!-- description: Deploy it -->\nRun deploy.\n";
+    let dir = create_project_with_tools(agents_md, &["deepseek"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let skill = dir.path().join(".dsh/skills/deploy-app/SKILL.md");
+    assert!(skill.exists());
+    let content = fs::read_to_string(&skill).unwrap();
+    assert!(content.contains("name: deploy-app"));
+    assert!(content.contains("description: Deploy it"));
+
+    // AGENTS.md is read natively — the harness needs no generated copy of it.
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_sync_every_tool() {
     let agents_md = "# Instructions\nGlobal.\n";
     let dir = create_project_with_tools(
         agents_md,
         &[
             "cursor", "claude", "windsurf", "copilot", "codex", "opencode", "roocode", "gemini",
-            "continue", "zed", "amazonq", "kiro", "amp",
+            "continue", "zed", "amazonq", "kiro", "amp", "deepseek",
         ],
     );
 

@@ -40,9 +40,10 @@ pub fn print_help_ai() {
     print_tool(
         "Windsurf",
         "windsurf",
-        ".windsurf/rules/*.md",
+        ".devin/rules/*.md (preferred) or .windsurf/rules/*.md (legacy)",
         &[
             "Frontmatter: trigger (always_on|glob|model_decision|manual), description, globs",
+            "Rules written to .devin/rules/ when a .devin/ directory exists, else .windsurf/rules/",
             "Skills synced to .windsurf/skills/<name>/SKILL.md",
             "Reads AGENTS.md natively",
             "MCP synced to .windsurf/mcp.json (project-level)",
@@ -150,6 +151,18 @@ pub fn print_help_ai() {
             "MCP merged into .zed/settings.json (context_servers format, preserves existing settings)",
             "Skills synced to shared .agents/skills/<name>/SKILL.md",
             "Single .rules file, no frontmatter",
+        ],
+    );
+    print_tool(
+        "DeepSeek Harness (dsh)",
+        "deepseek",
+        "AGENTS.md (native), falls back to CLAUDE.md",
+        &[
+            "Default instructionFileCandidates: AGENTS.md then CLAUDE.md",
+            "Local overlay candidates: AGENTS.local.md then CLAUDE.local.md",
+            "Skills synced to .dsh/skills/<name>/SKILL.md (name + description, kebab-case names)",
+            "Also scans the shared .agents/skills/ root",
+            "MCP lives in the user-level cordis.patch.yml ($DSH_HOME) — not project-scoped",
         ],
     );
     print_tool(

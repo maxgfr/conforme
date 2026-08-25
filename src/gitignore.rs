@@ -25,6 +25,7 @@ fn adapter_gitignore_patterns(id: &str) -> Vec<&'static str> {
             ".cursor/mcp.json",
         ],
         "windsurf" => vec![
+            ".devin/rules/",
             ".windsurf/rules/",
             ".windsurf/skills/",
             ".windsurf/mcp.json",
@@ -66,6 +67,7 @@ fn adapter_gitignore_patterns(id: &str) -> Vec<&'static str> {
             ".kiro/settings/",
         ],
         "amp" => vec![".agents/skills/", ".amp/settings.json"],
+        "deepseek" => vec![".dsh/skills/"],
         _ => vec![],
     }
 }

@@ -514,6 +514,26 @@ fn test_roundtrip_amp_skills_mcp() {
 }
 
 #[test]
+fn test_roundtrip_deepseek_skills() {
+    let adapter = conforme::adapters::deepseek::DeepSeekAdapter;
+    let dir = TempDir::new().unwrap();
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+
+    // Skills land in the harness-native project root.
+    let skill = dir.path().join(".dsh/skills/deploy/SKILL.md");
+    assert!(skill.exists());
+
+    let read_config = adapter.read(dir.path()).unwrap();
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.skills[0].name, "deploy");
+    assert_eq!(read_config.skills[0].description, "Deploy the app");
+    // The harness has no project-scoped MCP file and no user-defined agents.
+    assert!(read_config.mcp_servers.is_empty());
+    assert!(read_config.agents.is_empty());
+}
+
+#[test]
 fn test_amp_settings_merge_preserves_user_keys() {
     let adapter = conforme::adapters::amp::AmpAdapter;
     let dir = TempDir::new().unwrap();

@@ -6,11 +6,11 @@ use std::path::PathBuf;
     name = "conforme",
     version,
     about = "Universal AI coding agent config synchronization",
-    long_about = "Conforme synchronizes configuration across 13 AI coding tools.\n\n\
+    long_about = "Conforme synchronizes configuration across 14 AI coding tools.\n\n\
         It reads config from a source tool (or AGENTS.md) and generates/updates \
         tool-specific config files for Claude Code, Cursor, Windsurf, \
         GitHub Copilot, Codex CLI, OpenCode, Roo Code, Gemini CLI, \
-        Continue.dev, Zed AI, Amazon Q, Kiro, and Amp.",
+        Continue.dev, Zed AI, Amazon Q, Kiro, Amp, and DeepSeek Harness.",
     after_help = "\x1b[1mExamples:\x1b[0m\n  \
         conforme init                        Detect tools and create configs\n  \
         conforme sync                        Sync source to all tool configs\n  \

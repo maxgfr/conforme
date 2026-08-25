@@ -4,7 +4,7 @@
 
 ## Project overview
 
-conforme is a Rust CLI that synchronizes AI coding agent configurations across 13 tools. It reads config from a source tool (Claude Code, Cursor, etc.) or AGENTS.md, and propagates to all other tool-specific config files.
+conforme is a Rust CLI that synchronizes AI coding agent configurations across 14 tools. It reads config from a source tool (Claude Code, Cursor, etc.) or AGENTS.md, and propagates to all other tool-specific config files.
 
 ## Build & test
 
@@ -55,7 +55,7 @@ src/
     mod.rs          — AiToolAdapter trait + registry + shared write_if_changed
     claude.rs       — Claude Code: CLAUDE.md + .claude/rules/*.md (paths: frontmatter)
     cursor.rs       — Cursor: .cursor/rules/*.mdc (alwaysApply/globs/description); subagents at .cursor/agents/*.md
-    windsurf.rs     — Windsurf: .windsurf/rules/*.md (trigger/description/globs)
+    windsurf.rs     — Windsurf: .devin/rules/*.md when .devin/ exists, else .windsurf/rules/*.md (trigger/description/globs)
     copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md
     codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively
     opencode.rs     — OpenCode: reads AGENTS.md natively
@@ -66,6 +66,7 @@ src/
     amazonq.rs      — Amazon Q: .amazonq/rules/*.md
     kiro.rs         — Kiro (AWS): .kiro/steering/*.md (inclusion/fileMatchPattern)
     amp.rs          — Amp (Sourcegraph): reads AGENTS.md natively
+    deepseek.rs     — DeepSeek Harness (dsh): reads AGENTS.md natively; skills at .dsh/skills/<name>/SKILL.md
 tests/
   integration.rs    — CLI integration tests (assert_cmd + tempfile)
   roundtrip.rs      — Write→read round-trip tests for every adapter (rules, skills, agents, MCP)
@@ -131,7 +132,7 @@ Review for bugs.
 - Claude, Cursor, Windsurf, Copilot, Continue.dev, Kiro, Roo Code, Amazon Q
 
 **Single-file adapters** (merge all content into one file):
-- Codex, OpenCode, Gemini, Zed, Amp
+- Codex, OpenCode, Gemini, Zed, Amp, DeepSeek Harness
 
 ### Adapter mapping
 
@@ -155,6 +156,7 @@ Review for bugs.
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; merged into existing settings (preserves theme/keybindings/etc.) |
 | Gemini | `mcpServers` (inside `.gemini/settings.json`) | No type field, uses `httpUrl` for HTTP; merged into existing settings |
 | Amp | `amp.mcpServers` (inside `.amp/settings.json`) | Dotted key; no type field; merged into existing settings |
+| DeepSeek Harness | _(none)_ | MCP is a user-level `cordis.patch.yml` plugin entry under `$DSH_HOME`; nothing project-scoped is generated |
 | Codex | `[mcp_servers.<name>]` (inside `.codex/config.toml`) | TOML; atomic merge preserves unrelated settings, comments, target-only servers, and Codex-specific options; shared file is never deleted wholesale |
 
 ### Sync algorithm
@@ -208,7 +210,7 @@ conforme migrate --source X --output Y    # Migrate config between tools
 
 This project uses Claude Code skills in `.claude/skills/`:
 
-- **verify-providers** — Audit all 13 provider adapters against latest official documentation, fix discrepancies, and verify links
+- **verify-providers** — Audit all 14 provider adapters against latest official documentation, fix discrepancies, and verify links
 
 ## MCP servers (.mcp.json)
 
@@ -270,15 +272,15 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - When changing an output path (e.g. MCP location), update ALL tests that reference it
 
 ## Skill: verify-providers
-<!-- description: Verify all 13 provider adapters against their official documentation and fix any discrepancies -->
+<!-- description: Verify all 14 provider adapters against their official documentation and fix any discrepancies -->
 <!-- tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Edit, Write -->
 
 Audit every conforme provider adapter against the latest upstream documentation.
-For each of the 13 tools, follow these steps:
+For each of the 14 tools, follow these steps:
 
 ## 1. Read the adapter code and provider docs
 
-For each tool (claude, cursor, copilot, windsurf, continuedev, kiro, amazonq, codex, opencode, gemini, zed, amp, roocode):
+For each tool (claude, cursor, copilot, windsurf, continuedev, kiro, amazonq, codex, opencode, gemini, zed, amp, roocode, deepseek):
 
 - Read `src/adapters/<tool>.rs`
 - Read `docs/providers/<tool>.md`

@@ -5,6 +5,7 @@ pub mod codex;
 pub mod continuedev;
 pub mod copilot;
 pub mod cursor;
+pub mod deepseek;
 pub mod gemini;
 pub mod kiro;
 pub mod opencode;
@@ -134,6 +135,7 @@ pub fn all_adapters() -> Vec<Box<dyn AiToolAdapter>> {
         Box::new(amazonq::AmazonQAdapter),
         Box::new(kiro::KiroAdapter),
         Box::new(amp::AmpAdapter),
+        Box::new(deepseek::DeepSeekAdapter),
     ]
 }
 
