@@ -679,8 +679,11 @@ Review all changes for bugs.
     let mcp = fs::read_to_string(dir.path().join(".vscode/mcp.json")).unwrap();
     assert!(mcp.contains("\"servers\""));
 
-    // Codex: skills
+    // Codex: skills + project-scoped MCP TOML
     assert!(dir.path().join(".agents/skills/deploy/SKILL.md").exists());
+    let codex_mcp = fs::read_to_string(dir.path().join(".codex/config.toml")).unwrap();
+    assert!(codex_mcp.contains("[mcp_servers.filesystem]"));
+    assert!(codex_mcp.contains("command = \"npx\""));
 }
 
 // ===== Remove =====
@@ -773,6 +776,110 @@ fn test_sync_from_claude_source() {
     assert!(general.exists());
     let content = fs::read_to_string(&general).unwrap();
     assert!(content.contains("Use TypeScript."));
+}
+
+#[test]
+fn test_sync_from_claude_mcp_to_codex() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".claude")).unwrap();
+    fs::create_dir_all(dir.path().join(".codex")).unwrap();
+    fs::write(
+        dir.path().join("CLAUDE.md"),
+        "# Instructions\nBe concise.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".mcp.json"),
+        r#"{
+  "mcpServers": {
+    "dsfr": { "type": "stdio", "command": "npx", "args": ["dsfr-mcp"] },
+    "docs": { "type": "http", "url": "https://example.com/mcp" }
+  }
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".codex/config.toml"),
+        "# Preserve me\nmodel = \"gpt-test\"\n\n[mcp_servers.local]\nurl = \"http://localhost:3000/mcp\"\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "sync",
+            "--from",
+            "claude",
+            "--only",
+            "codex",
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(dir.path().join(".codex/config.toml")).unwrap();
+    assert!(content.contains("# Preserve me"));
+    assert!(content.contains("model = \"gpt-test\""));
+    assert!(content.contains("[mcp_servers.local]"));
+    assert!(content.contains("[mcp_servers.dsfr]"));
+    assert!(content.contains("[mcp_servers.docs]"));
+    assert!(content.contains("command = \"npx\""));
+    assert!(content.contains("url = \"https://example.com/mcp\""));
+}
+
+#[test]
+fn test_remove_codex_preserves_shared_config() {
+    let agents_md = r#"# Instructions
+
+## MCP: filesystem
+<!-- command: npx -->
+"#;
+    let dir = create_project_with_tools(agents_md, &["codex"]);
+    fs::write(
+        dir.path().join(".codex/config.toml"),
+        "model = \"gpt-test\"\n\n[mcp_servers.filesystem]\ncommand = \"npx\"\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "remove", "codex"])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(dir.path().join(".codex/config.toml")).unwrap();
+    assert!(content.contains("model = \"gpt-test\""));
+    assert!(content.contains("[mcp_servers.filesystem]"));
+}
+
+#[test]
+fn test_migrate_from_codex_preserves_shared_config() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".codex")).unwrap();
+    fs::create_dir_all(dir.path().join(".cursor")).unwrap();
+    fs::write(
+        dir.path().join(".codex/config.toml"),
+        "model = \"gpt-test\"\n\n[mcp_servers.filesystem]\ncommand = \"npx\"\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "codex",
+            "--output",
+            "cursor",
+        ])
+        .assert()
+        .success();
+
+    assert!(dir.path().join(".codex/config.toml").exists());
+    let codex = fs::read_to_string(dir.path().join(".codex/config.toml")).unwrap();
+    assert!(codex.contains("model = \"gpt-test\""));
+    let cursor = fs::read_to_string(dir.path().join(".cursor/mcp.json")).unwrap();
+    assert!(cursor.contains("filesystem"));
 }
 
 #[test]

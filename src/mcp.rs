@@ -1,7 +1,257 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::collections::BTreeMap;
+use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table, Value};
 
 use crate::config::{McpTransport, NormalizedMcpServer};
+
+/// Merge normalized MCP servers into Codex's project-scoped `.codex/config.toml`.
+/// Existing non-MCP settings, comments, Codex-specific server options, and MCP
+/// servers not present in the source config are preserved.
+pub fn merge_codex_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> Result<String> {
+    let mut document = if existing.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        existing
+            .parse::<DocumentMut>()
+            .context("failed to parse Codex config TOML")?
+    };
+
+    if !document.as_table().contains_key("mcp_servers") {
+        document["mcp_servers"] = Item::Table(Table::new());
+    }
+
+    let mcp_servers_inline = document["mcp_servers"].is_inline_table();
+    let mcp_servers = document["mcp_servers"]
+        .as_table_like_mut()
+        .context("Codex config `mcp_servers` must be a table")?;
+
+    for server in servers {
+        if !mcp_servers.contains_key(&server.name) {
+            let entry = if mcp_servers_inline {
+                Item::Value(Value::InlineTable(InlineTable::new()))
+            } else {
+                Item::Table(Table::new())
+            };
+            mcp_servers.insert(&server.name, entry);
+        }
+        let entry_item = mcp_servers
+            .get_mut(&server.name)
+            .context("newly inserted Codex MCP server is missing")?;
+        let entry_inline = entry_item.is_inline_table();
+        let entry = entry_item.as_table_like_mut().with_context(|| {
+            format!("Codex config `mcp_servers.{}` must be a table", server.name)
+        })?;
+
+        // Every normalized source server is enabled. Keeping a pre-existing
+        // `enabled = false` here would make sync/check report success while
+        // Codex continues to hide the server.
+        entry.remove("enabled");
+
+        match &server.transport {
+            McpTransport::Stdio { command, args } => {
+                entry.remove("url");
+                entry.remove("http_headers");
+                entry.remove("env_http_headers");
+                entry.remove("bearer_token_env_var");
+                entry.remove("auth");
+                entry.insert("command", value(command.clone()));
+
+                let mut toml_args = Array::new();
+                for arg in args {
+                    toml_args.push(arg);
+                }
+                entry.insert("args", value(toml_args));
+
+                if server.env.is_empty() {
+                    entry.remove("env");
+                } else {
+                    let mut env = Table::new();
+                    for (name, env_value) in &server.env {
+                        env[name.as_str()] = value(env_value.clone());
+                    }
+                    let env = if entry_inline {
+                        Item::Value(Value::InlineTable(env.into_inline_table()))
+                    } else {
+                        Item::Table(env)
+                    };
+                    entry.insert("env", env);
+                }
+            }
+            McpTransport::Http { url, headers } => {
+                if !server.env.is_empty() {
+                    bail!(
+                        "Codex HTTP MCP server `{}` cannot represent literal environment variables",
+                        server.name
+                    );
+                }
+                entry.remove("command");
+                entry.remove("args");
+                entry.remove("env");
+                entry.remove("cwd");
+                entry.remove("env_vars");
+                entry.insert("url", value(url.clone()));
+
+                if headers.is_empty() {
+                    entry.remove("http_headers");
+                } else {
+                    let mut http_headers = Table::new();
+                    for (name, header_value) in headers {
+                        http_headers[name.as_str()] = value(header_value.clone());
+                    }
+                    let http_headers = if entry_inline {
+                        Item::Value(Value::InlineTable(http_headers.into_inline_table()))
+                    } else {
+                        Item::Table(http_headers)
+                    };
+                    entry.insert("http_headers", http_headers);
+                }
+            }
+        }
+    }
+
+    Ok(document.to_string())
+}
+
+/// Parse Codex's TOML MCP tables into normalized server definitions.
+pub fn parse_codex_mcp_toml(content: &str) -> Result<Vec<NormalizedMcpServer>> {
+    if content.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let root: toml::Value = toml::from_str(content).context("failed to parse Codex config TOML")?;
+    let Some(servers_value) = root.get("mcp_servers") else {
+        return Ok(Vec::new());
+    };
+    let servers = servers_value
+        .as_table()
+        .context("Codex config `mcp_servers` must be a table")?;
+
+    let mut result = Vec::new();
+    for (name, value) in servers {
+        let entry = value
+            .as_table()
+            .with_context(|| format!("Codex MCP server `{name}` must be a table"))?;
+
+        if let Some(enabled) = entry.get("enabled") {
+            let enabled = enabled.as_bool().with_context(|| {
+                format!("Codex MCP server `{name}` field `enabled` must be a boolean")
+            })?;
+            if !enabled {
+                continue;
+            }
+        }
+
+        let url = optional_toml_string(entry, "url", name)?;
+        let command = optional_toml_string(entry, "command", name)?;
+
+        let (transport, env) = if let Some(url) = url {
+            if command.is_some() {
+                bail!("Codex MCP server `{name}` cannot define both `url` and `command`");
+            }
+            validate_codex_mcp_fields(entry, &["url", "http_headers", "enabled"], name)?;
+            let headers = toml_string_map(entry, "http_headers", name)?;
+            (McpTransport::Http { url, headers }, BTreeMap::new())
+        } else if let Some(command) = command {
+            validate_codex_mcp_fields(entry, &["command", "args", "env", "enabled"], name)?;
+            let args = toml_string_array(entry, "args", name)?;
+            let env = toml_string_map(entry, "env", name)?;
+            (McpTransport::Stdio { command, args }, env)
+        } else {
+            bail!("Codex MCP server `{name}` must define either `url` or `command`");
+        };
+
+        result.push(NormalizedMcpServer {
+            name: name.clone(),
+            transport,
+            env,
+        });
+    }
+
+    Ok(result)
+}
+
+fn optional_toml_string(
+    entry: &toml::value::Table,
+    field: &str,
+    server_name: &str,
+) -> Result<Option<String>> {
+    entry
+        .get(field)
+        .map(|value| {
+            let value = value.as_str().with_context(|| {
+                format!("Codex MCP server `{server_name}` field `{field}` must be a string")
+            })?;
+            if value.trim().is_empty() {
+                bail!("Codex MCP server `{server_name}` field `{field}` must not be empty");
+            }
+            Ok(value.to_string())
+        })
+        .transpose()
+}
+
+fn validate_codex_mcp_fields(
+    entry: &toml::value::Table,
+    allowed: &[&str],
+    server_name: &str,
+) -> Result<()> {
+    for field in entry.keys() {
+        if !allowed.contains(&field.as_str()) {
+            bail!(
+                "Codex MCP server `{server_name}` uses `{field}`, which conforme cannot safely migrate without losing its semantics"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn toml_string_array(
+    entry: &toml::value::Table,
+    field: &str,
+    server_name: &str,
+) -> Result<Vec<String>> {
+    let Some(value) = entry.get(field) else {
+        return Ok(Vec::new());
+    };
+    let values = value.as_array().with_context(|| {
+        format!("Codex MCP server `{server_name}` field `{field}` must be an array")
+    })?;
+    values
+        .iter()
+        .map(|value| {
+            value.as_str().map(str::to_string).with_context(|| {
+                format!(
+                    "Codex MCP server `{server_name}` field `{field}` must contain only strings"
+                )
+            })
+        })
+        .collect()
+}
+
+fn toml_string_map(
+    entry: &toml::value::Table,
+    field: &str,
+    server_name: &str,
+) -> Result<BTreeMap<String, String>> {
+    let Some(value) = entry.get(field) else {
+        return Ok(BTreeMap::new());
+    };
+    let values = value.as_table().with_context(|| {
+        format!("Codex MCP server `{server_name}` field `{field}` must be a table")
+    })?;
+    values
+        .iter()
+        .map(|(key, value)| {
+            value
+                .as_str()
+                .map(|value| (key.clone(), value.to_string()))
+                .with_context(|| {
+                    format!(
+                        "Codex MCP server `{server_name}` field `{field}.{key}` must be a string"
+                    )
+                })
+        })
+        .collect()
+}
 
 /// Generate a `.mcp.json` file (Claude Code format) from normalized MCP servers.
 /// This is the common format: { "mcpServers": { "name": { ... } } }
@@ -720,6 +970,267 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_merge_codex_mcp_toml_preserves_existing_config() {
+        let existing = r#"# User comment
+model = "gpt-test"
+
+[mcp_servers.existing]
+url = "https://existing.example/mcp"
+startup_timeout_sec = 20
+"#;
+        let servers = vec![NormalizedMcpServer {
+            name: "filesystem".to_string(),
+            transport: McpTransport::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "@mcp/server-filesystem".to_string()],
+            },
+            env: BTreeMap::from([("ROOT".to_string(), "/workspace".to_string())]),
+        }];
+
+        let result = merge_codex_mcp_toml(existing, &servers).unwrap();
+
+        assert!(result.contains("# User comment"));
+        assert!(result.contains("model = \"gpt-test\""));
+        assert!(result.contains("[mcp_servers.existing]"));
+        assert!(result.contains("startup_timeout_sec = 20"));
+        assert!(result.contains("[mcp_servers.filesystem]"));
+        assert!(result.contains("command = \"npx\""));
+        assert!(result.contains("[mcp_servers.filesystem.env]"));
+        assert!(result.contains("ROOT = \"/workspace\""));
+    }
+
+    #[test]
+    fn test_codex_mcp_toml_roundtrip() {
+        let servers = vec![
+            NormalizedMcpServer {
+                name: "filesystem".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@mcp/server-filesystem".to_string()],
+                },
+                env: BTreeMap::from([("ROOT".to_string(), "/workspace".to_string())]),
+            },
+            NormalizedMcpServer {
+                name: "api".to_string(),
+                transport: McpTransport::Http {
+                    url: "https://example.com/mcp".to_string(),
+                    headers: BTreeMap::from([("X-Region".to_string(), "eu".to_string())]),
+                },
+                env: BTreeMap::new(),
+            },
+        ];
+
+        let toml = merge_codex_mcp_toml("", &servers).unwrap();
+        let parsed = parse_codex_mcp_toml(&toml).unwrap();
+
+        assert_eq!(parsed.len(), 2);
+        let filesystem = parsed
+            .iter()
+            .find(|server| server.name == "filesystem")
+            .unwrap();
+        assert_eq!(
+            filesystem.env.get("ROOT").map(String::as_str),
+            Some("/workspace")
+        );
+        let api = parsed.iter().find(|server| server.name == "api").unwrap();
+        match &api.transport {
+            McpTransport::Http { url, headers } => {
+                assert_eq!(url, "https://example.com/mcp");
+                assert_eq!(headers.get("X-Region").map(String::as_str), Some("eu"));
+            }
+            other => panic!("expected HTTP transport, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_merge_codex_mcp_toml_supports_inline_tables() {
+        let existing = r#"model = "gpt-test"
+mcp_servers = { existing = { command = "printf", args = ["ok"] } }
+"#;
+        let servers = vec![NormalizedMcpServer {
+            name: "filesystem".to_string(),
+            transport: McpTransport::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "@mcp/server-filesystem".to_string()],
+            },
+            env: BTreeMap::new(),
+        }];
+
+        let result = merge_codex_mcp_toml(existing, &servers).unwrap();
+        let parsed = parse_codex_mcp_toml(&result).unwrap();
+
+        assert!(result.contains("model = \"gpt-test\""));
+        assert_eq!(parsed.len(), 2);
+        assert!(parsed.iter().any(|server| server.name == "existing"));
+        assert!(parsed.iter().any(|server| server.name == "filesystem"));
+    }
+
+    #[test]
+    fn test_merge_codex_mcp_toml_enables_synced_server() {
+        let existing = r#"[mcp_servers.filesystem]
+command = "old-command"
+enabled = false
+startup_timeout_sec = 20
+"#;
+        let servers = vec![NormalizedMcpServer {
+            name: "filesystem".to_string(),
+            transport: McpTransport::Stdio {
+                command: "npx".to_string(),
+                args: vec!["server-filesystem".to_string()],
+            },
+            env: BTreeMap::new(),
+        }];
+
+        let result = merge_codex_mcp_toml(existing, &servers).unwrap();
+        assert!(!result.contains("enabled = false"));
+        assert!(result.contains("startup_timeout_sec = 20"));
+        assert!(result.contains("command = \"npx\""));
+    }
+
+    #[test]
+    fn test_merge_codex_mcp_toml_cleans_fields_when_transport_changes() {
+        let existing_http = r#"[mcp_servers.server]
+url = "https://example.com/mcp"
+auth = "oauth"
+bearer_token_env_var = "TOKEN"
+env_http_headers = { Authorization = "TOKEN" }
+"#;
+        let stdio_server = NormalizedMcpServer {
+            name: "server".to_string(),
+            transport: McpTransport::Stdio {
+                command: "node".to_string(),
+                args: vec!["server.js".to_string()],
+            },
+            env: BTreeMap::new(),
+        };
+
+        let stdio_result = merge_codex_mcp_toml(existing_http, &[stdio_server]).unwrap();
+        assert!(!stdio_result.contains("auth"));
+        assert!(!stdio_result.contains("bearer_token_env_var"));
+        assert!(!stdio_result.contains("env_http_headers"));
+        assert_eq!(parse_codex_mcp_toml(&stdio_result).unwrap().len(), 1);
+
+        let existing_stdio = r#"[mcp_servers.server]
+command = "node"
+cwd = "tools"
+env_vars = ["TOKEN"]
+"#;
+        let http_server = NormalizedMcpServer {
+            name: "server".to_string(),
+            transport: McpTransport::Http {
+                url: "https://example.com/mcp".to_string(),
+                headers: BTreeMap::new(),
+            },
+            env: BTreeMap::new(),
+        };
+
+        let http_result = merge_codex_mcp_toml(existing_stdio, &[http_server]).unwrap();
+        assert!(!http_result.contains("cwd"));
+        assert!(!http_result.contains("env_vars"));
+        assert_eq!(parse_codex_mcp_toml(&http_result).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_parse_codex_mcp_toml_skips_disabled_servers() {
+        let content = r#"[mcp_servers.disabled]
+command = "npx"
+enabled = false
+
+[mcp_servers.enabled]
+command = "node"
+"#;
+
+        let parsed = parse_codex_mcp_toml(content).unwrap();
+
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "enabled");
+    }
+
+    #[test]
+    fn test_parse_codex_mcp_toml_rejects_unsupported_auth() {
+        let content = r#"[mcp_servers.private]
+url = "https://example.com/mcp"
+bearer_token_env_var = "MCP_TOKEN"
+"#;
+
+        let error = parse_codex_mcp_toml(content).unwrap_err();
+
+        assert!(error.to_string().contains("cannot safely migrate"));
+        assert!(error.to_string().contains("bearer_token_env_var"));
+    }
+
+    #[test]
+    fn test_parse_codex_mcp_toml_rejects_unrepresentable_stdio_options() {
+        for field in ["cwd = \"tools\"", "env_vars = [\"TOKEN\"]"] {
+            let content = format!("[mcp_servers.private]\ncommand = \"node\"\n{field}\n");
+            let error = parse_codex_mcp_toml(&content).unwrap_err();
+
+            assert!(error.to_string().contains("cannot safely migrate"));
+        }
+    }
+
+    #[test]
+    fn test_parse_codex_mcp_toml_rejects_transport_incompatible_fields() {
+        let http_with_args =
+            "[mcp_servers.broken]\nurl = \"https://example.com/mcp\"\nargs = [\"one\"]\n";
+        let stdio_with_headers =
+            "[mcp_servers.broken]\ncommand = \"node\"\nhttp_headers = { X = \"one\" }\n";
+
+        let http_error = parse_codex_mcp_toml(http_with_args).unwrap_err();
+        let stdio_error = parse_codex_mcp_toml(stdio_with_headers).unwrap_err();
+
+        assert!(http_error.to_string().contains("cannot safely migrate"));
+        assert!(http_error.to_string().contains("args"));
+        assert!(stdio_error.to_string().contains("cannot safely migrate"));
+        assert!(stdio_error.to_string().contains("http_headers"));
+    }
+
+    #[test]
+    fn test_merge_codex_mcp_toml_rejects_http_literal_env() {
+        let server = NormalizedMcpServer {
+            name: "api".to_string(),
+            transport: McpTransport::Http {
+                url: "https://example.com/mcp".to_string(),
+                headers: BTreeMap::new(),
+            },
+            env: BTreeMap::from([("TOKEN".to_string(), "secret".to_string())]),
+        };
+
+        let error = merge_codex_mcp_toml("", &[server]).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("cannot represent literal environment variables"));
+    }
+
+    #[test]
+    fn test_parse_codex_mcp_toml_rejects_malformed_server() {
+        let missing_transport = "[mcp_servers.broken]\nargs = [\"one\"]\n";
+        let mixed_args = "[mcp_servers.broken]\ncommand = \"npx\"\nargs = [\"one\", 2]\n";
+        let invalid_root = "mcp_servers = \"broken\"\n";
+        let invalid_entry = "[mcp_servers]\nbroken = \"not a table\"\n";
+        let blank_command = "[mcp_servers.broken]\ncommand = \"   \"\n";
+
+        let missing_error = parse_codex_mcp_toml(missing_transport).unwrap_err();
+        let args_error = parse_codex_mcp_toml(mixed_args).unwrap_err();
+        let root_error = parse_codex_mcp_toml(invalid_root).unwrap_err();
+        let entry_error = parse_codex_mcp_toml(invalid_entry).unwrap_err();
+        let blank_error = parse_codex_mcp_toml(blank_command).unwrap_err();
+
+        assert!(missing_error
+            .to_string()
+            .contains("either `url` or `command`"));
+        assert!(args_error.to_string().contains("only strings"));
+        assert!(root_error
+            .to_string()
+            .contains("`mcp_servers` must be a table"));
+        assert!(entry_error
+            .to_string()
+            .contains("server `broken` must be a table"));
+        assert!(blank_error.to_string().contains("must not be empty"));
+    }
 
     #[test]
     fn test_generate_mcp_json_stdio() {

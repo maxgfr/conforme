@@ -466,6 +466,33 @@ fn test_roundtrip_codex_skills() {
     assert_eq!(read_config.skills.len(), 1);
     assert_eq!(read_config.skills[0].name, "deploy");
     assert_eq!(read_config.skills[0].content, "Run deploy.");
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+    assert_eq!(
+        find_http_url(&read_config, "api").as_deref(),
+        Some("https://example.com/mcp")
+    );
+}
+
+#[test]
+fn test_codex_config_merge_preserves_user_settings() {
+    let adapter = conforme::adapters::codex::CodexAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".codex")).unwrap();
+    fs::write(
+        dir.path().join(".codex/config.toml"),
+        "# Keep this comment\nmodel = \"gpt-test\"\n\n[mcp_servers.local]\nurl = \"http://localhost:3000/mcp\"\nstartup_timeout_sec = 20\n",
+    )
+    .unwrap();
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+
+    let content = fs::read_to_string(dir.path().join(".codex/config.toml")).unwrap();
+    assert!(content.contains("# Keep this comment"));
+    assert!(content.contains("model = \"gpt-test\""));
+    assert!(content.contains("[mcp_servers.local]"));
+    assert!(content.contains("startup_timeout_sec = 20"));
+    assert!(content.contains("[mcp_servers.fs]"));
+    assert!(content.contains("[mcp_servers.api]"));
 }
 
 #[test]

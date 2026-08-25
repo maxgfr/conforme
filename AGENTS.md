@@ -10,7 +10,7 @@ conforme is a Rust CLI that synchronizes AI coding agent configurations across 1
 
 ```bash
 cargo build --release
-cargo test                     # 366 tests (132 lib + 136 bin + 58 integration + 17 error + 23 roundtrip)
+cargo test
 cargo clippy -- -D warnings    # lint — MUST pass before pushing
 cargo fmt -- --check           # format check
 conforme check                 # verify AI configs are in sync (dogfooding)
@@ -35,6 +35,7 @@ src/
   watch.rs           — File watcher for auto-sync (notify + debounce)
   help_ai.rs        — Detailed help about all supported tools and formats
   mcp.rs            — MCP config generation/parsing per tool:
+                       - Codex: project `.codex/config.toml`, atomically merged with comment/settings preservation; strict safe parser — merge_codex_mcp_toml / parse_codex_mcp_toml
                        - Standard mcpServers: Claude, Kiro, Amazon Q, Cursor
                        - Roo Code: mcpServers, HTTP uses type "streamable-http" (not "http") — generate_roocode_mcp_json
                        - Continue.dev: mcpServers, HTTP uses type "streamable-http" (bare "http" is rejected) — generate_continue_mcp_json
@@ -154,6 +155,7 @@ Review for bugs.
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; merged into existing settings (preserves theme/keybindings/etc.) |
 | Gemini | `mcpServers` (inside `.gemini/settings.json`) | No type field, uses `httpUrl` for HTTP; merged into existing settings |
 | Amp | `amp.mcpServers` (inside `.amp/settings.json`) | Dotted key; no type field; merged into existing settings |
+| Codex | `[mcp_servers.<name>]` (inside `.codex/config.toml`) | TOML; atomic merge preserves unrelated settings, comments, target-only servers, and Codex-specific options; shared file is never deleted wholesale |
 
 ### Sync algorithm
 

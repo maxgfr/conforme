@@ -12,7 +12,8 @@ pub mod roocode;
 pub mod windsurf;
 pub mod zed;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::config::NormalizedConfig;
@@ -59,6 +60,12 @@ pub trait AiToolAdapter: Send + Sync {
     /// Files in these directories that are not in the generate() output will be removed.
     fn managed_directories(&self, _project_root: &Path) -> Vec<PathBuf> {
         Vec::new()
+    }
+
+    /// Whether a generated path also contains user-owned settings and must not
+    /// be deleted wholesale by `remove` or source cleanup during `migrate`.
+    fn is_shared_file(&self, _path: &Path) -> bool {
+        false
     }
 
     /// Write normalized config into this tool's format.
@@ -147,4 +154,85 @@ pub fn write_if_changed(path: &Path, content: &str, report: &mut WriteReport) ->
     std::fs::write(path, content)?;
     report.files_written.push(path.to_path_buf());
     Ok(())
+}
+
+/// Atomically replace a file after fully writing and syncing a sibling temp file.
+/// Use this for mixed-ownership config files where truncation could destroy
+/// unrelated user settings.
+pub fn write_if_changed_atomic(path: &Path, content: &str, report: &mut WriteReport) -> Result<()> {
+    // Persisting directly over a symlink replaces the link itself. Resolve an
+    // existing link first so centrally managed/dotfile-backed configs remain
+    // linked and their target is updated atomically instead.
+    let write_path = match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => std::fs::canonicalize(path)
+            .with_context(|| format!("failed to resolve symlink {}", path.display()))?,
+        Ok(_) => path.to_path_buf(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => path.to_path_buf(),
+        Err(error) => return Err(error.into()),
+    };
+
+    let parent = write_path
+        .parent()
+        .context("cannot atomically write a path without a parent directory")?;
+    std::fs::create_dir_all(parent)?;
+
+    if write_path.exists() {
+        let existing = std::fs::read_to_string(&write_path)?;
+        if crate::hash::contents_match(&existing, content) {
+            report.files_unchanged.push(path.to_path_buf());
+            return Ok(());
+        }
+    }
+
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("failed to create temporary file beside {}", path.display()))?;
+    temporary
+        .write_all(content.as_bytes())
+        .with_context(|| format!("failed to write temporary file for {}", path.display()))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .with_context(|| format!("failed to sync temporary file for {}", path.display()))?;
+
+    if write_path.exists() {
+        let permissions = std::fs::metadata(&write_path)?.permissions();
+        temporary.as_file().set_permissions(permissions)?;
+    }
+
+    temporary
+        .persist(&write_path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("failed to atomically replace {}", write_path.display()))?;
+    report.files_written.push(path.to_path_buf());
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn test_atomic_write_preserves_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("target.toml");
+        let link = dir.path().join("config.toml");
+        std::fs::write(&target, "old").unwrap();
+        symlink(&target, &link).unwrap();
+        let mut report = WriteReport {
+            files_written: Vec::new(),
+            files_unchanged: Vec::new(),
+        };
+
+        write_if_changed_atomic(&link, "new", &mut report).unwrap();
+
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+        assert_eq!(report.files_written, vec![link]);
+    }
 }

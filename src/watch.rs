@@ -126,6 +126,15 @@ fn get_watch_paths(
                         paths.push(mcp);
                     }
                 }
+                "codex" => {
+                    // Watch the directory, not the file inode: editors commonly
+                    // save by atomically replacing config.toml, and the file may
+                    // also be created after watch starts.
+                    let codex_dir = project_root.join(".codex");
+                    if codex_dir.is_dir() {
+                        paths.push(codex_dir);
+                    }
+                }
                 _ => {}
             }
         }
@@ -138,4 +147,25 @@ fn get_watch_paths(
     }
 
     Ok(paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_codex_source_watches_config_directory() {
+        let dir = TempDir::new().unwrap();
+        let codex_dir = dir.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).unwrap();
+        let project_config = ProjectConfig {
+            source: Some("codex".to_string()),
+            ..Default::default()
+        };
+
+        let paths = get_watch_paths(dir.path(), &project_config).unwrap();
+
+        assert_eq!(paths, vec![codex_dir]);
+    }
 }

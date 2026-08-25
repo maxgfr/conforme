@@ -1,7 +1,7 @@
 use owo_colors::OwoColorize;
 use std::collections::HashSet;
 
-use crate::config::{ActivationMode, NormalizedConfig};
+use crate::config::{ActivationMode, McpTransport, NormalizedConfig};
 
 /// Validate a NormalizedConfig and print warnings. Returns true if valid (no errors).
 pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
@@ -60,6 +60,18 @@ pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
     for mcp in &config.mcp_servers {
         if !seen_mcp.insert(&mcp.name) {
             errors.push(format!("Duplicate MCP server name: '{}'", mcp.name));
+        }
+        if mcp.name.trim().is_empty() {
+            errors.push("MCP server with empty name found".to_string());
+        }
+        match &mcp.transport {
+            McpTransport::Stdio { command, .. } if command.trim().is_empty() => {
+                errors.push(format!("MCP server '{}' has an empty command", mcp.name));
+            }
+            McpTransport::Http { url, .. } if url.trim().is_empty() => {
+                errors.push(format!("MCP server '{}' has an empty URL", mcp.name));
+            }
+            _ => {}
         }
     }
 
@@ -145,5 +157,32 @@ mod tests {
         };
         // Empty content is a warning, not an error
         assert!(validate(&config, false));
+    }
+
+    #[test]
+    fn test_blank_mcp_identity_and_transport_are_invalid() {
+        let config = NormalizedConfig {
+            mcp_servers: vec![
+                NormalizedMcpServer {
+                    name: " ".to_string(),
+                    transport: McpTransport::Stdio {
+                        command: "".to_string(),
+                        args: Vec::new(),
+                    },
+                    env: Default::default(),
+                },
+                NormalizedMcpServer {
+                    name: "api".to_string(),
+                    transport: McpTransport::Http {
+                        url: "  ".to_string(),
+                        headers: Default::default(),
+                    },
+                    env: Default::default(),
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert!(!validate(&config, false));
     }
 }

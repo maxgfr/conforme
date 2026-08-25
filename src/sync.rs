@@ -413,6 +413,16 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
         let mut removed_files = Vec::new();
 
         for (path, _) in &generated {
+            if adapter.is_shared_file(path) {
+                if verbose && path.exists() {
+                    println!(
+                        "  {} preserved shared config {}",
+                        "-".dimmed(),
+                        path.strip_prefix(project_root).unwrap_or(path).display()
+                    );
+                }
+                continue;
+            }
             if path.exists() {
                 std::fs::remove_file(path)?;
                 removed_files.push(path.clone());
@@ -756,7 +766,15 @@ pub fn run_migrate(
         for (path, _) in &source_files {
             if path.exists() {
                 let rel = path.strip_prefix(project_root).unwrap_or(path);
-                println!("    {} {}", "would remove".red(), rel.display());
+                if source_adapter.is_shared_file(path) {
+                    println!(
+                        "    {} {}",
+                        "would preserve shared config".yellow(),
+                        rel.display()
+                    );
+                } else {
+                    println!("    {} {}", "would remove".red(), rel.display());
+                }
             }
         }
         // Also show managed directory contents (recursive)
@@ -787,6 +805,9 @@ pub fn run_migrate(
         let mut removed_paths = Vec::new();
 
         for (path, _) in &source_files {
+            if source_adapter.is_shared_file(path) {
+                continue;
+            }
             if path.exists() {
                 std::fs::remove_file(path)?;
                 removed_paths.push(path.clone());

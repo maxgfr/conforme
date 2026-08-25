@@ -172,7 +172,7 @@ Review all changes for correctness and security.
 | Gemini CLI | `GEMINI.md` | `.gemini/skills/` | `.gemini/agents/*.md` | `.gemini/settings.json` |
 | OpenCode | native (AGENTS.md) | `.opencode/skills/` | `opencode.json#agent` + `.opencode/agents/*.md` | `opencode.json#mcp` |
 | Zed AI | `.rules` | `.agents/skills/` | - | `.zed/settings.json` |
-| Codex CLI | native (AGENTS.md) | `.agents/skills/` | - | - (global only) |
+| Codex CLI | native (AGENTS.md) | `.agents/skills/` | - | `.codex/config.toml` |
 | Amp | native (AGENTS.md) | `.agents/skills/` | - | `.amp/settings.json` |
 
 ### Skills format equivalence
@@ -214,9 +214,9 @@ Tools without agents support: Windsurf, Continue.dev, Roo Code, Codex CLI, Zed A
 
 ### MCP format equivalence
 
-MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are synced to tool-specific JSON formats:
+MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are synced to each tool's native format:
 
-| Tool | Path | JSON key | Format notes |
+| Tool | Path | Key / table | Format notes |
 |------|------|----------|-------------|
 | Claude Code | `.mcp.json` | `mcpServers` | `type: stdio/http`, with `env`, `headers` |
 | Cursor | `.cursor/mcp.json` | `mcpServers` | `type: stdio/http` |
@@ -230,8 +230,7 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | OpenCode | `opencode.json` (merged) | `mcp` | `type: local/remote`; `command` as single array; env key is `environment` |
 | Zed AI | `.zed/settings.json` (merged) | `context_servers` | No `type` field; remote uses `url` + `headers` |
 | Amp | `.amp/settings.json` (merged) | `amp.mcpServers` | Dotted key; no `type` field |
-
-Tools without JSON MCP config: Codex CLI — its MCP lives in TOML (`[mcp_servers.<name>]`) at `~/.codex/config.toml` (global) or `.codex/config.toml` (project), so conforme does not generate it.
+| Codex CLI | `.codex/config.toml` (merged) | `[mcp_servers.<name>]` | TOML; atomic merge preserves unrelated settings, comments, target-only servers, and Codex-specific options |
 
 ## Examples
 
