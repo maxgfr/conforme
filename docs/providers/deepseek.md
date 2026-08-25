@@ -53,6 +53,7 @@ The filesystem provider scans roots in rank order:
 | 300 | `custom` | `Config.customSkillDirs` |
 | 400 | `user-dsh` | `<dshHome>/skills` |
 | 500 | `user-agents` | `<agentsHome>/skills` (`$DSH_AGENTS_HOME` or `~/.agents`) |
+| 600 | `bundled` | `Config.bundledSkillDir` when configured |
 
 Both `<name>/SKILL.md` bundles and flat `<name>.md` files are accepted;
 nested discovery is deliberately excluded. Frontmatter is an open YAML object;

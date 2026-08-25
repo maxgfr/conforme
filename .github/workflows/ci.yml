@@ -89,7 +89,7 @@ jobs:
         run: cargo test
       - name: Smoke test - basic sync
         run: |
-          mkdir -p /tmp/test-project/.cursor /tmp/test-project/.claude /tmp/test-project/.windsurf
+          mkdir -p /tmp/test-project/.cursor /tmp/test-project/.claude /tmp/test-project/.windsurf /tmp/test-project/.dsh
           cat > /tmp/test-project/AGENTS.md << 'EOF'
           # Instructions
           Use TypeScript with strict mode.
@@ -125,6 +125,12 @@ jobs:
 
           # Verify skills and MCP
           test -f /tmp/test-project/.claude/skills/deploy/SKILL.md && echo "Claude skill: PASSED"
+          test -f /tmp/test-project/.dsh/skills/deploy/SKILL.md
+          echo "DeepSeek skill: PASSED"
+          grep -q '^name: deploy$' /tmp/test-project/.dsh/skills/deploy/SKILL.md
+          echo "DeepSeek skill name: PASSED"
+          grep -q '^description: Deploy the app$' /tmp/test-project/.dsh/skills/deploy/SKILL.md
+          echo "DeepSeek skill description: PASSED"
           test -f /tmp/test-project/.mcp.json && echo "MCP config: PASSED"
           grep -q "filesystem" /tmp/test-project/.mcp.json && echo "MCP content: PASSED"
 
