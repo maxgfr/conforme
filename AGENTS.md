@@ -284,7 +284,10 @@ For each tool (claude, cursor, copilot, windsurf, continuedev, kiro, amazonq, co
 
 ## 2. Fetch the latest official documentation
 
-Use WebFetch on each official doc URL from `docs/providers/<tool>.md`.
+Open each official documentation URL from `docs/providers/<tool>.md` with the
+host's native web reader. On Claude Code this may be `WebFetch`; on Codex use
+the available web browsing tool. If direct opening fails, search the official
+vendor domain and open the replacement page.
 Extract the current:
 - Config file paths and names
 - Frontmatter fields and their types
@@ -313,7 +316,7 @@ For each issue found:
 
 ## 5. Verify links
 
-WebFetch each documentation URL to confirm it still resolves (not 404).
+Open each documentation URL to confirm it still resolves (not 404).
 If a link is broken, search for the new URL and update `docs/providers/<tool>.md`.
 
 ## 6. Final checks
