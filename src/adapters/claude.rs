@@ -33,6 +33,26 @@ fn parse_tool_list(value: Option<&serde_yaml_ng::Value>) -> Vec<String> {
 
 pub struct ClaudeAdapter;
 
+/// Resolve the project instruction file.
+///
+/// Claude Code accepts a project `CLAUDE.md` at either `./CLAUDE.md` or
+/// `./.claude/CLAUDE.md`. conforme uses the root file by default, but honours an
+/// existing `.claude/CLAUDE.md` when no root file is present — otherwise reading
+/// such a project as the sync source lost the instructions entirely, and writing
+/// to it created a second instruction file that Claude Code would load on top of
+/// the first.
+fn claude_md_path(project_root: &Path) -> PathBuf {
+    let root = project_root.join("CLAUDE.md");
+    if root.exists() {
+        return root;
+    }
+    let nested = project_root.join(".claude").join("CLAUDE.md");
+    if nested.exists() {
+        return nested;
+    }
+    root
+}
+
 impl AiToolAdapter for ClaudeAdapter {
     fn name(&self) -> &str {
         "Claude Code"
@@ -64,7 +84,7 @@ impl AiToolAdapter for ClaudeAdapter {
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
-        let claude_md = project_root.join("CLAUDE.md");
+        let claude_md = claude_md_path(project_root);
         let instructions = if claude_md.exists() {
             std::fs::read_to_string(&claude_md)
                 .with_context(|| format!("failed to read {}", claude_md.display()))?
@@ -76,45 +96,37 @@ impl AiToolAdapter for ClaudeAdapter {
 
         let mut rules = Vec::new();
         let rules_dir = project_root.join(".claude").join("rules");
-        if rules_dir.is_dir() {
-            let mut entries: Vec<_> = std::fs::read_dir(&rules_dir)?
-                .filter_map(|e| e.ok())
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "md") {
-                    let content = std::fs::read_to_string(&path)?;
-                    let (fields, body) = frontmatter::parse(&content)?;
-                    let name = path
-                        .file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
+        // `.claude/rules/` is discovered recursively by Claude Code.
+        for path in crate::adapters::collect_rule_files(&rules_dir, "md")? {
+            let content = std::fs::read_to_string(&path)?;
+            let (fields, body) = frontmatter::parse(&content)?;
+            let name = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
 
-                    let activation =
-                        if let Some(serde_yaml_ng::Value::Sequence(paths)) = fields.get("paths") {
-                            let globs: Vec<String> = paths
-                                .iter()
-                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                .filter(|s| !s.is_empty())
-                                .collect();
-                            if globs.is_empty() {
-                                ActivationMode::Always
-                            } else {
-                                ActivationMode::GlobMatch(globs)
-                            }
-                        } else {
-                            ActivationMode::Always
-                        };
+            let activation =
+                if let Some(serde_yaml_ng::Value::Sequence(paths)) = fields.get("paths") {
+                    let globs: Vec<String> = paths
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if globs.is_empty() {
+                        ActivationMode::Always
+                    } else {
+                        ActivationMode::GlobMatch(globs)
+                    }
+                } else {
+                    ActivationMode::Always
+                };
 
-                    rules.push(NormalizedRule {
-                        name,
-                        content: body.trim().to_string(),
-                        activation,
-                    });
-                }
-            }
+            rules.push(NormalizedRule {
+                name,
+                content: body.trim().to_string(),
+                activation,
+            });
         }
 
         // Read skills from .claude/skills/<name>/SKILL.md
@@ -260,7 +272,7 @@ impl AiToolAdapter for ClaudeAdapter {
     ) -> Result<Vec<(PathBuf, String)>> {
         let mut files = Vec::new();
 
-        let claude_md = project_root.join("CLAUDE.md");
+        let claude_md = claude_md_path(project_root);
         let mut claude_content = config.instructions.clone();
 
         let mut rule_files: Vec<(&NormalizedRule, String)> = Vec::new();

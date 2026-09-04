@@ -45,33 +45,24 @@ impl AiToolAdapter for RooCodeAdapter {
         let mut rules = Vec::new();
 
         let rules_dir = project_root.join(".roo").join("rules");
-        if rules_dir.is_dir() {
-            let mut entries: Vec<_> = std::fs::read_dir(&rules_dir)?
-                .filter_map(|e| e.ok())
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
+        // Roo Code reads `.roo/rules/` recursively, sorting by base name only.
+        for path in crate::adapters::collect_rule_files(&rules_dir, "md")? {
+            let content = std::fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            let name = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
 
-            for entry in entries {
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "md") {
-                    let content = std::fs::read_to_string(&path)
-                        .with_context(|| format!("failed to read {}", path.display()))?;
-                    let name = path
-                        .file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-
-                    if name == "00-general" || name == "general" {
-                        instructions = content.trim().to_string();
-                    } else {
-                        rules.push(NormalizedRule {
-                            name,
-                            content: content.trim().to_string(),
-                            activation: ActivationMode::Always,
-                        });
-                    }
-                }
+            if name == "00-general" || name == "general" {
+                instructions = content.trim().to_string();
+            } else {
+                rules.push(NormalizedRule {
+                    name,
+                    content: content.trim().to_string(),
+                    activation: ActivationMode::Always,
+                });
             }
         }
 

@@ -45,35 +45,28 @@ impl AiToolAdapter for CursorAdapter {
         let mut rules = Vec::new();
 
         let rules_dir = project_root.join(".cursor").join("rules");
-        if rules_dir.is_dir() {
-            let mut entries: Vec<_> = std::fs::read_dir(&rules_dir)?
-                .filter_map(|e| e.ok())
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "mdc") {
-                    let content = std::fs::read_to_string(&path)
-                        .with_context(|| format!("failed to read {}", path.display()))?;
-                    let (fields, body) = frontmatter::parse(&content)?;
-                    let name = path
-                        .file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
+        // Cursor documents that `.cursor/rules/` may be organised in
+        // subdirectories, so the scan has to recurse.
+        for path in crate::adapters::collect_rule_files(&rules_dir, "mdc")? {
+            let content = std::fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            let (fields, body) = frontmatter::parse(&content)?;
+            let name = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
 
-                    let activation = parse_cursor_activation(&fields);
+            let activation = parse_cursor_activation(&fields);
 
-                    if name == "general" && activation == ActivationMode::Always {
-                        instructions = body.trim().to_string();
-                    } else {
-                        rules.push(NormalizedRule {
-                            name,
-                            content: body.trim().to_string(),
-                            activation,
-                        });
-                    }
-                }
+            if name == "general" && activation == ActivationMode::Always {
+                instructions = body.trim().to_string();
+            } else {
+                rules.push(NormalizedRule {
+                    name,
+                    content: body.trim().to_string(),
+                    activation,
+                });
             }
         }
 

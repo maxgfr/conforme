@@ -54,14 +54,16 @@ src/
                        (read_skills_from_dir, read_agents_from_dir, parse_frontmatter_tool_list)
                        used by adapters to round-trip skills/agents on read()
   adapters/
-    mod.rs          — AiToolAdapter trait + registry + shared write_if_changed
-    claude.rs       — Claude Code: CLAUDE.md + .claude/rules/*.md (paths: frontmatter)
-    cursor.rs       — Cursor: .cursor/rules/*.mdc (alwaysApply/globs/description); subagents at .cursor/agents/*.md
+    mod.rs          — AiToolAdapter trait + registry + shared write_if_changed +
+                       collect_rule_files (recursive rules-dir scan, sorted by base name)
+    claude.rs       — Claude Code: CLAUDE.md (or .claude/CLAUDE.md when only that exists)
+                       + .claude/rules/**/*.md, read recursively (paths: frontmatter)
+    cursor.rs       — Cursor: .cursor/rules/**/*.mdc, read recursively (alwaysApply/globs/description); subagents at .cursor/agents/*.md
     windsurf.rs     — Windsurf: .devin/rules/*.md when .devin/ exists, else .windsurf/rules/*.md (trigger/description/globs)
     copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md
     codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively
     opencode.rs     — OpenCode: reads AGENTS.md natively
-    roocode.rs      — Roo Code / Cline: .roo/rules/*.md (plain Markdown)
+    roocode.rs      — Roo Code / Cline: .roo/rules/**/*.md, read recursively (plain Markdown)
     gemini.rs       — Gemini CLI: GEMINI.md
     continuedev.rs  — Continue.dev: .continue/rules/*.md (name/globs/alwaysApply)
     zed.rs          — Zed AI: .rules file
@@ -160,6 +162,16 @@ Review for bugs.
 | Amp | `amp.mcpServers` (inside `.amp/settings.json`) | Dotted key; no type field; merged into existing settings |
 | DeepSeek Harness | _(none)_ | MCP is a user-level `cordis.patch.yml` plugin entry under `$DSH_HOME`; nothing project-scoped is generated |
 | Codex | `[mcp_servers.<name>]` (inside `.codex/config.toml`) | TOML; atomic merge preserves unrelated settings, comments, target-only servers, and Codex-specific options; shared file is never deleted wholesale |
+
+### Rules-directory discovery
+
+Claude Code, Cursor and Roo Code all scan their rules directory **recursively**
+(`.claude/rules/frontend/react.md`, `.cursor/rules/backend/rpc.mdc`, …).
+`adapters::collect_rule_files` implements that scan for all three, sorting by
+base name (case-insensitive, so Roo's `00-`/`01-` prefixes keep their meaning)
+then by full path. Nested rules are written back flat, one file per rule name.
+`clean_orphans` stays non-recursive, so hand-authored files in subdirectories are
+never deleted.
 
 ### Sync algorithm
 

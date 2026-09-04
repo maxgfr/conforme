@@ -41,6 +41,7 @@ Mode-specific rules go in `.roo/rules-{modeSlug}/` directories (e.g., `.roo/rule
 ## Notes
 
 - Plain markdown only -- no YAML frontmatter in rules
+- `.roo/rules/` is read **recursively** and files are sorted by base name only (case-insensitive), which is what makes the `00-`/`01-` prefixes meaningful; conforme reads nested rules the same way
 - Mode-specific *rules* are controlled via directory placement (`.roo/rules-{modeSlug}/`), not a frontmatter field; skills live at `.roo/skills/<name>/SKILL.md` with no mode-specific variant
 - Skills are discovered from project `.roo/skills/` and global `~/.roo/skills/`
 - Custom "modes" are distinct from agents/subagents, but they ARE file-based: a project-level `.roomodes` (YAML or JSON) file at the workspace root (plus a global `custom_modes.yaml`)

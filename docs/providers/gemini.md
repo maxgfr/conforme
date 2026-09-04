@@ -13,7 +13,7 @@
 - MCP tutorial: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/tutorials/mcp-setup.md
 - Custom commands: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/custom-commands.md
 - Skills repo: https://github.com/google-gemini/gemini-skills
-- Google Cloud docs: https://docs.cloud.google.com/gemini/docs/codeassist/gemini-cli
+- Repository: https://github.com/google-gemini/gemini-cli
 
 ## Config files
 
@@ -50,3 +50,5 @@ No activation modes. Single GEMINI.md file, all content always-on.
 - Agent frontmatter also supports `temperature`, `max_turns`, `timeout_mins`, and `mcpServers`; `model` defaults to `inherit`
 - Hierarchical: `~/.gemini/GEMINI.md` -> project -> subdirs
 - Supports `@file.md` imports in GEMINI.md
+- `GEMINI.md` is only the *default* context file name: `context.fileName` in `settings.json` accepts a name or a list (e.g. `["AGENTS.md", "GEMINI.md"]`). Gemini CLI does **not** read `AGENTS.md` unless configured to, which is why conforme writes `GEMINI.md`
+- The former Google Cloud page (`docs.cloud.google.com/gemini/docs/codeassist/gemini-cli`) now 404s; the `google-gemini/gemini-cli` repository docs are the canonical reference

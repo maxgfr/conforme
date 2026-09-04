@@ -209,6 +209,53 @@ pub fn write_if_changed_atomic(path: &Path, content: &str, report: &mut WriteRep
     Ok(())
 }
 
+/// Collect rule files with the given extension from `dir`, recursing into
+/// subdirectories.
+///
+/// Claude Code, Cursor and Roo Code all document that their rules directory is
+/// scanned recursively, so a project may organise rules under `frontend/`,
+/// `backend/`, … Reading only the top level silently dropped those rules when
+/// such a tool was used as the sync source.
+///
+/// Results are sorted by file name first (case-insensitively, which is what Roo
+/// Code documents and what keeps `00-`/`01-` numeric prefixes meaningful), then
+/// by full path so that two files sharing a base name stay in a stable order.
+pub fn collect_rule_files(dir: &Path, extension: &str) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    collect_rule_files_into(dir, extension, &mut files)?;
+    files.sort_by(|a, b| {
+        let key = |p: &Path| {
+            p.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase()
+        };
+        key(a).cmp(&key(b)).then_with(|| a.cmp(b))
+    });
+    Ok(files)
+}
+
+fn collect_rule_files_into(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) -> Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        .with_context(|| format!("failed to read {}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    // Deterministic descent order; the caller re-sorts the flattened result.
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            collect_rule_files_into(&path, extension, out)?;
+        } else if path.extension().is_some_and(|e| e == extension) {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

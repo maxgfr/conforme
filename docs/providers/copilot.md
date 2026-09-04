@@ -4,12 +4,12 @@
 
 ## Official docs
 
-- Custom instructions: https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions
+- Custom instructions: https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-custom-instructions/add-repository-instructions
 - Custom agents config: https://docs.github.com/en/copilot/reference/custom-agents-configuration
-- CLI skills: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-skills
-- Cloud agent skills: https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/create-skills
+- CLI skills: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills
+- Cloud agent skills: https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/customize-cloud-agent/add-skills
 - MCP tutorial: https://docs.github.com/en/copilot/tutorials/enhance-agent-mode-with-mcp
-- Hooks config: https://docs.github.com/en/copilot/reference/hooks-configuration
+- Hooks config: https://docs.github.com/en/copilot/reference/hooks-reference
 - CLI hooks: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-hooks
 - CLI overview: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/overview
 - Features: https://docs.github.com/en/copilot/get-started/features

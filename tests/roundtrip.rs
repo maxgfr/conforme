@@ -602,3 +602,116 @@ fn test_write_then_generate_matches() {
     assert!(report2.files_written.is_empty());
     assert!(!report2.files_unchanged.is_empty());
 }
+
+// --- Source-side discovery: nested rule directories and .claude/CLAUDE.md ---
+//
+// Claude Code, Cursor and Roo Code all scan their rules directory recursively.
+// Reading only the top level silently dropped nested rules when one of those
+// tools was used as the sync source.
+
+#[test]
+fn test_claude_reads_nested_rules() {
+    let adapter = conforme::adapters::claude::ClaudeAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".claude/rules/frontend")).unwrap();
+    fs::write(dir.path().join("CLAUDE.md"), "Root instructions.").unwrap();
+    fs::write(
+        dir.path().join(".claude/rules/testing.md"),
+        "---\npaths:\n  - \"**/*.test.ts\"\n---\nUse vitest.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".claude/rules/frontend/react.md"),
+        "---\npaths:\n  - \"src/**/*.tsx\"\n---\nPrefer function components.\n",
+    )
+    .unwrap();
+
+    let config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(config.instructions, "Root instructions.");
+    let names: Vec<&str> = config.rules.iter().map(|r| r.name.as_str()).collect();
+    assert!(names.contains(&"react"), "nested rule dropped: {:?}", names);
+    assert!(names.contains(&"testing"), "top-level rule dropped");
+    let react = config.rules.iter().find(|r| r.name == "react").unwrap();
+    assert!(matches!(
+        &react.activation,
+        ActivationMode::GlobMatch(globs) if globs == &["src/**/*.tsx"]
+    ));
+}
+
+#[test]
+fn test_claude_reads_and_writes_dot_claude_claude_md() {
+    let adapter = conforme::adapters::claude::ClaudeAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".claude")).unwrap();
+    // Claude Code accepts the project CLAUDE.md at ./.claude/CLAUDE.md too.
+    fs::write(
+        dir.path().join(".claude/CLAUDE.md"),
+        "Instructions in .claude/CLAUDE.md.",
+    )
+    .unwrap();
+
+    let config = adapter.read(dir.path()).unwrap();
+    assert_eq!(config.instructions, "Instructions in .claude/CLAUDE.md.");
+
+    // Writing must target the same file, not create a competing root CLAUDE.md
+    // that Claude Code would load on top of it.
+    let files = adapter.generate(dir.path(), &config).unwrap();
+    assert!(
+        files
+            .iter()
+            .any(|(p, _)| p == &dir.path().join(".claude/CLAUDE.md")),
+        "expected write to .claude/CLAUDE.md, got {:?}",
+        files.iter().map(|(p, _)| p).collect::<Vec<_>>()
+    );
+    assert!(
+        !files
+            .iter()
+            .any(|(p, _)| p == &dir.path().join("CLAUDE.md")),
+        "must not create a second root CLAUDE.md"
+    );
+}
+
+#[test]
+fn test_claude_prefers_root_claude_md_when_both_exist() {
+    let adapter = conforme::adapters::claude::ClaudeAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".claude")).unwrap();
+    fs::write(dir.path().join("CLAUDE.md"), "Root wins.").unwrap();
+    fs::write(dir.path().join(".claude/CLAUDE.md"), "Nested.").unwrap();
+
+    assert_eq!(adapter.read(dir.path()).unwrap().instructions, "Root wins.");
+}
+
+#[test]
+fn test_cursor_reads_nested_rules() {
+    let adapter = conforme::adapters::cursor::CursorAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".cursor/rules/backend")).unwrap();
+    fs::write(
+        dir.path().join(".cursor/rules/backend/rpc.mdc"),
+        "---\ndescription: RPC conventions\nalwaysApply: false\n---\nUse gRPC.\n",
+    )
+    .unwrap();
+
+    let config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(config.rules.len(), 1, "nested .mdc rule dropped");
+    assert_eq!(config.rules[0].name, "rpc");
+    assert!(config.rules[0].content.contains("Use gRPC."));
+}
+
+#[test]
+fn test_roocode_reads_nested_rules() {
+    let adapter = conforme::adapters::roocode::RooCodeAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".roo/rules/nested")).unwrap();
+    fs::write(dir.path().join(".roo/rules/00-general.md"), "General.").unwrap();
+    fs::write(dir.path().join(".roo/rules/nested/01-style.md"), "Style.").unwrap();
+
+    let config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(config.instructions, "General.");
+    assert_eq!(config.rules.len(), 1, "nested rule dropped");
+    assert_eq!(config.rules[0].name, "01-style");
+}

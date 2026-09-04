@@ -4,15 +4,17 @@
 
 ## Official docs
 
-- Owner's Manual: https://ampcode.com/manual
+- Owner's Manual: https://ampcode.com/docs
 - AGENTS.md spec: https://ampcode.com/news/AGENT.md
-- AGENTS.md canonical: https://ampcode.com/manual#AGENTS.md
+- AGENTS.md canonical: https://ampcode.com/docs/customize/agents-md
+- Skills: https://ampcode.com/docs/customize/skills
+- MCP: https://ampcode.com/docs/customize/mcp
 - Globs in AGENTS.md: https://ampcode.com/news/globs-in-AGENTS.md
 - Skills with MCP lazy loading: https://ampcode.com/news/lazy-load-mcp-with-skills
 - Workspace settings: https://ampcode.com/news/cli-workspace-settings
 - How to build an agent: https://ampcode.com/notes/how-to-build-an-agent
 - News/changelog: https://ampcode.com/chronicle
-- SDK: https://ampcode.com/manual/sdk
+- SDK: https://ampcode.com/docs/sdk
 
 ## Config files
 
@@ -46,3 +48,5 @@ Also reads `AGENT.md` (singular) as fallback.
 - No `type` field in MCP entries — transport is inferred from the shape: stdio uses `command`/`args`, remote uses `url` (+ optional `headers`)
 - User settings live at `~/.config/amp/settings.json`; workspace settings are the nearest `.amp/settings.json` searched upward
 - Falls back to `AGENT.md` or `CLAUDE.md` if `AGENTS.md` not found
+- Amp's docs moved from `ampcode.com/manual` to `ampcode.com/docs` (the old paths 301-redirect); the manual is now split into per-topic pages under `/docs/customize/`
+- Skill discovery order puts `~/.config/agents/skills/`, `~/.agents/skills/` and `~/.config/amp/skills/` ahead of the project roots; conforme writes the project `.agents/skills/`, which Amp searches in the current directory and its parents
