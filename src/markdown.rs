@@ -120,6 +120,7 @@ fn build_rule(name: &str, lines: &[String]) -> Result<NormalizedRule> {
 fn build_skill(name: &str, lines: &[String]) -> NormalizedSkill {
     let mut description = String::new();
     let mut allowed_tools = Vec::new();
+    let mut manual_invocation = false;
     let mut content_lines = Vec::new();
 
     for line in lines {
@@ -129,6 +130,8 @@ fn build_skill(name: &str, lines: &[String]) -> NormalizedSkill {
             .and_then(|s| s.strip_suffix("-->"))
         {
             description = inner.trim().to_string();
+        } else if trimmed == "<!-- invocation: manual -->" {
+            manual_invocation = true;
         } else if let Some(inner) = trimmed
             .strip_prefix("<!-- tools:")
             .and_then(|s| s.strip_suffix("-->"))
@@ -148,6 +151,7 @@ fn build_skill(name: &str, lines: &[String]) -> NormalizedSkill {
         description,
         content: content_lines.join("\n").trim().to_string(),
         allowed_tools,
+        manual_invocation,
     }
 }
 
@@ -340,6 +344,9 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
         out.push_str(&format!("\n## Skill: {}\n", skill.name));
         if !skill.description.is_empty() {
             out.push_str(&format!("<!-- description: {} -->\n", skill.description));
+        }
+        if skill.manual_invocation {
+            out.push_str("<!-- invocation: manual -->\n");
         }
         if !skill.allowed_tools.is_empty() {
             out.push_str(&format!(

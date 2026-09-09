@@ -1,6 +1,9 @@
 ---
 allowed-tools: Read Grep Glob Bash WebFetch WebSearch Edit Write
 description: Verify all 14 provider adapters against their official documentation and fix any discrepancies
+disable-model-invocation: true
+metadata:
+  opencode/autoinvoke: 'false'
 name: verify-providers
 ---
 

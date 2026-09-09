@@ -69,9 +69,85 @@ pub(crate) fn read_skills_from_dir(skills_dir: &Path) -> Result<Vec<NormalizedSk
             description,
             content: body.trim().to_string(),
             allowed_tools,
+            manual_invocation: read_manual_invocation(&fields, &skill_dir)?,
         });
     }
     Ok(skills)
+}
+
+/// Read explicit-only settings from supported skill metadata.
+pub(crate) fn read_manual_invocation(
+    fields: &BTreeMap<String, serde_yaml_ng::Value>,
+    skill_dir: &Path,
+) -> Result<bool> {
+    if fields
+        .get("disable-model-invocation")
+        .and_then(|v| v.as_bool())
+        == Some(true)
+    {
+        return Ok(true);
+    }
+    if let Some(value) = fields
+        .get("metadata")
+        .and_then(|v| v.get("opencode/autoinvoke"))
+    {
+        if value.as_bool() == Some(false) || value.as_str() == Some("false") {
+            return Ok(true);
+        }
+    }
+    let policy_path = skill_dir.join("agents/openai.yaml");
+    if policy_path.exists() {
+        let value: serde_yaml_ng::Value =
+            serde_yaml_ng::from_str(&std::fs::read_to_string(policy_path)?)?;
+        return Ok(value
+            .get("policy")
+            .and_then(|v| v.get("allow_implicit_invocation"))
+            .and_then(|v| v.as_bool())
+            == Some(false));
+    }
+    Ok(false)
+}
+
+fn add_invocation_fields(
+    fields: &mut BTreeMap<String, serde_yaml_ng::Value>,
+    skill: &NormalizedSkill,
+) {
+    if !skill.manual_invocation {
+        return;
+    }
+    fields.insert(
+        "disable-model-invocation".into(),
+        serde_yaml_ng::Value::Bool(true),
+    );
+    let mut metadata = serde_yaml_ng::Mapping::new();
+    metadata.insert("opencode/autoinvoke".into(), "false".into());
+    fields.insert("metadata".into(), serde_yaml_ng::Value::Mapping(metadata));
+}
+
+fn invocation_policy(
+    skill_dir: &Path,
+    skill: &NormalizedSkill,
+) -> Result<Option<(PathBuf, String)>> {
+    let path = skill_dir.join("agents/openai.yaml");
+    if !skill.manual_invocation && !path.exists() {
+        return Ok(None);
+    }
+    let mut fields: BTreeMap<String, serde_yaml_ng::Value> = if path.exists() {
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&path)?)?
+    } else {
+        BTreeMap::new()
+    };
+    let policy = fields
+        .entry("policy".into())
+        .or_insert_with(|| serde_yaml_ng::Value::Mapping(Default::default()));
+    let policy = policy.as_mapping_mut().ok_or_else(|| {
+        anyhow::anyhow!("skill policy must be a YAML mapping: {}", path.display())
+    })?;
+    policy.insert(
+        "allow_implicit_invocation".into(),
+        serde_yaml_ng::Value::Bool(!skill.manual_invocation),
+    );
+    Ok(Some((path, serde_yaml_ng::to_string(&fields)?)))
 }
 
 /// Read `<dir>/*.md` agent files into `NormalizedAgent`s (the common frontmatter
@@ -152,8 +228,12 @@ pub fn generate_claude_skills(
             );
         }
 
+        add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+            files.push(policy);
+        }
     }
 
     Ok(files)
@@ -182,8 +262,12 @@ pub fn generate_cursor_skills(
             );
         }
 
+        add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+            files.push(policy);
+        }
     }
 
     Ok(files)
@@ -211,8 +295,12 @@ pub fn generate_codex_skills(
             );
         }
 
+        add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+            files.push(policy);
+        }
     }
 
     Ok(files)
@@ -234,7 +322,8 @@ pub fn generate_copilot_skills(
 
     for skill in skills {
         let skill_name = sanitize_name(&skill.name);
-        let skill_path = skills_dir.join(&skill_name).join("SKILL.md");
+        let skill_dir = skills_dir.join(&skill_name);
+        let skill_path = skill_dir.join("SKILL.md");
 
         let mut fields = BTreeMap::new();
         fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
@@ -251,8 +340,12 @@ pub fn generate_copilot_skills(
             );
         }
 
+        add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+            files.push(policy);
+        }
     }
 
     Ok(files)
@@ -510,8 +603,12 @@ pub fn generate_kiro_skills(
             );
         }
 
+        add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+            files.push(policy);
+        }
     }
 
     Ok(files)
@@ -540,8 +637,12 @@ pub fn generate_windsurf_skills(
             );
         }
 
+        add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+            files.push(policy);
+        }
     }
 
     Ok(files)
@@ -570,8 +671,12 @@ pub fn generate_roocode_skills(
             );
         }
 
+        add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+            files.push(policy);
+        }
     }
 
     Ok(files)
@@ -601,8 +706,12 @@ pub fn generate_opencode_skills(
             );
         }
 
+        add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+            files.push(policy);
+        }
     }
 
     Ok(files)
@@ -670,8 +779,12 @@ pub fn generate_deepseek_skills(
             );
         }
 
+        add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+            files.push(policy);
+        }
     }
 
     Ok(files)
@@ -701,8 +814,12 @@ pub fn generate_gemini_skills(
         }
         // Gemini docs: "do not include any other fields" — no allowed-tools
 
+        add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+            files.push(policy);
+        }
     }
 
     Ok(files)
@@ -719,6 +836,7 @@ mod tests {
             description: "Deploy the app".to_string(),
             content: "Run npm run deploy".to_string(),
             allowed_tools: vec!["Bash".to_string()],
+            ..Default::default()
         }];
         let files = generate_claude_skills(Path::new("/tmp/test"), &skills).unwrap();
         assert_eq!(files.len(), 1);
@@ -736,6 +854,7 @@ mod tests {
             description: "Deploy the app".to_string(),
             content: "Run npm run deploy".to_string(),
             allowed_tools: vec!["shell".to_string(), "bash".to_string()],
+            ..Default::default()
         }];
         let files = generate_copilot_skills(Path::new("/tmp/test"), &skills).unwrap();
         assert_eq!(files.len(), 1);

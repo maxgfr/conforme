@@ -164,6 +164,7 @@ mod tests {
                 description: "Deploy".to_string(),
                 content: "Run deploy.".to_string(),
                 allowed_tools: vec!["Bash".to_string()],
+                ..Default::default()
             }],
             ..Default::default()
         };

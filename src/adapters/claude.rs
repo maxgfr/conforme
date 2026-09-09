@@ -160,6 +160,9 @@ impl AiToolAdapter for ClaudeAdapter {
                             description,
                             content: body.trim().to_string(),
                             allowed_tools,
+                            manual_invocation: crate::skills::read_manual_invocation(
+                                &fields, &skill_dir,
+                            )?,
                         });
                     }
                 }
@@ -194,6 +197,10 @@ impl AiToolAdapter for ClaudeAdapter {
                         description,
                         content: body.trim().to_string(),
                         allowed_tools,
+                        manual_invocation: fields
+                            .get("disable-model-invocation")
+                            .and_then(|v| v.as_bool())
+                            == Some(true),
                     });
                 }
             }
@@ -444,6 +451,7 @@ mod tests {
                 description: "Deploy app".to_string(),
                 content: "Run deploy.".to_string(),
                 allowed_tools: vec!["Bash".to_string()],
+                ..Default::default()
             }],
             mcp_servers: vec![],
             agents: vec![],

@@ -22,12 +22,14 @@ pub struct NormalizedRule {
 }
 
 /// A normalized skill (reusable prompt template).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct NormalizedSkill {
     pub name: String,
     pub description: String,
     pub content: String,
     pub allowed_tools: Vec<String>,
+    /// Keep this skill available only through explicit user invocation.
+    pub manual_invocation: bool,
 }
 
 /// A normalized MCP server definition.

@@ -49,6 +49,7 @@ src/
                        - parse_mcp_json reads back mcpServers / servers / context_servers / amp.mcpServers
                        - OpenCode needs its own inverse (parse_opencode_mcp_object / parse_opencode_agent_object)
   skills.rs         — Skills (SKILL.md) and agents generation per tool; shared read helpers
+                       preserve manual_invocation and Codex policy sidecars across sync
                        (read_skills_from_dir, read_agents_from_dir, parse_frontmatter_tool_list)
                        used by adapters to round-trip skills/agents on read()
   adapters/
@@ -112,6 +113,7 @@ Also supports `## Skill:`, `## Agent:`, and `## MCP:` sections:
 ```markdown
 ## Skill: deploy
 <!-- description: Deploy the app -->
+<!-- invocation: manual -->
 <!-- tools: Bash -->
 Run npm run deploy.
 
@@ -285,6 +287,7 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 
 ## Skill: verify-providers
 <!-- description: Verify all 14 provider adapters against their official documentation and fix any discrepancies -->
+<!-- invocation: manual -->
 <!-- tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Edit, Write -->
 
 Audit every conforme provider adapter against the latest upstream documentation.

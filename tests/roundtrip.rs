@@ -21,6 +21,7 @@ fn rich_config() -> NormalizedConfig {
             description: "Deploy the app".to_string(),
             content: "Run deploy.".to_string(),
             allowed_tools: vec![],
+            ..Default::default()
         }],
         agents: vec![NormalizedAgent {
             name: "reviewer".to_string(),
@@ -714,4 +715,88 @@ fn test_roocode_reads_nested_rules() {
     assert_eq!(config.instructions, "General.");
     assert_eq!(config.rules.len(), 1, "nested rule dropped");
     assert_eq!(config.rules[0].name, "01-style");
+}
+
+#[test]
+fn manual_skill_invocation_survives_every_skill_adapter() {
+    for adapter in conforme::adapters::all_adapters() {
+        if !adapter.capabilities().skills {
+            continue;
+        }
+        let dir = TempDir::new().unwrap();
+        let config = NormalizedConfig {
+            skills: vec![NormalizedSkill {
+                name: "manual-review".into(),
+                description: "Review on explicit request".into(),
+                content: "Review the selected change.".into(),
+                manual_invocation: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        adapter.write(dir.path(), &config).unwrap();
+        let read = adapter.read(dir.path()).unwrap();
+        assert_eq!(read.skills.len(), 1, "{}", adapter.id());
+        assert!(read.skills[0].manual_invocation, "{}", adapter.id());
+        let files = adapter.generate(dir.path(), &config).unwrap();
+        let policy = files
+            .iter()
+            .find(|(p, _)| p.ends_with("agents/openai.yaml"))
+            .unwrap();
+        let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(&policy.1).unwrap();
+        assert_eq!(
+            value["policy"]["allow_implicit_invocation"].as_bool(),
+            Some(false)
+        );
+        // Synchronizing twice must not re-enable the skill or change the bundle.
+        assert!(
+            adapter
+                .write(dir.path(), &read)
+                .unwrap()
+                .files_written
+                .is_empty(),
+            "{}",
+            adapter.id()
+        );
+    }
+}
+
+#[test]
+fn manual_skill_markdown_roundtrip() {
+    let input = "## Skill: review\n<!-- description: Review a change -->\n<!-- invocation: manual -->\n\nReview.\n";
+    let config = conforme::markdown::parse_agents_md(input).unwrap();
+    assert!(config.skills[0].manual_invocation);
+    let text = conforme::markdown::export_as_agents_md(&config);
+    assert!(conforme::markdown::parse_agents_md(&text).unwrap().skills[0].manual_invocation);
+}
+
+#[test]
+fn codex_policy_import_and_explicit_reenable_preserve_other_fields() {
+    let dir = TempDir::new().unwrap();
+    let skill_dir = dir.path().join(".agents/skills/review");
+    fs::create_dir_all(skill_dir.join("agents")).unwrap();
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: review\ndescription: Review\n---\nReview.\n",
+    )
+    .unwrap();
+    let policy = skill_dir.join("agents/openai.yaml");
+    fs::write(
+        &policy,
+        "interface:\n  display_name: Review\npolicy:\n  allow_implicit_invocation: false\n",
+    )
+    .unwrap();
+    let adapter = conforme::adapters::codex::CodexAdapter;
+    let mut config = adapter.read(dir.path()).unwrap();
+    assert!(config.skills[0].manual_invocation);
+    config.skills[0].manual_invocation = false;
+    adapter.write(dir.path(), &config).unwrap();
+    let value: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&fs::read_to_string(policy).unwrap()).unwrap();
+    assert_eq!(
+        value["policy"]["allow_implicit_invocation"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(value["interface"]["display_name"].as_str(), Some("Review"));
+    assert!(!adapter.read(dir.path()).unwrap().skills[0].manual_invocation);
 }

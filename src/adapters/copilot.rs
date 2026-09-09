@@ -139,6 +139,7 @@ impl AiToolAdapter for CopilotAdapter {
                         description,
                         content: body.trim().to_string(),
                         allowed_tools,
+                        ..Default::default()
                     });
                 }
             }
@@ -357,6 +358,7 @@ mod tests {
                 description: "Deploy app".to_string(),
                 content: "Run deploy.".to_string(),
                 allowed_tools: vec!["Bash".to_string()],
+                ..Default::default()
             }],
             mcp_servers: vec![],
             agents: vec![],

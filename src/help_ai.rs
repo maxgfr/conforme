@@ -117,6 +117,7 @@ pub fn print_help_ai() {
             "Config at ~/.codex/config.toml (global) or .codex/config.toml (project)",
             "MCP merged into project .codex/config.toml as [mcp_servers.<name>] tables",
             "Skills synced to .agents/skills/<name>/SKILL.md",
+            "Manual skills preserve their Codex agents/openai.yaml invocation policy",
         ],
     );
     print_tool(
@@ -124,7 +125,7 @@ pub fn print_help_ai() {
         "opencode",
         "AGENTS.md (native) + opencode.json",
         &[
-            "Skills synced to .opencode/skills/<name>/SKILL.md (name + description only)",
+            "Skills synced to .opencode/skills/<name>/SKILL.md (name, description, and manual invocation metadata)",
             "MCP merged into opencode.json under `mcp` key (type:local/remote, command as single array, key `environment`)",
             "Agents merged into opencode.json under `agent` key + per-agent .opencode/agents/<name>.md",
             "Also scans .claude/skills/, .agents/skills/",
@@ -136,7 +137,7 @@ pub fn print_help_ai() {
         "GEMINI.md + .gemini/settings.json",
         &[
             "Hierarchical: ~/.gemini/GEMINI.md → project → subdirs",
-            "Skills synced to .gemini/skills/<name>/SKILL.md (name + description only)",
+            "Skills synced to .gemini/skills/<name>/SKILL.md (name, description, and manual invocation metadata)",
             "Agents synced to .gemini/agents/<name>.md (kind:local frontmatter)",
             "MCP synced to .gemini/settings.json (Gemini format: no type field, httpUrl for HTTP)",
             "Supports @file.md imports",

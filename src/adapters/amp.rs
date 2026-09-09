@@ -155,6 +155,7 @@ mod tests {
                 description: "Deploy the app".to_string(),
                 content: "Run deploy.".to_string(),
                 allowed_tools: vec![],
+                ..Default::default()
             }],
             ..Default::default()
         };
