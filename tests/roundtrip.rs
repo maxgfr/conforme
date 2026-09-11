@@ -106,7 +106,6 @@ fn setup_tool(dir: &TempDir, tool: &str) {
         "continue" => fs::create_dir_all(dir.path().join(".continue")).unwrap(),
         "kiro" => fs::create_dir_all(dir.path().join(".kiro")).unwrap(),
         "roocode" => fs::create_dir_all(dir.path().join(".roo")).unwrap(),
-        "amazonq" => fs::create_dir_all(dir.path().join(".amazonq")).unwrap(),
         _ => {}
     }
 }
@@ -244,29 +243,6 @@ fn test_roundtrip_roocode() {
 }
 
 #[test]
-fn test_roundtrip_amazonq() {
-    let adapter = conforme::adapters::amazonq::AmazonQAdapter;
-    let dir = TempDir::new().unwrap();
-    setup_tool(&dir, "amazonq");
-
-    let config = NormalizedConfig {
-        instructions: "Follow AWS best practices.".to_string(),
-        rules: vec![NormalizedRule {
-            name: "Security".to_string(),
-            content: "Use IAM roles.".to_string(),
-            activation: ActivationMode::Always,
-        }],
-        ..Default::default()
-    };
-    adapter.write(dir.path(), &config).unwrap();
-    let read_config = adapter.read(dir.path()).unwrap();
-
-    assert_eq!(read_config.instructions, "Follow AWS best practices.");
-    assert_eq!(read_config.rules.len(), 1);
-    assert!(read_config.rules[0].content.contains("Use IAM roles."));
-}
-
-#[test]
 fn test_roundtrip_claude_agent_color() {
     // Claude-specific color + permissionMode must survive write → read.
     let adapter = conforme::adapters::claude::ClaudeAdapter;
@@ -332,21 +308,6 @@ fn test_roundtrip_copilot_skills_agents_mcp() {
         find_http_url(&read_config, "api").as_deref(),
         Some("https://example.com/mcp")
     );
-}
-
-#[test]
-fn test_roundtrip_amazonq_agents_mcp() {
-    let adapter = conforme::adapters::amazonq::AmazonQAdapter;
-    let dir = TempDir::new().unwrap();
-    setup_tool(&dir, "amazonq");
-
-    adapter.write(dir.path(), &rich_config()).unwrap();
-    let read_config = adapter.read(dir.path()).unwrap();
-
-    assert_eq!(read_config.agents.len(), 1);
-    assert_eq!(read_config.agents[0].name, "reviewer");
-    assert_eq!(read_config.agents[0].content, "Look for bugs.");
-    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
 }
 
 #[test]

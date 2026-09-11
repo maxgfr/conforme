@@ -93,17 +93,6 @@ pub fn print_help_ai() {
             "Reads AGENTS.md natively",
         ],
     );
-    print_tool(
-        "Amazon Q",
-        "amazonq",
-        ".amazonq/rules/*.md",
-        &[
-            "Plain Markdown — NO frontmatter",
-            "Agents synced to .amazonq/cli-agents/<name>.json (JSON format)",
-            "DEPRECATED upstream: the Q CLI is now the Kiro CLI (reads .amazonq/, prefers .kiro/)",
-            "Keep only for the Amazon Q IDE plugin; otherwise target `kiro`",
-        ],
-    );
     println!();
     println!(
         "{}",
