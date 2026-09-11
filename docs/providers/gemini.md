@@ -46,7 +46,7 @@ No activation modes. Single GEMINI.md file, all content always-on.
   - HTTP servers use `httpUrl` (not `url`)
   - Headers supported for HTTP
   - `.gemini/settings.json` is the general Gemini settings file (theme, `context.fileName`, …), so conforme **merges** the `mcpServers` key into any existing file rather than overwriting it
-- Agent frontmatter includes `kind: local` (required; `kind` also accepts `remote`)
+- Agent frontmatter includes `kind: local`. `kind` is **optional** upstream and already defaults to `local` (the other accepted value is `remote`); conforme emits it explicitly so the transport is unambiguous on a round-trip. Only `name` and `description` are required
 - Agent frontmatter also supports `temperature`, `max_turns`, `timeout_mins`, and `mcpServers`; `model` defaults to `inherit`
 - Hierarchical: `~/.gemini/GEMINI.md` -> project -> subdirs
 - Supports `@file.md` imports in GEMINI.md

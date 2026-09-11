@@ -100,7 +100,7 @@ pub fn print_help_ai() {
         &[
             "Plain Markdown — NO frontmatter",
             "Agents synced to .amazonq/cli-agents/<name>.json (JSON format)",
-            "IDE version; CLI version migrating to Kiro format",
+            "IDE plugin only — the Q CLI is now the Kiro CLI, which still reads .amazonq/",
         ],
     );
     println!();

@@ -51,6 +51,9 @@
 - **Skills moved to `.github/skills/`**: GitHub documents Copilot skills as `SKILL.md` folders under `.github/skills/` (also `.claude/skills/` and `.agents/skills/`), for both Copilot CLI and the cloud agent. conforme previously emitted skills as `.github/prompts/<name>.prompt.md`; prompt files are a distinct VS Code feature, so conforme now writes `.github/skills/` and cleans up stale generated `.prompt.md` files. `read()` still falls back to `.github/prompts/` when no `.github/skills/` entries exist, so an un-migrated project is not silently emptied
 - Prompts have optional `agent` field (values: `ask`, `edit`, `agent`, `plan`, or custom agent name)
 - Additional optional fields on instructions: `name`, `description`, `excludeAgent`
-- Additional optional fields on agents: `handoffs`, `mcp-servers`, `target`, `user-invocable`, `disable-model-invocation`, `metadata`
+- Additional optional fields on agents: `handoffs`, `mcp-servers`, `target` (`vscode` / `github-copilot`, both when unset), `user-invocable`, `disable-model-invocation`, `metadata`
 - `handoffs` is not supported on the Copilot cloud agent on GitHub.com (CLI only)
+- Agent files are accepted as `<name>.agent.md` **or** plain `<name>.md`; the filename minus extension is what deduplicates an agent across config levels. conforme writes the `.agent.md` form
+- `infer` is a retired agent field, superseded by `disable-model-invocation`; conforme emits neither
+- Agent prompt bodies are capped at 30,000 characters upstream
 - Copilot now has hooks support (CLI and cloud agent) -- not synced by conforme
