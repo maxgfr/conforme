@@ -397,62 +397,6 @@ pub fn generate_copilot_mcp_json(servers: &[NormalizedMcpServer]) -> Result<Stri
     serde_json::to_string_pretty(&root).context("failed to serialize Copilot MCP config")
 }
 
-/// Generate Windsurf MCP format (used inside the `mcp` object of opencode.json or standalone).
-/// Windsurf infers transport from shape: stdio uses `command`/`args`, HTTP uses `serverUrl`.
-/// No `type` field is emitted (Windsurf does not document one).
-pub fn generate_windsurf_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
-    if servers.is_empty() {
-        return Ok(String::new());
-    }
-
-    let mut mcp_servers = serde_json::Map::new();
-
-    for server in servers {
-        let mut entry = serde_json::Map::new();
-
-        match &server.transport {
-            McpTransport::Stdio { command, args } => {
-                entry.insert(
-                    "command".to_string(),
-                    serde_json::Value::String(command.clone()),
-                );
-                let json_args: Vec<serde_json::Value> = args
-                    .iter()
-                    .map(|a| serde_json::Value::String(a.clone()))
-                    .collect();
-                entry.insert("args".to_string(), serde_json::Value::Array(json_args));
-            }
-            McpTransport::Http { url, headers } => {
-                entry.insert(
-                    "serverUrl".to_string(),
-                    serde_json::Value::String(url.clone()),
-                );
-                if !headers.is_empty() {
-                    let h: serde_json::Map<String, serde_json::Value> = headers
-                        .iter()
-                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                        .collect();
-                    entry.insert("headers".to_string(), serde_json::Value::Object(h));
-                }
-            }
-        }
-
-        if !server.env.is_empty() {
-            let env_obj: serde_json::Map<String, serde_json::Value> = server
-                .env
-                .iter()
-                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                .collect();
-            entry.insert("env".to_string(), serde_json::Value::Object(env_obj));
-        }
-
-        mcp_servers.insert(server.name.clone(), serde_json::Value::Object(entry));
-    }
-
-    let root = serde_json::json!({ "mcpServers": mcp_servers });
-    serde_json::to_string_pretty(&root).context("failed to serialize Windsurf MCP config")
-}
-
 /// Build the OpenCode `mcp` object (not a full file — `opencode.json` is merged by the adapter).
 /// OpenCode format: stdio uses `command: [cmd, ...args]` as a single array;
 /// env var key is `environment` (not `env`); remote servers use `url`.
@@ -877,7 +821,8 @@ pub fn generate_amazonq_agents_json(
 /// emits — `mcpServers` (standard), `servers` (Copilot/VS Code),
 /// `context_servers` (Zed) and `amp.mcpServers` (Amp) — and infers the transport
 /// from the entry's shape when there is no explicit `type` field (Gemini
-/// `httpUrl`, Windsurf `serverUrl`, Zed/Amp remote `url`).
+/// `httpUrl`, Zed/Amp remote `url`; a Windsurf-style `serverUrl` is also
+/// accepted for hand-written files).
 pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
     let root: serde_json::Value =
         serde_json::from_str(content).context("failed to parse MCP JSON")?;
@@ -1443,40 +1388,6 @@ bearer_token_env_var = "MCP_TOKEN"
             "https://api.example.com/mcp"
         );
         assert!(entry.get("headers").is_some());
-    }
-
-    #[test]
-    fn test_generate_windsurf_mcp_stdio() {
-        let servers = vec![NormalizedMcpServer {
-            name: "fs".to_string(),
-            transport: McpTransport::Stdio {
-                command: "npx".to_string(),
-                args: vec!["-y".to_string(), "@mcp/fs".to_string()],
-            },
-            env: BTreeMap::new(),
-        }];
-        let result = generate_windsurf_mcp_json(&servers).unwrap();
-        assert!(result.contains("\"mcpServers\""));
-        assert!(result.contains("\"command\": \"npx\""));
-        // Windsurf does NOT use "type" field
-        assert!(!result.contains("\"type\""));
-    }
-
-    #[test]
-    fn test_generate_windsurf_mcp_http() {
-        let servers = vec![NormalizedMcpServer {
-            name: "api".to_string(),
-            transport: McpTransport::Http {
-                url: "https://example.com/mcp".to_string(),
-                headers: BTreeMap::new(),
-            },
-            env: BTreeMap::new(),
-        }];
-        let result = generate_windsurf_mcp_json(&servers).unwrap();
-        // Windsurf uses "serverUrl" not "url"
-        assert!(result.contains("\"serverUrl\": \"https://example.com/mcp\""));
-        assert!(!result.contains("\"\"url\""));
-        assert!(!result.contains("\"type\""));
     }
 
     #[test]

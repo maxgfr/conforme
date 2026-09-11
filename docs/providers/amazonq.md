@@ -54,6 +54,10 @@ settings; when a project has both, `.kiro/` wins and newly saved agents go to
 `.kiro/`. So a project synced by conforme to both `amazonq` and `kiro` is resolved
 in Kiro's favour, which is the intended precedence — keep both targets enabled
 only if the project still opens in the Amazon Q IDE plugin.
+
+conforme marks this adapter as **deprecated upstream**: `conforme status` tags
+the row and `conforme sync` prints a one-line warning when it writes to this
+target. Behaviour is otherwise unchanged; nothing is removed.
 - The AWS guide retired its `command-line-custom-agents*.html` pages (they now redirect to the guide index); the `aws/amazon-q-developer-cli` `agent-format.md` reference is the canonical agent schema
 - `.amazonq/mcp.json` is AWS's **legacy** MCP location: an agent picks it up only with `"useLegacyMcpJson": true`, which is exactly why conforme sets that flag on every agent it generates. Agent-embedded `mcpServers` is the modern form
 - IDE version migrating to Kiro format

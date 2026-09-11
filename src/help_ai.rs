@@ -46,7 +46,7 @@ pub fn print_help_ai() {
             "Rules written to .devin/rules/ when a .devin/ directory exists, else .windsurf/rules/",
             "Skills synced to .windsurf/skills/<name>/SKILL.md",
             "Reads AGENTS.md natively",
-            "MCP synced to .windsurf/mcp.json (project-level)",
+            "No project-level MCP: Cascade only reads ~/.codeium/windsurf/mcp_config.json",
         ],
     );
     print_tool(
@@ -100,7 +100,8 @@ pub fn print_help_ai() {
         &[
             "Plain Markdown — NO frontmatter",
             "Agents synced to .amazonq/cli-agents/<name>.json (JSON format)",
-            "IDE plugin only — the Q CLI is now the Kiro CLI, which still reads .amazonq/",
+            "DEPRECATED upstream: the Q CLI is now the Kiro CLI (reads .amazonq/, prefers .kiro/)",
+            "Keep only for the Amazon Q IDE plugin; otherwise target `kiro`",
         ],
     );
     println!();

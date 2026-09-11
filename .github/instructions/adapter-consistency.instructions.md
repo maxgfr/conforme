@@ -7,9 +7,12 @@ applyTo: src/adapters/**, src/mcp.rs, src/skills.rs, docs/providers/**
 - When adding a new adapter, update ALL of: README.md tables, src/help_ai.rs, src/cli.rs tool count, CLAUDE.md architecture section
 - Provider docs must list all official documentation URLs for the tool
 - Test round-trips: `read()` output fed into `generate()` should produce identical files
-- MCP JSON keys per tool: Claude/Windsurf/Kiro/RooCode/AmazonQ/Gemini/Cursor/Continue.dev = `mcpServers`, Copilot = `servers`, OpenCode = `mcp` (inside `opencode.json`), Zed = `context_servers`, Amp = `amp.mcpServers`
+- MCP JSON keys per tool: Claude/Kiro/RooCode/AmazonQ/Gemini/Cursor/Continue.dev = `mcpServers`, Copilot = `servers`, OpenCode = `mcp` (inside `opencode.json`), Zed = `context_servers`, Amp = `amp.mcpServers`
 - OpenCode MCP specifics: `command` is a single array `[cmd, ...args]`, env key is `environment` (not `env`), servers live inside `opencode.json` at project root (conforme merges — never clobber user-authored keys)
-- Windsurf MCP specifics: no `type` field; HTTP transport uses `serverUrl` (not `url`)
+- Windsurf has NO project-level MCP file (Cascade only reads `~/.codeium/windsurf/mcp_config.json`); never generate `.windsurf/mcp.json`
+- Never add a user-authored directory (e.g. `.github/prompts/`) to `managed_directories()`: orphan cleanup deletes every file there that conforme did not generate
+- An adapter must generate no files for an empty config and never a blank file (guarded by `test_no_adapter_writes_blank_files`)
+- An adapter whose upstream tool is retired implements `deprecation_notice()`; `status` and `sync` surface it
 - Amp MCP specifics: dotted `amp.mcpServers` key, no `type` field, merged into `.amp/settings.json` (never clobber user settings)
 - Cursor subagents: `.md` extension (not `.mdc`); no `tools` frontmatter field — tool access is inherited from the parent agent
 - Copilot skills: `.github/skills/<name>/SKILL.md` (NOT `.github/prompts/*.prompt.md` — prompt files are a separate VS Code feature)

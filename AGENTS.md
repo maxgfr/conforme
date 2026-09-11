@@ -41,7 +41,6 @@ src/
                        - Continue.dev: mcpServers, HTTP uses type "streamable-http" (bare "http" is rejected) — generate_continue_mcp_json
                        - Claude .mcp.json parsing accepts http/https, sse, streamable-http, and ws transports (all mapped to the HTTP variant)
                        - Copilot: "servers" key (env + headers supported)
-                       - Windsurf: mcpServers, no type field, serverUrl for HTTP
                        - OpenCode: "mcp" key merged into opencode.json, type local/remote, command as array, `environment` key
                        - Zed: "context_servers" key
                        - Gemini: mcpServers, no type field, httpUrl for HTTP
@@ -66,7 +65,8 @@ src/
     gemini.rs       — Gemini CLI: GEMINI.md
     continuedev.rs  — Continue.dev: .continue/rules/*.md (name/globs/alwaysApply)
     zed.rs          — Zed AI: .rules file
-    amazonq.rs      — Amazon Q: .amazonq/rules/*.md
+    amazonq.rs      — Amazon Q: .amazonq/rules/*.md (deprecated upstream: the Q CLI became the Kiro CLI;
+                       implements deprecation_notice(), surfaced by status/sync)
     kiro.rs         — Kiro (AWS): .kiro/steering/*.md (inclusion/fileMatchPattern)
     amp.rs          — Amp (Sourcegraph): reads AGENTS.md natively
     deepseek.rs     — DeepSeek Harness (dsh): reads AGENTS.md natively; skills at .dsh/skills/<name>/SKILL.md
@@ -155,7 +155,7 @@ Review for bugs.
 | Roo Code | `mcpServers` | Standard format; HTTP uses `type: streamable-http` (not `http`) |
 | Continue.dev | `mcpServers` (inside `.continue/mcpServers/mcp.json`) | HTTP uses `type: streamable-http` (bare `http` is rejected) |
 | Copilot | `servers` | VS Code format; supports `env` + `headers` |
-| Windsurf | `mcpServers` | No `type` field; HTTP uses `serverUrl` (not `url`) |
+| Windsurf | _(none)_ | Cascade only reads the user-global `~/.codeium/windsurf/mcp_config.json`; nothing project-scoped is generated |
 | OpenCode | `mcp` (inside `opencode.json`) | `type: local/remote`; `command` is a single array; env key is `environment`; merged (preserves user keys) |
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; merged into existing settings (preserves theme/keybindings/etc.) |
 | Gemini | `mcpServers` (inside `.gemini/settings.json`) | No type field, uses `httpUrl` for HTTP; merged into existing settings |
@@ -256,9 +256,12 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - When adding a new adapter, update ALL of: README.md tables, src/help_ai.rs, src/cli.rs tool count, CLAUDE.md architecture section
 - Provider docs must list all official documentation URLs for the tool
 - Test round-trips: `read()` output fed into `generate()` should produce identical files
-- MCP JSON keys per tool: Claude/Windsurf/Kiro/RooCode/AmazonQ/Gemini/Cursor/Continue.dev = `mcpServers`, Copilot = `servers`, OpenCode = `mcp` (inside `opencode.json`), Zed = `context_servers`, Amp = `amp.mcpServers`
+- MCP JSON keys per tool: Claude/Kiro/RooCode/AmazonQ/Gemini/Cursor/Continue.dev = `mcpServers`, Copilot = `servers`, OpenCode = `mcp` (inside `opencode.json`), Zed = `context_servers`, Amp = `amp.mcpServers`
 - OpenCode MCP specifics: `command` is a single array `[cmd, ...args]`, env key is `environment` (not `env`), servers live inside `opencode.json` at project root (conforme merges — never clobber user-authored keys)
-- Windsurf MCP specifics: no `type` field; HTTP transport uses `serverUrl` (not `url`)
+- Windsurf has NO project-level MCP file (Cascade only reads `~/.codeium/windsurf/mcp_config.json`); never generate `.windsurf/mcp.json`
+- Never add a user-authored directory (e.g. `.github/prompts/`) to `managed_directories()`: orphan cleanup deletes every file there that conforme did not generate
+- An adapter must generate no files for an empty config and never a blank file (guarded by `test_no_adapter_writes_blank_files`)
+- An adapter whose upstream tool is retired implements `deprecation_notice()`; `status` and `sync` surface it
 - Amp MCP specifics: dotted `amp.mcpServers` key, no `type` field, merged into `.amp/settings.json` (never clobber user settings)
 - Cursor subagents: `.md` extension (not `.mdc`); no `tools` frontmatter field — tool access is inherited from the parent agent
 - Copilot skills: `.github/skills/<name>/SKILL.md` (NOT `.github/prompts/*.prompt.md` — prompt files are a separate VS Code feature)

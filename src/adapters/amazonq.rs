@@ -22,6 +22,13 @@ impl AiToolAdapter for AmazonQAdapter {
         project_root.join(".amazonq").is_dir()
     }
 
+    fn deprecation_notice(&self) -> Option<&str> {
+        Some(
+            "the Amazon Q CLI is now the Kiro CLI, which reads .amazonq/ but prefers .kiro/; \
+             keep this target only for the Amazon Q IDE plugin, otherwise use `kiro`",
+        )
+    }
+
     fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
         crate::adapters::AdapterCapabilities {
             activation_modes: false,

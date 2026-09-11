@@ -40,7 +40,7 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 | Continue.dev | `.continue/rules/*.md` | `name`, `globs` (array), `alwaysApply` | Not yet |
 | Kiro (AWS) | `.kiro/steering/*.md` | `inclusion`, `fileMatchPattern`, `name`, `description` | Native |
 | Roo Code / Cline | `.roo/rules/*.md` | None (plain Markdown) | Native |
-| Amazon Q | `.amazonq/rules/*.md` | None (plain Markdown) | N/A |
+| Amazon Q (deprecated upstream, now Kiro CLI) | `.amazonq/rules/*.md` | None (plain Markdown) | N/A |
 
 ### Tools that read AGENTS.md natively (single-file sync)
 
@@ -166,7 +166,7 @@ Review all changes for correctness and security.
 | GitHub Copilot | `.github/instructions/*.md` | `.github/skills/` | `.github/agents/*.agent.md` | `.vscode/mcp.json` |
 | Cursor | `.cursor/rules/*.mdc` | `.cursor/skills/` | `.cursor/agents/*.md` | `.cursor/mcp.json` |
 | Kiro (AWS) | `.kiro/steering/*.md` | `.kiro/skills/` | `.kiro/agents/*.md` | `.kiro/settings/mcp.json` |
-| Windsurf | `.devin/rules/*.md` or `.windsurf/rules/*.md` | `.windsurf/skills/` | - | `.windsurf/mcp.json` |
+| Windsurf | `.devin/rules/*.md` or `.windsurf/rules/*.md` | `.windsurf/skills/` | - | - |
 | Continue.dev | `.continue/rules/*.md` | - | - | `.continue/mcpServers/mcp.json` |
 | Roo Code | `.roo/rules/*.md` | `.roo/skills/` | - | `.roo/mcp.json` |
 | Amazon Q | `.amazonq/rules/*.md` | - | `.amazonq/cli-agents/*.json` | `.amazonq/mcp.json` |
@@ -223,12 +223,12 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 |------|------|----------|-------------|
 | Claude Code | `.mcp.json` | `mcpServers` | `type: stdio/http`, with `env`, `headers` |
 | Cursor | `.cursor/mcp.json` | `mcpServers` | `type: stdio/http` |
-| Windsurf | `.windsurf/mcp.json` (best-effort project) / `~/.codeium/windsurf/mcp_config.json` (global) | `mcpServers` | No `type` field; HTTP uses `serverUrl` (not `url`) |
+| Windsurf | _(none)_ | - | Cascade only reads the user-global `~/.codeium/windsurf/mcp_config.json`; no project-level file exists, so conforme generates nothing |
 | Copilot | `.vscode/mcp.json` | `servers` | Uses `servers` key (not `mcpServers`); supports `env` + `headers` |
 | Continue.dev | `.continue/mcpServers/mcp.json` | `mcpServers` | HTTP uses `type: streamable-http` (a bare `http` is rejected) |
 | Kiro | `.kiro/settings/mcp.json` | `mcpServers` | Standard format |
 | Roo Code | `.roo/mcp.json` | `mcpServers` | HTTP uses `type: streamable-http` (not `http`); legacy alias `sse` |
-| Amazon Q | `.amazonq/mcp.json` | `mcpServers` | Standard format (legacy workspace MCP file) |
+| Amazon Q | `.amazonq/mcp.json` | `mcpServers` | Standard format (legacy workspace MCP file). The Q CLI is now the Kiro CLI, which still reads `.amazonq/` but prefers `.kiro/`; `status` and `sync` flag this target as deprecated |
 | Gemini CLI | `.gemini/settings.json` (merged) | `mcpServers` | No `type` field, uses `httpUrl` (not `url`) for HTTP |
 | OpenCode | `opencode.json` (merged) | `mcp` | `type: local/remote`; `command` as single array; env key is `environment` |
 | Zed AI | `.zed/settings.json` (merged) | `context_servers` | No `type` field; remote uses `url` + `headers` |

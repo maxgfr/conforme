@@ -44,7 +44,6 @@ src/
                        - Continue.dev: mcpServers, HTTP uses type "streamable-http" (bare "http" is rejected) — generate_continue_mcp_json
                        - Claude .mcp.json parsing accepts http/https, sse, streamable-http, and ws transports (all mapped to the HTTP variant)
                        - Copilot: "servers" key (env + headers supported)
-                       - Windsurf: mcpServers, no type field, serverUrl for HTTP
                        - OpenCode: "mcp" key merged into opencode.json, type local/remote, command as array, `environment` key
                        - Zed: "context_servers" key
                        - Gemini: mcpServers, no type field, httpUrl for HTTP
@@ -69,7 +68,8 @@ src/
     gemini.rs       — Gemini CLI: GEMINI.md
     continuedev.rs  — Continue.dev: .continue/rules/*.md (name/globs/alwaysApply)
     zed.rs          — Zed AI: .rules file
-    amazonq.rs      — Amazon Q: .amazonq/rules/*.md
+    amazonq.rs      — Amazon Q: .amazonq/rules/*.md (deprecated upstream: the Q CLI became the Kiro CLI;
+                       implements deprecation_notice(), surfaced by status/sync)
     kiro.rs         — Kiro (AWS): .kiro/steering/*.md (inclusion/fileMatchPattern)
     amp.rs          — Amp (Sourcegraph): reads AGENTS.md natively
     deepseek.rs     — DeepSeek Harness (dsh): reads AGENTS.md natively; skills at .dsh/skills/<name>/SKILL.md
@@ -158,7 +158,7 @@ Review for bugs.
 | Roo Code | `mcpServers` | Standard format; HTTP uses `type: streamable-http` (not `http`) |
 | Continue.dev | `mcpServers` (inside `.continue/mcpServers/mcp.json`) | HTTP uses `type: streamable-http` (bare `http` is rejected) |
 | Copilot | `servers` | VS Code format; supports `env` + `headers` |
-| Windsurf | `mcpServers` | No `type` field; HTTP uses `serverUrl` (not `url`) |
+| Windsurf | _(none)_ | Cascade only reads the user-global `~/.codeium/windsurf/mcp_config.json`; nothing project-scoped is generated |
 | OpenCode | `mcp` (inside `opencode.json`) | `type: local/remote`; `command` is a single array; env key is `environment`; merged (preserves user keys) |
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; merged into existing settings (preserves theme/keybindings/etc.) |
 | Gemini | `mcpServers` (inside `.gemini/settings.json`) | No type field, uses `httpUrl` for HTTP; merged into existing settings |

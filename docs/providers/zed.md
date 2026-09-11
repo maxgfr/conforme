@@ -49,4 +49,4 @@ Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` 
 - The old `zed.dev/docs/ai/rules` page is gone (404): as of Zed v1.4.0 reusable rules were replaced by **Skills** and always-on rules by **Instructions**. `.rules` itself still works as a project instruction file — it is just documented on the Instructions page now
 - Personal instructions live at `~/.config/zed/AGENTS.md` (macOS/Linux) or `%APPDATA%\Zed\AGENTS.md`; project instruction files override them
 - Zed **skills** are a documented feature: `SKILL.md` folders under `<worktree>/.agents/skills/` (project) and `~/.agents/skills/` (global). conforme syncs skills to the shared project `.agents/skills/` path (the same location Codex/Amp use) with `name` + `description` frontmatter
-- Empty config generates `.rules` with just `\n`
+- An empty config generates no `.rules` file at all (no blank file is dropped into the repository)

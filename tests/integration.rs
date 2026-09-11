@@ -1244,9 +1244,9 @@ Review all changes for bugs.
     assert!(dir.path().join(".roo/rules/00-general.md").exists());
     assert!(dir.path().join(".roo/mcp.json").exists());
 
-    // Windsurf: rules + mcp
+    // Windsurf: rules only (Cascade has no project-level MCP file)
     assert!(dir.path().join(".windsurf/rules/general.md").exists());
-    assert!(dir.path().join(".windsurf/mcp.json").exists());
+    assert!(!dir.path().join(".windsurf/mcp.json").exists());
 
     // Continue: rules + mcp
     assert!(dir.path().join(".continue/rules/general.md").exists());
