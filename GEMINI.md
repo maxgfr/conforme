@@ -220,7 +220,7 @@ conforme migrate --source X --output Y    # Migrate config between tools
 
 This project uses Claude Code skills in `.claude/skills/`:
 
-- **verify-providers** — Audit all 13 provider adapters against latest official documentation, fix discrepancies, and verify links
+- **verify-providers** — Audit all 13 provider adapters: upstream product still alive, official docs vs adapter code, safety invariants (managed dirs, shared settings files, round-trip, blank output), link check; then fix with regression tests
 
 ## MCP servers (.mcp.json)
 
