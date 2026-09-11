@@ -34,6 +34,13 @@ impl AiToolAdapter for AmpAdapter {
         }
     }
 
+    /// `.amp/settings.json` is Amp's whole workspace settings blob; conforme
+    /// only merges `amp.mcpServers` into it, so `remove`/`migrate` must
+    /// never delete the file wholesale.
+    fn is_shared_file(&self, path: &Path) -> bool {
+        path.ends_with(Path::new(".amp/settings.json"))
+    }
+
     fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
         vec![project_root.join(".agents").join("skills")]
     }

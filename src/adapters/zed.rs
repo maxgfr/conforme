@@ -32,6 +32,13 @@ impl AiToolAdapter for ZedAdapter {
         }
     }
 
+    /// `.zed/settings.json` is the user's whole Zed configuration; conforme
+    /// only merges `context_servers` into it, so `remove`/`migrate` must
+    /// never delete the file wholesale.
+    fn is_shared_file(&self, path: &Path) -> bool {
+        path.ends_with(Path::new(".zed/settings.json"))
+    }
+
     fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
         // Zed reads skills from the shared `.agents/skills/` location (same as
         // Codex/Amp), so track it for orphan cleanup.
@@ -83,7 +90,13 @@ impl AiToolAdapter for ZedAdapter {
             content.push_str(&rule.content);
         }
 
-        let mut files = vec![(project_root.join(".rules"), format!("{}\n", content.trim()))];
+        // An empty config yields no `.rules` at all rather than a blank file
+        // dropped into the user's repository.
+        let mut files = Vec::new();
+        let content = content.trim();
+        if !content.is_empty() {
+            files.push((project_root.join(".rules"), format!("{}\n", content)));
+        }
 
         // Generate skills as .agents/skills/<name>/SKILL.md (shared SKILL.md format).
         if !config.skills.is_empty() {
@@ -217,9 +230,8 @@ mod tests {
             ..Default::default()
         };
         let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].0, Path::new("/tmp/test/.rules"));
-        assert_eq!(files[0].1, "\n");
+        // No blank `.rules` file for an empty config.
+        assert!(files.is_empty());
     }
 
     #[test]

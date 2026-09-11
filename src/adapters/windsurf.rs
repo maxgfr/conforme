@@ -41,7 +41,10 @@ impl AiToolAdapter for WindsurfAdapter {
             activation_modes: true,
             skills: true,
             agents: false,
-            mcp: true,
+            // Cascade only reads the user-global
+            // ~/.codeium/windsurf/mcp_config.json; there is no project-level
+            // MCP file, so conforme has nothing project-scoped to write.
+            mcp: false,
         }
     }
 
@@ -95,21 +98,14 @@ impl AiToolAdapter for WindsurfAdapter {
             }
         }
 
-        // Read skills and MCP back so a Windsurf project round-trips as a source.
+        // Read skills back so a Windsurf project round-trips as a source.
         let skills =
             crate::skills::read_skills_from_dir(&project_root.join(".windsurf").join("skills"))?;
-        let mut mcp_servers = Vec::new();
-        let mcp_path = project_root.join(".windsurf").join("mcp.json");
-        if mcp_path.exists() {
-            let mcp_content = std::fs::read_to_string(&mcp_path)?;
-            mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
-        }
 
         Ok(NormalizedConfig {
             instructions,
             rules,
             skills,
-            mcp_servers,
             ..Default::default()
         })
     }
@@ -145,17 +141,6 @@ impl AiToolAdapter for WindsurfAdapter {
                 project_root,
                 &config.skills,
             )?);
-        }
-
-        // Generate MCP config as .windsurf/mcp.json (best-effort project-level;
-        // Windsurf's canonical MCP config is global at ~/.codeium/windsurf/mcp_config.json).
-        // Uses Windsurf-specific schema: `serverUrl` for HTTP, no `type` field.
-        if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_windsurf_mcp_json(&config.mcp_servers)?;
-            files.push((
-                project_root.join(".windsurf").join("mcp.json"),
-                format!("{}\n", mcp_json),
-            ));
         }
 
         Ok(files)
@@ -473,11 +458,10 @@ mod tests {
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
 
-        let mcp_file = files.iter().find(|(p, _)| p.ends_with("mcp.json")).unwrap();
-        assert!(mcp_file.0.to_string_lossy().contains(".windsurf/mcp.json"));
-        assert!(mcp_file.1.contains("mcpServers"));
-        assert!(mcp_file.1.contains("test-server"));
-        assert!(mcp_file.1.contains("npx"));
+        // Cascade has no project-level MCP file: MCP servers produce no
+        // output for this adapter (sync warns that they are skipped).
+        assert!(files.is_empty());
+        assert!(!adapter.capabilities().mcp);
     }
 
     #[test]

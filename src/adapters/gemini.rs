@@ -31,6 +31,13 @@ impl AiToolAdapter for GeminiAdapter {
         }
     }
 
+    /// `.gemini/settings.json` holds the user's general Gemini settings;
+    /// conforme only merges `mcpServers` into it, so `remove`/`migrate`
+    /// must never delete the file wholesale.
+    fn is_shared_file(&self, path: &Path) -> bool {
+        path.ends_with(Path::new(".gemini/settings.json"))
+    }
+
     fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
         vec![
             project_root.join(".gemini").join("agents"),

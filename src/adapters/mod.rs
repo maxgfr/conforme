@@ -57,6 +57,13 @@ pub trait AiToolAdapter: Send + Sync {
         AdapterCapabilities::default()
     }
 
+    /// A short note when the upstream tool has been retired or superseded.
+    /// Shown by `status` and `sync` so users know the target is legacy;
+    /// the adapter keeps working as before.
+    fn deprecation_notice(&self) -> Option<&str> {
+        None
+    }
+
     /// Directories managed by this adapter (for orphan cleanup).
     /// Files in these directories that are not in the generate() output will be removed.
     fn managed_directories(&self, _project_root: &Path) -> Vec<PathBuf> {

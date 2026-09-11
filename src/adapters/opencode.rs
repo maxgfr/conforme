@@ -34,15 +34,18 @@ impl AiToolAdapter for OpenCodeAdapter {
         }
     }
 
+    /// `opencode.json` is the user's whole OpenCode configuration; conforme
+    /// only merges the `mcp` and `agent` keys into it, so `remove`/`migrate`
+    /// must never delete the file wholesale.
+    fn is_shared_file(&self, path: &Path) -> bool {
+        path.file_name().is_some_and(|name| name == "opencode.json")
+    }
+
     fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
-        // Top-level `.opencode/` is tracked so legacy orphans like
-        // `.opencode/mcp.json` and `.opencode/agents.json` (paths used by
-        // earlier conforme versions) are cleaned when their config is now
-        // merged into opencode.json at the project root.
-        vec![
-            project_root.join(".opencode"),
-            project_root.join(".opencode").join("agents"),
-        ]
+        // Only the agents directory is managed. The top-level `.opencode/`
+        // also holds user-owned files (`package.json` for plugins, commands,
+        // tools, …) and must never be swept for orphans.
+        vec![project_root.join(".opencode").join("agents")]
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {

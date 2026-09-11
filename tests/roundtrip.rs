@@ -402,7 +402,7 @@ fn test_roundtrip_zed_skills_mcp() {
 }
 
 #[test]
-fn test_roundtrip_windsurf_skills_mcp() {
+fn test_roundtrip_windsurf_skills() {
     let adapter = conforme::adapters::windsurf::WindsurfAdapter;
     let dir = TempDir::new().unwrap();
     setup_tool(&dir, "windsurf");
@@ -412,13 +412,9 @@ fn test_roundtrip_windsurf_skills_mcp() {
 
     assert_eq!(read_config.skills.len(), 1);
     assert_eq!(read_config.skills[0].name, "deploy");
-    // Windsurf writes `serverUrl` and no `type` — the parser must still
-    // recognise the remote server as HTTP.
-    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
-    assert_eq!(
-        find_http_url(&read_config, "api").as_deref(),
-        Some("https://example.com/mcp")
-    );
+    // Cascade has no project-level MCP file, so nothing is written or read back.
+    assert!(!dir.path().join(".windsurf/mcp.json").exists());
+    assert!(read_config.mcp_servers.is_empty());
 }
 
 #[test]
@@ -799,4 +795,33 @@ fn codex_policy_import_and_explicit_reenable_preserve_other_fields() {
     );
     assert_eq!(value["interface"]["display_name"].as_str(), Some("Review"));
     assert!(!adapter.read(dir.path()).unwrap().skills[0].manual_invocation);
+}
+
+/// No adapter may drop an empty or whitespace-only file into a project: an
+/// empty config yields no files at all, and a full config yields no blank file.
+#[test]
+fn test_no_adapter_writes_blank_files() {
+    for adapter in conforme::adapters::all_adapters() {
+        let dir = TempDir::new().unwrap();
+
+        let files = adapter
+            .generate(dir.path(), &NormalizedConfig::default())
+            .unwrap();
+        let paths: Vec<_> = files.iter().map(|(p, _)| p.display().to_string()).collect();
+        assert!(
+            files.is_empty(),
+            "{} generated files for an empty config: {paths:?}",
+            adapter.id()
+        );
+
+        let files = adapter.generate(dir.path(), &rich_config()).unwrap();
+        for (path, content) in &files {
+            assert!(
+                !content.trim().is_empty(),
+                "{} wrote a blank file at {}",
+                adapter.id(),
+                path.display()
+            );
+        }
+    }
 }

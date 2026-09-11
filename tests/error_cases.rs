@@ -144,7 +144,7 @@ fn test_sync_empty_config() {
 // ===== MCP sync to new adapters (Windsurf, Continue, AmazonQ) =====
 
 #[test]
-fn test_sync_mcp_to_windsurf() {
+fn test_sync_mcp_to_windsurf_is_skipped_with_warning() {
     let agents_md = r#"# Instructions
 Be helpful.
 
@@ -154,15 +154,54 @@ Be helpful.
 "#;
     let dir = create_project_with_tools(agents_md, &["windsurf"]);
 
+    // Cascade reads MCP servers only from ~/.codeium/windsurf/mcp_config.json:
+    // no project file is written, and the user is told the servers were skipped.
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Windsurf does not support MCP servers",
+        ));
+
+    assert!(!dir.path().join(".windsurf/mcp.json").exists());
+    assert!(dir.path().join(".windsurf/rules/general.md").exists());
+}
+
+#[test]
+fn test_sync_copilot_preserves_user_prompt_files() {
+    let agents_md = r#"# Instructions
+Be helpful.
+
+## Skill: deploy
+<!-- description: Deploy the app -->
+
+Run npm run deploy.
+"#;
+    let dir = create_project_with_tools(agents_md, &["copilot"]);
+
+    // VS Code prompt files are a separate, user-authored feature. They live
+    // next to the generated skills but must never be treated as orphans.
+    let prompts_dir = dir.path().join(".github/prompts");
+    fs::create_dir_all(&prompts_dir).unwrap();
+    let user_prompt = prompts_dir.join("release-notes.prompt.md");
+    fs::write(
+        &user_prompt,
+        "---\ndescription: Draft notes\n---\nWrite notes.\n",
+    )
+    .unwrap();
+
     conforme()
         .args(["-C", dir.path().to_str().unwrap(), "sync"])
         .assert()
         .success();
 
-    assert!(dir.path().join(".windsurf/mcp.json").exists());
-    let mcp = fs::read_to_string(dir.path().join(".windsurf/mcp.json")).unwrap();
-    assert!(mcp.contains("mcpServers"));
-    assert!(mcp.contains("test-server"));
+    assert!(dir.path().join(".github/skills/deploy/SKILL.md").exists());
+    assert!(user_prompt.exists());
+    assert_eq!(
+        fs::read_to_string(&user_prompt).unwrap(),
+        "---\ndescription: Draft notes\n---\nWrite notes.\n"
+    );
 }
 
 #[test]

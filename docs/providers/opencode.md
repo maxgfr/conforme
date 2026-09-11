@@ -42,7 +42,8 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - **MCP format is unique:** uses `"mcp"` key (not `"mcpServers"`), `type: local/remote` (not `stdio/http`)
 - **Command is a single array:** `"command": ["npx", "-y", "server-name"]` (no separate `args` field)
 - **Env var key is `"environment"`** (not `"env"`)
-- MCP and `agent` blocks live inside `opencode.json` (or `opencode.jsonc`) at the project root. conforme merges into any existing `opencode.json` so user-authored keys are preserved
+- MCP and `agent` blocks live inside `opencode.json` (or `opencode.jsonc`) at the project root. conforme merges into any existing `opencode.json` so user-authored keys are preserved, and `remove opencode` / `migrate --source opencode` leave the file in place rather than deleting the user's settings with it
+- Only `.opencode/agents/` is swept for orphans. The top-level `.opencode/` also holds user-owned files (`package.json` for plugins, `commands/`, `tools/`, …) and is never cleaned
 - Markdown agents additionally emitted to `.opencode/agents/<name>.md` (OpenCode discovers per-project agents from that directory)
 - Skill frontmatter recognizes only `name`, `description`, `license`, `compatibility`, `metadata` — no `allowed-tools`
 - Skills also discovered from `.agents/skills/` and `.claude/skills/`

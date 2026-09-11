@@ -875,6 +875,110 @@ fn test_remove_codex_preserves_shared_config() {
     assert!(content.contains("[mcp_servers.filesystem]"));
 }
 
+/// Zed, Gemini, Amp and OpenCode merge MCP servers into a settings file that
+/// also holds the user's own configuration. `remove <tool>` must leave that
+/// file in place rather than deleting the user's settings along with it.
+#[test]
+fn test_remove_preserves_merged_settings_files() {
+    let agents_md = r#"# Instructions
+Be helpful.
+
+## MCP: filesystem
+<!-- command: npx -->
+"#;
+    let cases = [
+        (
+            "zed",
+            ".zed/settings.json",
+            r#"{"theme":"One Dark"}"#,
+            "One Dark",
+        ),
+        (
+            "gemini",
+            ".gemini/settings.json",
+            r#"{"theme":"GitHub"}"#,
+            "GitHub",
+        ),
+        (
+            "amp",
+            ".amp/settings.json",
+            r#"{"amp.notifications.enabled":true}"#,
+            "notifications",
+        ),
+        (
+            "opencode",
+            "opencode.json",
+            r#"{"theme":"opencode"}"#,
+            "theme",
+        ),
+    ];
+
+    for (tool, settings, user_content, user_marker) in cases {
+        let dir = create_project_with_tools(agents_md, &[tool]);
+        let settings_path = dir.path().join(settings);
+        fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+        fs::write(&settings_path, user_content).unwrap();
+
+        conforme()
+            .args(["-C", dir.path().to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+        let merged = fs::read_to_string(&settings_path).unwrap();
+        assert!(
+            merged.contains(user_marker),
+            "{tool}: user key lost on sync"
+        );
+        assert!(
+            merged.contains("filesystem"),
+            "{tool}: MCP server not merged"
+        );
+
+        conforme()
+            .args(["-C", dir.path().to_str().unwrap(), "remove", tool])
+            .assert()
+            .success();
+        assert!(
+            settings_path.exists(),
+            "{tool}: `remove` deleted the user's {settings}"
+        );
+        let after = fs::read_to_string(&settings_path).unwrap();
+        assert!(
+            after.contains(user_marker),
+            "{tool}: user key lost on remove"
+        );
+    }
+}
+
+/// The top-level `.opencode/` directory holds user-owned files next to the
+/// generated agents (`package.json` for plugins, commands, tools). Orphan
+/// cleanup must not sweep them.
+#[test]
+fn test_sync_opencode_preserves_user_files_in_dot_opencode() {
+    let agents_md = r#"# Instructions
+Be helpful.
+
+## Agent: reviewer
+<!-- description: Code review -->
+
+Review for bugs.
+"#;
+    let dir = create_project_with_tools(agents_md, &["opencode"]);
+    let package_json = dir.path().join(".opencode/package.json");
+    fs::write(&package_json, r#"{"dependencies":{"some-plugin":"1.0.0"}}"#).unwrap();
+    let command = dir.path().join(".opencode/commands/release.md");
+    fs::create_dir_all(command.parent().unwrap()).unwrap();
+    fs::write(&command, "Cut a release.\n").unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert!(dir.path().join(".opencode/agents/reviewer.md").exists());
+    assert!(package_json.exists(), "sync deleted .opencode/package.json");
+    assert!(command.exists(), "sync deleted a user command");
+}
+
 #[test]
 fn test_migrate_from_codex_preserves_shared_config() {
     let dir = TempDir::new().unwrap();
@@ -1244,9 +1348,9 @@ Review all changes for bugs.
     assert!(dir.path().join(".roo/rules/00-general.md").exists());
     assert!(dir.path().join(".roo/mcp.json").exists());
 
-    // Windsurf: rules + mcp
+    // Windsurf: rules only (Cascade has no project-level MCP file)
     assert!(dir.path().join(".windsurf/rules/general.md").exists());
-    assert!(dir.path().join(".windsurf/mcp.json").exists());
+    assert!(!dir.path().join(".windsurf/mcp.json").exists());
 
     // Continue: rules + mcp
     assert!(dir.path().join(".continue/rules/general.md").exists());

@@ -44,7 +44,7 @@ Also reads `AGENT.md` (singular) as fallback.
 - Skills support `includeTools` with glob patterns to filter exposed tools
 - Amp has custom commands in `.agents/commands/<name>.md` (not synced by conforme)
 - Amp spawns subagents internally via Task tool but does not support user-defined agent files
-- Settings at `.amp/settings.json` under `amp.mcpServers` key. That file is Amp's whole workspace settings blob, so conforme **merges** the `amp.mcpServers` key into any existing file rather than overwriting it
+- Settings at `.amp/settings.json` under `amp.mcpServers` key. That file is Amp's whole workspace settings blob, so conforme **merges** the `amp.mcpServers` key into any existing file rather than overwriting it, and `remove amp` / `migrate --source amp` leave the file in place
 - No `type` field in MCP entries — transport is inferred from the shape: stdio uses `command`/`args`, remote uses `url` (+ optional `headers`)
 - User settings live at `~/.config/amp/settings.json`; workspace settings are the nearest `.amp/settings.json` searched upward
 - Falls back to `AGENT.md` or `CLAUDE.md` if `AGENTS.md` not found

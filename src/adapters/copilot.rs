@@ -38,9 +38,9 @@ impl AiToolAdapter for CopilotAdapter {
         vec![
             project_root.join(".github").join("instructions"),
             project_root.join(".github").join("skills"),
-            // Legacy: conforme used to emit skills as `.github/prompts/*.prompt.md`.
-            // Kept managed so stale prompt files are cleaned up on the next sync.
-            project_root.join(".github").join("prompts"),
+            // `.github/prompts/` is deliberately NOT managed: VS Code prompt
+            // files are a user-authored feature, and orphan cleanup deletes
+            // everything in a managed directory that conforme did not generate.
             project_root.join(".github").join("agents"),
         ]
     }
@@ -106,44 +106,10 @@ impl AiToolAdapter for CopilotAdapter {
             }
         }
 
-        // Read skills from .github/skills/<name>/SKILL.md.
-        let mut skills =
+        // Read skills from .github/skills/<name>/SKILL.md. `.github/prompts/`
+        // holds VS Code prompt files, a separate feature, and is never read.
+        let skills =
             crate::skills::read_skills_from_dir(&project_root.join(".github").join("skills"))?;
-
-        // Legacy fallback: earlier conforme versions emitted skills as
-        // `.github/prompts/<name>.prompt.md`. Only consulted when no
-        // `.github/skills/` entries exist, so a migrated project does not
-        // surface each skill twice.
-        let prompts_dir = project_root.join(".github").join("prompts");
-        if skills.is_empty() && prompts_dir.is_dir() {
-            let mut entries: Vec<_> = std::fs::read_dir(&prompts_dir)?
-                .filter_map(|e| e.ok())
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                let path = entry.path();
-                let fname = path.file_name().unwrap_or_default().to_string_lossy();
-                if let Some(name) = fname.strip_suffix(".prompt.md") {
-                    let content = std::fs::read_to_string(&path)
-                        .with_context(|| format!("failed to read {}", path.display()))?;
-                    let (fields, body) = frontmatter::parse(&content)?;
-                    let description = fields
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let allowed_tools =
-                        crate::skills::parse_frontmatter_tool_list(fields.get("tools"));
-                    skills.push(crate::config::NormalizedSkill {
-                        name: name.to_string(),
-                        description,
-                        content: body.trim().to_string(),
-                        allowed_tools,
-                        ..Default::default()
-                    });
-                }
-            }
-        }
 
         // Read subagents (.github/agents/<name>.agent.md).
         let agents =

@@ -298,7 +298,12 @@ impl AiToolAdapter for ClaudeAdapter {
             }
         }
 
-        files.push((claude_md, format!("{}\n", claude_content.trim())));
+        // No blank CLAUDE.md for a config with neither instructions nor
+        // always-on rules; the other outputs below stand on their own.
+        let claude_content = claude_content.trim();
+        if !claude_content.is_empty() {
+            files.push((claude_md, format!("{}\n", claude_content)));
+        }
 
         if !rule_files.is_empty() {
             let rules_dir = project_root.join(".claude").join("rules");
@@ -543,9 +548,8 @@ mod tests {
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
 
-        // Should still produce CLAUDE.md even if empty
-        assert_eq!(files.len(), 1);
-        assert!(files[0].0.ends_with("CLAUDE.md"));
+        // No blank CLAUDE.md is dropped into the project for an empty config.
+        assert!(files.is_empty());
     }
 
     #[test]

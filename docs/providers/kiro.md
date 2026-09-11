@@ -12,6 +12,8 @@
 - MCP (CLI): https://kiro.dev/docs/cli/mcp/configuration/
 - Getting started: https://kiro.dev/docs/getting-started/first-project/
 - Powers marketplace: https://kiro.dev/powers/
+- Custom agents: https://kiro.dev/docs/custom-agents/creating/
+- What's new in CLI 3.0: https://kiro.dev/docs/cli/v3/
 
 ## Config files
 
@@ -42,8 +44,10 @@
 
 ## Notes
 
-- Kiro has a rich hook system (preToolUse, postToolUse, agentSpawn, userPromptSubmit)
+- Kiro has a rich hook system (preToolUse, postToolUse, agentSpawn, userPromptSubmit). As of Kiro CLI 3.0 hooks are standalone `.kiro/hooks/*.json` files rather than blocks embedded in an agent config
 - Hooks are part of "Powers" (bundles of steering + skills + hooks + MCP)
+- `.kiro/agents/` accepts a Markdown **or** a JSON file, and the filename becomes the agent name. conforme writes Markdown. `name` is a recognized frontmatter key, but since the filename already supplies it conforme omits it to avoid two competing sources of truth
+- Kiro CLI 3.0 also allows MCP servers inline inside an agent config, and adds `oauth` and `disabledTools` per server; conforme keeps to the shared `.kiro/settings/mcp.json`
 - Manual rules should include `name` for slash-command display (`#steering-file-name`)
 - `auto` (agent-decision) rules must include both `name` and `description`
 - Kiro reads AGENTS.md natively
