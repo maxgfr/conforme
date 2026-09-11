@@ -32,6 +32,13 @@ impl AiToolAdapter for ZedAdapter {
         }
     }
 
+    /// `.zed/settings.json` is the user's whole Zed configuration; conforme
+    /// only merges `context_servers` into it, so `remove`/`migrate` must
+    /// never delete the file wholesale.
+    fn is_shared_file(&self, path: &Path) -> bool {
+        path.ends_with(Path::new(".zed/settings.json"))
+    }
+
     fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
         // Zed reads skills from the shared `.agents/skills/` location (same as
         // Codex/Amp), so track it for orphan cleanup.
