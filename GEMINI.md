@@ -2,7 +2,7 @@
 
 ## Project overview
 
-conforme is a Rust CLI that synchronizes AI coding agent configurations across 14 tools. It reads config from a source tool (Claude Code, Cursor, etc.) or AGENTS.md, and propagates to all other tool-specific config files.
+conforme is a Rust CLI that synchronizes AI coding agent configurations across 13 tools. It reads config from a source tool (Claude Code, Cursor, etc.) or AGENTS.md, and propagates to all other tool-specific config files.
 
 ## Build & test
 
@@ -34,7 +34,7 @@ src/
   help_ai.rs        — Detailed help about all supported tools and formats
   mcp.rs            — MCP config generation/parsing per tool:
                        - Codex: project `.codex/config.toml`, atomically merged with comment/settings preservation; strict safe parser — merge_codex_mcp_toml / parse_codex_mcp_toml
-                       - Standard mcpServers: Claude, Kiro, Amazon Q, Cursor
+                       - Standard mcpServers: Claude, Kiro, Cursor
                        - Roo Code: mcpServers, HTTP uses type "streamable-http" (not "http") — generate_roocode_mcp_json
                        - Continue.dev: mcpServers, HTTP uses type "streamable-http" (bare "http" is rejected) — generate_continue_mcp_json
                        - Claude .mcp.json parsing accepts http/https, sse, streamable-http, and ws transports (all mapped to the HTTP variant)
@@ -63,8 +63,6 @@ src/
     gemini.rs       — Gemini CLI: GEMINI.md
     continuedev.rs  — Continue.dev: .continue/rules/*.md (name/globs/alwaysApply)
     zed.rs          — Zed AI: .rules file
-    amazonq.rs      — Amazon Q: .amazonq/rules/*.md (deprecated upstream: the Q CLI became the Kiro CLI;
-                       implements deprecation_notice(), surfaced by status/sync)
     kiro.rs         — Kiro (AWS): .kiro/steering/*.md (inclusion/fileMatchPattern)
     amp.rs          — Amp (Sourcegraph): reads AGENTS.md natively
     deepseek.rs     — DeepSeek Harness (dsh): reads AGENTS.md natively; skills at .dsh/skills/<name>/SKILL.md
@@ -131,7 +129,7 @@ Review for bugs.
 ### Adapter categories
 
 **Per-rule adapters** (have frontmatter or per-file rules):
-- Claude, Cursor, Windsurf, Copilot, Continue.dev, Kiro, Roo Code, Amazon Q
+- Claude, Cursor, Windsurf, Copilot, Continue.dev, Kiro, Roo Code
 
 **Single-file adapters** (merge all content into one file):
 - Codex, OpenCode, Gemini, Zed, Amp, DeepSeek Harness
@@ -149,7 +147,7 @@ Review for bugs.
 
 | Tool | JSON key | Notes |
 |---|---|---|
-| Claude, Kiro, Amazon Q, Cursor | `mcpServers` | Standard format with `type: stdio/http` |
+| Claude, Kiro, Cursor | `mcpServers` | Standard format with `type: stdio/http` |
 | Roo Code | `mcpServers` | Standard format; HTTP uses `type: streamable-http` (not `http`) |
 | Continue.dev | `mcpServers` (inside `.continue/mcpServers/mcp.json`) | HTTP uses `type: streamable-http` (bare `http` is rejected) |
 | Copilot | `servers` | VS Code format; supports `env` + `headers` |
@@ -222,7 +220,7 @@ conforme migrate --source X --output Y    # Migrate config between tools
 
 This project uses Claude Code skills in `.claude/skills/`:
 
-- **verify-providers** — Audit all 14 provider adapters against latest official documentation, fix discrepancies, and verify links
+- **verify-providers** — Audit all 13 provider adapters against latest official documentation, fix discrepancies, and verify links
 
 ## MCP servers (.mcp.json)
 
@@ -253,12 +251,12 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - When adding a new adapter, update ALL of: README.md tables, src/help_ai.rs, src/cli.rs tool count, CLAUDE.md architecture section
 - Provider docs must list all official documentation URLs for the tool
 - Test round-trips: `read()` output fed into `generate()` should produce identical files
-- MCP JSON keys per tool: Claude/Kiro/RooCode/AmazonQ/Gemini/Cursor/Continue.dev = `mcpServers`, Copilot = `servers`, OpenCode = `mcp` (inside `opencode.json`), Zed = `context_servers`, Amp = `amp.mcpServers`
+- MCP JSON keys per tool: Claude/Kiro/RooCode/Gemini/Cursor/Continue.dev = `mcpServers`, Copilot = `servers`, OpenCode = `mcp` (inside `opencode.json`), Zed = `context_servers`, Amp = `amp.mcpServers`
 - OpenCode MCP specifics: `command` is a single array `[cmd, ...args]`, env key is `environment` (not `env`), servers live inside `opencode.json` at project root (conforme merges — never clobber user-authored keys)
 - Windsurf has NO project-level MCP file (Cascade only reads `~/.codeium/windsurf/mcp_config.json`); never generate `.windsurf/mcp.json`
 - Never add a user-authored directory (e.g. `.github/prompts/`) to `managed_directories()`: orphan cleanup deletes every file there that conforme did not generate
 - An adapter must generate no files for an empty config and never a blank file (guarded by `test_no_adapter_writes_blank_files`)
-- An adapter whose upstream tool is retired implements `deprecation_notice()`; `status` and `sync` surface it
+- When an upstream tool is retired (as Amazon Q was), delete its adapter outright rather than keeping it behind a deprecation flag; the removal checklist is the mirror of the "adding a new adapter" one above
 - Any adapter that merges into a user-owned settings file (`opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json`, `.codex/config.toml`) MUST implement `is_shared_file()` so `remove` and `migrate` never delete it wholesale
 - Amp MCP specifics: dotted `amp.mcpServers` key, no `type` field, merged into `.amp/settings.json` (never clobber user settings)
 - Cursor subagents: `.md` extension (not `.mdc`); no `tools` frontmatter field — tool access is inherited from the parent agent

@@ -55,11 +55,6 @@ fn adapter_gitignore_patterns(id: &str) -> Vec<&'static str> {
         ],
         "continue" => vec![".continue/rules/", ".continue/mcpServers/"],
         "zed" => vec![".rules", ".zed/settings.json"],
-        "amazonq" => vec![
-            ".amazonq/rules/",
-            ".amazonq/cli-agents/",
-            ".amazonq/mcp.json",
-        ],
         "kiro" => vec![
             ".kiro/steering/",
             ".kiro/skills/",

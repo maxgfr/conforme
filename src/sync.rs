@@ -341,15 +341,6 @@ pub fn run_sync(
 fn warn_capability_loss(adapter: &dyn AiToolAdapter, config: &NormalizedConfig) {
     let caps = adapter.capabilities();
 
-    if let Some(notice) = adapter.deprecation_notice() {
-        eprintln!(
-            "  {} {} is deprecated upstream: {}",
-            "!".yellow(),
-            adapter.name(),
-            notice
-        );
-    }
-
     if !caps.activation_modes {
         let has_non_always = config
             .rules
@@ -593,11 +584,6 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
         };
 
         println!("  {:<20} {:<12} {}", tool.name, detected_str, sync_status);
-        if tool.detected {
-            if let Some(notice) = adapter.deprecation_notice() {
-                println!("  {:<20} {}", "", format!("deprecated: {notice}").yellow());
-            }
-        }
     }
 
     println!();

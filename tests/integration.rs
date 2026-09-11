@@ -34,7 +34,6 @@ fn create_project_with_tools(agents_md: &str, tools: &[&str]) -> TempDir {
             "gemini" => fs::create_dir_all(dir.path().join(".gemini")).unwrap(),
             "continue" => fs::create_dir_all(dir.path().join(".continue")).unwrap(),
             "zed" => fs::write(dir.path().join(".rules"), "").unwrap(),
-            "amazonq" => fs::create_dir_all(dir.path().join(".amazonq")).unwrap(),
             "kiro" => fs::create_dir_all(dir.path().join(".kiro")).unwrap(),
             "amp" => fs::create_dir_all(dir.path().join(".amp")).unwrap(),
             "deepseek" => fs::create_dir_all(dir.path().join(".dsh")).unwrap(),
@@ -499,27 +498,6 @@ fn test_sync_creates_zed_config() {
 }
 
 #[test]
-fn test_sync_creates_amazonq_config() {
-    let agents_md = r#"# Instructions
-Follow AWS best practices.
-
-## Rule: Security
-<!-- activation: always -->
-
-Use IAM roles.
-"#;
-    let dir = create_project_with_tools(agents_md, &["amazonq"]);
-
-    conforme()
-        .args(["-C", dir.path().to_str().unwrap(), "sync"])
-        .assert()
-        .success();
-
-    assert!(dir.path().join(".amazonq/rules/general.md").exists());
-    assert!(dir.path().join(".amazonq/rules/security.md").exists());
-}
-
-#[test]
 fn test_sync_deepseek_skills() {
     let agents_md = "# Instructions\nGlobal.\n\n## Skill: Deploy App\n<!-- description: Deploy it -->\nRun deploy.\n";
     let dir = create_project_with_tools(agents_md, &["deepseek"]);
@@ -549,7 +527,7 @@ fn test_sync_every_tool() {
         agents_md,
         &[
             "cursor", "claude", "windsurf", "copilot", "codex", "opencode", "roocode", "gemini",
-            "continue", "zed", "amazonq", "kiro", "amp", "deepseek",
+            "continue", "zed", "kiro", "amp", "deepseek",
         ],
     );
 
@@ -565,7 +543,6 @@ fn test_sync_every_tool() {
     assert!(dir.path().join(".roo/rules/00-general.md").exists());
     assert!(dir.path().join(".continue/rules/general.md").exists());
     assert!(dir.path().join(".rules").exists());
-    assert!(dir.path().join(".amazonq/rules/general.md").exists());
     assert!(dir.path().join(".kiro/steering/general.md").exists());
 }
 
@@ -1304,8 +1281,8 @@ Review all changes for bugs.
     let dir = create_project_with_tools(
         agents_md,
         &[
-            "cursor", "claude", "windsurf", "copilot", "kiro", "roocode", "amazonq", "continue",
-            "gemini", "zed",
+            "cursor", "claude", "windsurf", "copilot", "kiro", "roocode", "continue", "gemini",
+            "zed",
         ],
     );
 
@@ -1359,10 +1336,6 @@ Review all changes for bugs.
     // Zed: .rules + settings
     assert!(dir.path().join(".rules").exists());
     assert!(dir.path().join(".zed/settings.json").exists());
-
-    // Amazon Q: rules + mcp
-    assert!(dir.path().join(".amazonq/rules/general.md").exists());
-    assert!(dir.path().join(".amazonq/mcp.json").exists());
 
     // Check should pass after sync
     conforme()

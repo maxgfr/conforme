@@ -758,65 +758,6 @@ pub fn build_opencode_agent_object(
     agent_map
 }
 
-/// Generate Amazon Q agent JSON files.
-/// Each agent is a separate JSON file: `.amazonq/cli-agents/<name>.json`
-pub fn generate_amazonq_agents_json(
-    agents: &[crate::config::NormalizedAgent],
-) -> Result<Vec<(String, String)>> {
-    let mut files = Vec::new();
-
-    for agent in agents {
-        let mut entry = serde_json::Map::new();
-
-        if !agent.description.is_empty() {
-            entry.insert(
-                "description".to_string(),
-                serde_json::Value::String(agent.description.clone()),
-            );
-        }
-        if let Some(model) = &agent.model {
-            entry.insert(
-                "model".to_string(),
-                serde_json::Value::String(model.clone()),
-            );
-        }
-        if !agent.tools.is_empty() {
-            let json_tools: Vec<serde_json::Value> = agent
-                .tools
-                .iter()
-                .map(|t| serde_json::Value::String(t.clone()))
-                .collect();
-            entry.insert("tools".to_string(), serde_json::Value::Array(json_tools));
-        }
-        if !agent.content.is_empty() {
-            entry.insert(
-                "prompt".to_string(),
-                serde_json::Value::String(agent.content.clone()),
-            );
-        }
-        // Give the generated agent access to the rules conforme also writes to
-        // `.amazonq/rules/`, and let it pick up MCP servers from the sibling
-        // `.amazonq/mcp.json` (both otherwise invisible to a bare agent file).
-        entry.insert(
-            "resources".to_string(),
-            serde_json::Value::Array(vec![serde_json::Value::String(
-                "file://.amazonq/rules/**/*.md".to_string(),
-            )]),
-        );
-        entry.insert(
-            "useLegacyMcpJson".to_string(),
-            serde_json::Value::Bool(true),
-        );
-
-        let filename = format!("{}.json", crate::config::sanitize_name(&agent.name));
-        let json = serde_json::to_string_pretty(&entry)
-            .context("failed to serialize Amazon Q agent config")?;
-        files.push((filename, json));
-    }
-
-    Ok(files)
-}
-
 /// Parse an MCP config file into normalized servers. Handles every key conforme
 /// emits — `mcpServers` (standard), `servers` (Copilot/VS Code),
 /// `context_servers` (Zed) and `amp.mcpServers` (Amp) — and infers the transport
@@ -1474,28 +1415,6 @@ bearer_token_env_var = "MCP_TOKEN"
         assert!(result.contains("\"httpUrl\": \"https://example.com/mcp\""));
         assert!(!result.contains("\"url\""));
         assert!(!result.contains("\"type\""));
-    }
-
-    #[test]
-    fn test_generate_amazonq_agents() {
-        let agents = vec![crate::config::NormalizedAgent {
-            name: "reviewer".to_string(),
-            description: "Code review".to_string(),
-            content: "Review code.".to_string(),
-            model: Some("claude-sonnet".to_string()),
-            tools: vec!["codebase".to_string()],
-            ..Default::default()
-        }];
-        let result = generate_amazonq_agents_json(&agents).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].0, "reviewer.json");
-        assert!(result[0].1.contains("\"description\": \"Code review\""));
-        assert!(result[0].1.contains("\"model\": \"claude-sonnet\""));
-        assert!(result[0].1.contains("\"prompt\": \"Review code.\""));
-        assert!(result[0].1.contains("\"codebase\""));
-        // Generated agents load the synced rules and legacy MCP config.
-        assert!(result[0].1.contains("file://.amazonq/rules/**/*.md"));
-        assert!(result[0].1.contains("\"useLegacyMcpJson\": true"));
     }
 
     #[test]

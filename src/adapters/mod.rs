@@ -1,4 +1,3 @@
-pub mod amazonq;
 pub mod amp;
 pub mod claude;
 pub mod codex;
@@ -55,13 +54,6 @@ pub trait AiToolAdapter: Send + Sync {
     /// Declare what features this adapter supports.
     fn capabilities(&self) -> AdapterCapabilities {
         AdapterCapabilities::default()
-    }
-
-    /// A short note when the upstream tool has been retired or superseded.
-    /// Shown by `status` and `sync` so users know the target is legacy;
-    /// the adapter keeps working as before.
-    fn deprecation_notice(&self) -> Option<&str> {
-        None
     }
 
     /// Directories managed by this adapter (for orphan cleanup).
@@ -139,7 +131,6 @@ pub fn all_adapters() -> Vec<Box<dyn AiToolAdapter>> {
         Box::new(gemini::GeminiAdapter),
         Box::new(continuedev::ContinueDevAdapter),
         Box::new(zed::ZedAdapter),
-        Box::new(amazonq::AmazonQAdapter),
         Box::new(kiro::KiroAdapter),
         Box::new(amp::AmpAdapter),
         Box::new(deepseek::DeepSeekAdapter),

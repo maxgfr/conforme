@@ -1,6 +1,6 @@
 # conforme
 
-Sync your AI coding config from any tool to all 14 others. Write once, apply everywhere.
+Sync your AI coding config from any tool to all 13 others. Write once, apply everywhere.
 
 AGENTS.md is governed by the [Agentic AI Foundation](https://www.linuxfoundation.org/press/linux-foundation-announces-the-formation-of-the-agentic-ai-foundation) (Linux Foundation) with 146+ member organizations including Anthropic, OpenAI, Google, AWS, and Microsoft.
 
@@ -27,7 +27,7 @@ cargo install --path .
 
 You can set your source tool once in `.conformerc.toml` or pass it on the command line with `--from`. If no source is specified, conforme defaults to `AGENTS.md`.
 
-## Supported tools (14)
+## Supported tools (13)
 
 ### Tools with per-rule config files
 
@@ -40,7 +40,6 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 | Continue.dev | `.continue/rules/*.md` | `name`, `globs` (array), `alwaysApply` | Not yet |
 | Kiro (AWS) | `.kiro/steering/*.md` | `inclusion`, `fileMatchPattern`, `name`, `description` | Native |
 | Roo Code / Cline | `.roo/rules/*.md` | None (plain Markdown) | Native |
-| Amazon Q (deprecated upstream, now Kiro CLI) | `.amazonq/rules/*.md` | None (plain Markdown) | N/A |
 
 ### Tools that read AGENTS.md natively (single-file sync)
 
@@ -133,7 +132,7 @@ conforme normalizes 4 activation modes across all tools that support them:
 | Agent Decision | `<!-- activation: agent-decision -->` | no frontmatter (.claude/rules/) | `description: "..."` | `trigger: model_decision` | in main file | `description: "..."` | `inclusion: auto` |
 | Manual | `<!-- activation: manual -->` | no frontmatter (.claude/rules/) | `alwaysApply: false` | `trigger: manual` | in main file | `alwaysApply: false` | `inclusion: manual` |
 
-Tools without activation modes (all rules always-on): Roo Code, Amazon Q, Gemini CLI, OpenCode, Codex CLI, Zed AI, Amp.
+Tools without activation modes (all rules always-on): Roo Code, Gemini CLI, OpenCode, Codex CLI, Zed AI, Amp.
 
 ## Skills, Agents, and MCP sync
 
@@ -169,7 +168,6 @@ Review all changes for correctness and security.
 | Windsurf | `.devin/rules/*.md` or `.windsurf/rules/*.md` | `.windsurf/skills/` | - | - |
 | Continue.dev | `.continue/rules/*.md` | - | - | `.continue/mcpServers/mcp.json` |
 | Roo Code | `.roo/rules/*.md` | `.roo/skills/` | - | `.roo/mcp.json` |
-| Amazon Q | `.amazonq/rules/*.md` | - | `.amazonq/cli-agents/*.json` | `.amazonq/mcp.json` |
 | Gemini CLI | `GEMINI.md` | `.gemini/skills/` | `.gemini/agents/*.md` | `.gemini/settings.json` |
 | OpenCode | native (AGENTS.md) | `.opencode/skills/` | `opencode.json#agent` + `.opencode/agents/*.md` | `opencode.json#mcp` |
 | Zed AI | `.rules` | `.agents/skills/` | - | `.zed/settings.json` |
@@ -197,7 +195,7 @@ When using Claude Code as source (`source = "claude"`), conforme also reads **cu
 | Amp | `.agents/skills/<name>/SKILL.md` | `name`, `description` (shared Codex format) |
 | DeepSeek Harness | `.dsh/skills/<name>/SKILL.md` | `name`, `description` (kebab-case name) |
 
-Tools without skills support: Continue.dev, Zed AI, Amazon Q.
+Tools without skills support: Continue.dev.
 
 ### Agents format equivalence
 
@@ -211,7 +209,6 @@ Agents (sub-agents) are custom AI assistants with a model, tools, and system pro
 | Kiro | `.kiro/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
 | Gemini CLI | `.gemini/agents/<name>.md` | YAML frontmatter: `name`, `description`, `kind: local`, `model`, `tools` |
 | OpenCode | `opencode.json` (`agent` key) + `.opencode/agents/<name>.md` | JSON merged into `opencode.json`; markdown for per-project agents |
-| Amazon Q | `.amazonq/cli-agents/<name>.json` | JSON per agent: `{ "description", "model", "tools", "prompt" }` |
 
 Tools without agents support: Windsurf, Continue.dev, Roo Code, Codex CLI, Zed AI, Amp, DeepSeek Harness.
 
@@ -228,7 +225,6 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | Continue.dev | `.continue/mcpServers/mcp.json` | `mcpServers` | HTTP uses `type: streamable-http` (a bare `http` is rejected) |
 | Kiro | `.kiro/settings/mcp.json` | `mcpServers` | Standard format |
 | Roo Code | `.roo/mcp.json` | `mcpServers` | HTTP uses `type: streamable-http` (not `http`); legacy alias `sse` |
-| Amazon Q | `.amazonq/mcp.json` | `mcpServers` | Standard format (legacy workspace MCP file). The Q CLI is now the Kiro CLI, which still reads `.amazonq/` but prefers `.kiro/`; `status` and `sync` flag this target as deprecated |
 | Gemini CLI | `.gemini/settings.json` (merged) | `mcpServers` | No `type` field, uses `httpUrl` (not `url`) for HTTP |
 | OpenCode | `opencode.json` (merged) | `mcp` | `type: local/remote`; `command` as single array; env key is `environment` |
 | Zed AI | `.zed/settings.json` (merged) | `context_servers` | No `type` field; remote uses `url` + `headers` |
@@ -338,7 +334,7 @@ This generates:
 - `.github/skills/deploy/SKILL.md`
 - `.github/agents/reviewer.agent.md`
 - `.kiro/steering/typescript.md` with `inclusion: fileMatch`
-- `GEMINI.md`, `.rules`, `.roo/rules/`, `.amazonq/rules/`, etc.
+- `GEMINI.md`, `.rules`, `.roo/rules/`, etc.
 - `AGENTS.md` (auto-generated from source)
 
 **CI (GitHub Actions):**

@@ -6,7 +6,7 @@ trigger: always_on
 
 ## Project overview
 
-conforme is a Rust CLI that synchronizes AI coding agent configurations across 14 tools. It reads config from a source tool (Claude Code, Cursor, etc.) or AGENTS.md, and propagates to all other tool-specific config files.
+conforme is a Rust CLI that synchronizes AI coding agent configurations across 13 tools. It reads config from a source tool (Claude Code, Cursor, etc.) or AGENTS.md, and propagates to all other tool-specific config files.
 
 ## Build & test
 
@@ -38,7 +38,7 @@ src/
   help_ai.rs        — Detailed help about all supported tools and formats
   mcp.rs            — MCP config generation/parsing per tool:
                        - Codex: project `.codex/config.toml`, atomically merged with comment/settings preservation; strict safe parser — merge_codex_mcp_toml / parse_codex_mcp_toml
-                       - Standard mcpServers: Claude, Kiro, Amazon Q, Cursor
+                       - Standard mcpServers: Claude, Kiro, Cursor
                        - Roo Code: mcpServers, HTTP uses type "streamable-http" (not "http") — generate_roocode_mcp_json
                        - Continue.dev: mcpServers, HTTP uses type "streamable-http" (bare "http" is rejected) — generate_continue_mcp_json
                        - Claude .mcp.json parsing accepts http/https, sse, streamable-http, and ws transports (all mapped to the HTTP variant)
@@ -67,8 +67,6 @@ src/
     gemini.rs       — Gemini CLI: GEMINI.md
     continuedev.rs  — Continue.dev: .continue/rules/*.md (name/globs/alwaysApply)
     zed.rs          — Zed AI: .rules file
-    amazonq.rs      — Amazon Q: .amazonq/rules/*.md (deprecated upstream: the Q CLI became the Kiro CLI;
-                       implements deprecation_notice(), surfaced by status/sync)
     kiro.rs         — Kiro (AWS): .kiro/steering/*.md (inclusion/fileMatchPattern)
     amp.rs          — Amp (Sourcegraph): reads AGENTS.md natively
     deepseek.rs     — DeepSeek Harness (dsh): reads AGENTS.md natively; skills at .dsh/skills/<name>/SKILL.md
@@ -135,7 +133,7 @@ Review for bugs.
 ### Adapter categories
 
 **Per-rule adapters** (have frontmatter or per-file rules):
-- Claude, Cursor, Windsurf, Copilot, Continue.dev, Kiro, Roo Code, Amazon Q
+- Claude, Cursor, Windsurf, Copilot, Continue.dev, Kiro, Roo Code
 
 **Single-file adapters** (merge all content into one file):
 - Codex, OpenCode, Gemini, Zed, Amp, DeepSeek Harness
@@ -153,7 +151,7 @@ Review for bugs.
 
 | Tool | JSON key | Notes |
 |---|---|---|
-| Claude, Kiro, Amazon Q, Cursor | `mcpServers` | Standard format with `type: stdio/http` |
+| Claude, Kiro, Cursor | `mcpServers` | Standard format with `type: stdio/http` |
 | Roo Code | `mcpServers` | Standard format; HTTP uses `type: streamable-http` (not `http`) |
 | Continue.dev | `mcpServers` (inside `.continue/mcpServers/mcp.json`) | HTTP uses `type: streamable-http` (bare `http` is rejected) |
 | Copilot | `servers` | VS Code format; supports `env` + `headers` |
@@ -226,7 +224,7 @@ conforme migrate --source X --output Y    # Migrate config between tools
 
 This project uses Claude Code skills in `.claude/skills/`:
 
-- **verify-providers** — Audit all 14 provider adapters against latest official documentation, fix discrepancies, and verify links
+- **verify-providers** — Audit all 13 provider adapters against latest official documentation, fix discrepancies, and verify links
 
 ## MCP servers (.mcp.json)
 
