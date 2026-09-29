@@ -648,9 +648,9 @@ pub fn generate_windsurf_skills(
     Ok(files)
 }
 
-/// Generate Roo Code skill files in `.roo/skills/<name>/SKILL.md`.
-/// Roo Code skills use `name` and `description` in frontmatter.
-pub fn generate_roocode_skills(
+/// Generate Zoo Code skill files in `.roo/skills/<name>/SKILL.md`.
+/// Zoo Code skills use `name` and `description` in frontmatter.
+pub fn generate_zoocode_skills(
     project_root: &Path,
     skills: &[NormalizedSkill],
 ) -> Result<Vec<(PathBuf, String)>> {

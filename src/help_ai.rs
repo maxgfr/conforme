@@ -63,15 +63,6 @@ pub fn print_help_ai() {
         ],
     );
     print_tool(
-        "Continue.dev",
-        "continue",
-        ".continue/rules/*.md",
-        &[
-            "Frontmatter: name, globs (array), alwaysApply (bool), description",
-            "Globs use YAML array format, not comma-separated",
-        ],
-    );
-    print_tool(
         "Kiro (AWS)",
         "kiro",
         ".kiro/steering/*.md",
@@ -82,8 +73,8 @@ pub fn print_help_ai() {
         ],
     );
     print_tool(
-        "Roo Code / Cline",
-        "roocode",
+        "Zoo Code (community fork of Roo Code)",
+        "zoocode",
         ".roo/rules/*.md",
         &[
             "Plain Markdown — NO YAML frontmatter",

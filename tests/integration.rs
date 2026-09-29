@@ -30,9 +30,8 @@ fn create_project_with_tools(agents_md: &str, tools: &[&str]) -> TempDir {
             }
             "codex" => fs::create_dir_all(dir.path().join(".codex")).unwrap(),
             "opencode" => fs::create_dir_all(dir.path().join(".opencode")).unwrap(),
-            "roocode" => fs::create_dir_all(dir.path().join(".roo")).unwrap(),
+            "zoocode" => fs::create_dir_all(dir.path().join(".roo")).unwrap(),
             "gemini" => fs::create_dir_all(dir.path().join(".gemini")).unwrap(),
-            "continue" => fs::create_dir_all(dir.path().join(".continue")).unwrap(),
             "zed" => fs::write(dir.path().join(".rules"), "").unwrap(),
             "kiro" => fs::create_dir_all(dir.path().join(".kiro")).unwrap(),
             "amp" => fs::create_dir_all(dir.path().join(".amp")).unwrap(),
@@ -433,7 +432,7 @@ fn test_sync_creates_gemini_config() {
 }
 
 #[test]
-fn test_sync_creates_roocode_config() {
+fn test_sync_creates_zoocode_config() {
     let agents_md = r#"# Instructions
 General rules.
 
@@ -442,7 +441,7 @@ General rules.
 
 Write tests.
 "#;
-    let dir = create_project_with_tools(agents_md, &["roocode"]);
+    let dir = create_project_with_tools(agents_md, &["zoocode"]);
 
     conforme()
         .args(["-C", dir.path().to_str().unwrap(), "sync"])
@@ -451,34 +450,6 @@ Write tests.
 
     assert!(dir.path().join(".roo/rules/00-general.md").exists());
     assert!(dir.path().join(".roo/rules/01-testing.md").exists());
-}
-
-#[test]
-fn test_sync_creates_continue_config() {
-    let agents_md = r#"# Instructions
-Be consistent.
-
-## Rule: TypeScript
-<!-- activation: glob **/*.ts -->
-
-Use strict mode.
-"#;
-    let dir = create_project_with_tools(agents_md, &["continue"]);
-
-    conforme()
-        .args(["-C", dir.path().to_str().unwrap(), "sync"])
-        .assert()
-        .success();
-
-    let general = dir.path().join(".continue/rules/general.md");
-    assert!(general.exists());
-    let content = fs::read_to_string(&general).unwrap();
-    assert!(content.contains("alwaysApply: true"));
-
-    let ts = dir.path().join(".continue/rules/typescript.md");
-    assert!(ts.exists());
-    let content = fs::read_to_string(&ts).unwrap();
-    assert!(content.contains("globs:"));
 }
 
 #[test]
@@ -526,8 +497,8 @@ fn test_sync_every_tool() {
     let dir = create_project_with_tools(
         agents_md,
         &[
-            "cursor", "claude", "windsurf", "copilot", "codex", "opencode", "roocode", "gemini",
-            "continue", "zed", "kiro", "amp", "deepseek",
+            "cursor", "claude", "windsurf", "copilot", "codex", "opencode", "zoocode", "gemini",
+            "zed", "kiro", "amp", "deepseek",
         ],
     );
 
@@ -541,7 +512,6 @@ fn test_sync_every_tool() {
     assert!(dir.path().join(".windsurf/rules/general.md").exists());
     assert!(dir.path().join("GEMINI.md").exists());
     assert!(dir.path().join(".roo/rules/00-general.md").exists());
-    assert!(dir.path().join(".continue/rules/general.md").exists());
     assert!(dir.path().join(".rules").exists());
     assert!(dir.path().join(".kiro/steering/general.md").exists());
 }
@@ -1281,8 +1251,7 @@ Review all changes for bugs.
     let dir = create_project_with_tools(
         agents_md,
         &[
-            "cursor", "claude", "windsurf", "copilot", "kiro", "roocode", "continue", "gemini",
-            "zed",
+            "cursor", "claude", "windsurf", "copilot", "kiro", "zoocode", "gemini", "zed",
         ],
     );
 
@@ -1321,17 +1290,13 @@ Review all changes for bugs.
     assert!(dir.path().join(".gemini/agents/reviewer.md").exists());
     assert!(dir.path().join(".gemini/settings.json").exists());
 
-    // Roo Code: rules + mcp
+    // Zoo Code: rules + mcp
     assert!(dir.path().join(".roo/rules/00-general.md").exists());
     assert!(dir.path().join(".roo/mcp.json").exists());
 
     // Windsurf: rules only (Cascade has no project-level MCP file)
     assert!(dir.path().join(".windsurf/rules/general.md").exists());
     assert!(!dir.path().join(".windsurf/mcp.json").exists());
-
-    // Continue: rules + mcp
-    assert!(dir.path().join(".continue/rules/general.md").exists());
-    assert!(dir.path().join(".continue/mcpServers/mcp.json").exists());
 
     // Zed: .rules + settings
     assert!(dir.path().join(".rules").exists());

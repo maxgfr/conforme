@@ -46,14 +46,13 @@ fn adapter_gitignore_patterns(id: &str) -> Vec<&'static str> {
             ".opencode/mcp.json",
             ".opencode/agents.json",
         ],
-        "roocode" => vec![".roo/rules/", ".roo/skills/", ".roo/mcp.json"],
+        "zoocode" => vec![".roo/rules/", ".roo/skills/", ".roo/mcp.json"],
         "gemini" => vec![
             "GEMINI.md",
             ".gemini/skills/",
             ".gemini/agents/",
             ".gemini/settings.json",
         ],
-        "continue" => vec![".continue/rules/", ".continue/mcpServers/"],
         "zed" => vec![".rules", ".zed/settings.json"],
         "kiro" => vec![
             ".kiro/steering/",

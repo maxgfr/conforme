@@ -259,26 +259,17 @@ pub fn generate_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
     build_mcpservers_json(servers, "http")
 }
 
-/// Generate Roo Code's `.roo/mcp.json`.
+/// Generate Zoo Code's `.roo/mcp.json`.
 /// Identical to the standard `mcpServers` format, except HTTP servers use
-/// `type: "streamable-http"`. Roo Code does not recognize a bare `"http"`
+/// `type: "streamable-http"`. Zoo Code does not recognize a bare `"http"`
 /// transport — it only accepts `streamable-http` (modern) or `sse` (legacy).
-pub fn generate_roocode_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
-    build_mcpservers_json(servers, "streamable-http")
-}
-
-/// Generate Continue.dev's MCP config (`.continue/mcpServers/mcp.json`).
-/// Identical to the standard `mcpServers` format, except HTTP servers use
-/// `type: "streamable-http"`. Continue only recognizes `stdio`, `sse`, and
-/// `streamable-http` transport values — a bare `"http"` is not accepted, so
-/// remote servers must be emitted as `streamable-http`.
-pub fn generate_continue_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
+pub fn generate_zoocode_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
     build_mcpservers_json(servers, "streamable-http")
 }
 
 /// Shared builder for the standard `{ "mcpServers": { "name": { ... } } }` format.
 /// `http_type` is the value written for the `type` field of HTTP servers
-/// (`"http"` for most tools, `"streamable-http"` for Roo Code).
+/// (`"http"` for most tools, `"streamable-http"` for Zoo Code).
 fn build_mcpservers_json(servers: &[NormalizedMcpServer], http_type: &str) -> Result<String> {
     if servers.is_empty() {
         return Ok(String::new());
@@ -1150,7 +1141,7 @@ bearer_token_env_var = "MCP_TOKEN"
     }
 
     #[test]
-    fn test_generate_roocode_mcp_json_http_uses_streamable_http() {
+    fn test_generate_zoocode_mcp_json_http_uses_streamable_http() {
         let servers = vec![NormalizedMcpServer {
             name: "context7".to_string(),
             transport: McpTransport::Http {
@@ -1159,8 +1150,8 @@ bearer_token_env_var = "MCP_TOKEN"
             },
             env: BTreeMap::new(),
         }];
-        let result = generate_roocode_mcp_json(&servers).unwrap();
-        // Roo Code requires `streamable-http`, never a bare `http` type value.
+        let result = generate_zoocode_mcp_json(&servers).unwrap();
+        // Zoo Code requires `streamable-http`, never a bare `http` type value.
         assert!(result.contains("\"type\": \"streamable-http\""));
         assert!(!result.contains("\"type\": \"http\""));
         assert!(result.contains("mcpServers"));
@@ -1169,8 +1160,8 @@ bearer_token_env_var = "MCP_TOKEN"
     }
 
     #[test]
-    fn test_generate_roocode_mcp_json_stdio_matches_standard() {
-        // For stdio servers Roo Code uses the same shape as the standard format.
+    fn test_generate_zoocode_mcp_json_stdio_matches_standard() {
+        // For stdio servers Zoo Code uses the same shape as the standard format.
         let servers = vec![NormalizedMcpServer {
             name: "fs".to_string(),
             transport: McpTransport::Stdio {
@@ -1180,43 +1171,7 @@ bearer_token_env_var = "MCP_TOKEN"
             env: BTreeMap::new(),
         }];
         assert_eq!(
-            generate_roocode_mcp_json(&servers).unwrap(),
-            generate_mcp_json(&servers).unwrap()
-        );
-    }
-
-    #[test]
-    fn test_generate_continue_mcp_json_http_uses_streamable_http() {
-        // Continue.dev rejects a bare `http` transport — HTTP servers must use
-        // `streamable-http` (or `sse`).
-        let servers = vec![NormalizedMcpServer {
-            name: "context7".to_string(),
-            transport: McpTransport::Http {
-                url: "https://mcp.context7.com/mcp".to_string(),
-                headers: BTreeMap::new(),
-            },
-            env: BTreeMap::new(),
-        }];
-        let result = generate_continue_mcp_json(&servers).unwrap();
-        assert!(result.contains("\"type\": \"streamable-http\""));
-        assert!(!result.contains("\"type\": \"http\""));
-        assert!(result.contains("mcpServers"));
-        assert!(result.contains("https://mcp.context7.com/mcp"));
-    }
-
-    #[test]
-    fn test_generate_continue_mcp_json_stdio_matches_standard() {
-        // For stdio servers Continue uses the same shape as the standard format.
-        let servers = vec![NormalizedMcpServer {
-            name: "fs".to_string(),
-            transport: McpTransport::Stdio {
-                command: "npx".to_string(),
-                args: vec!["-y".to_string(), "@mcp/fs".to_string()],
-            },
-            env: BTreeMap::new(),
-        }];
-        assert_eq!(
-            generate_continue_mcp_json(&servers).unwrap(),
+            generate_zoocode_mcp_json(&servers).unwrap(),
             generate_mcp_json(&servers).unwrap()
         );
     }
@@ -1240,7 +1195,7 @@ bearer_token_env_var = "MCP_TOKEN"
 
     #[test]
     fn test_parse_mcp_json_streamable_http_roundtrip() {
-        // A Roo Code config with `streamable-http` must parse back to an HTTP transport.
+        // A Zoo Code config with `streamable-http` must parse back to an HTTP transport.
         let servers = vec![NormalizedMcpServer {
             name: "ctx".to_string(),
             transport: McpTransport::Http {
@@ -1249,7 +1204,7 @@ bearer_token_env_var = "MCP_TOKEN"
             },
             env: BTreeMap::new(),
         }];
-        let json = generate_roocode_mcp_json(&servers).unwrap();
+        let json = generate_zoocode_mcp_json(&servers).unwrap();
         let parsed = parse_mcp_json(&json).unwrap();
         assert_eq!(parsed.len(), 1);
         match &parsed[0].transport {

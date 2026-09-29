@@ -1,16 +1,15 @@
 pub mod amp;
 pub mod claude;
 pub mod codex;
-pub mod continuedev;
 pub mod copilot;
 pub mod cursor;
 pub mod deepseek;
 pub mod gemini;
 pub mod kiro;
 pub mod opencode;
-pub mod roocode;
 pub mod windsurf;
 pub mod zed;
+pub mod zoocode;
 
 use anyhow::{Context, Result};
 use std::io::Write;
@@ -127,9 +126,8 @@ pub fn all_adapters() -> Vec<Box<dyn AiToolAdapter>> {
         Box::new(copilot::CopilotAdapter),
         Box::new(codex::CodexAdapter),
         Box::new(opencode::OpenCodeAdapter),
-        Box::new(roocode::RooCodeAdapter),
+        Box::new(zoocode::ZooCodeAdapter),
         Box::new(gemini::GeminiAdapter),
-        Box::new(continuedev::ContinueDevAdapter),
         Box::new(zed::ZedAdapter),
         Box::new(kiro::KiroAdapter),
         Box::new(amp::AmpAdapter),
@@ -210,7 +208,7 @@ pub fn write_if_changed_atomic(path: &Path, content: &str, report: &mut WriteRep
 /// Collect rule files with the given extension from `dir`, recursing into
 /// subdirectories.
 ///
-/// Claude Code, Cursor and Roo Code all document that their rules directory is
+/// Claude Code, Cursor and Zoo Code all document that their rules directory is
 /// scanned recursively, so a project may organise rules under `frontend/`,
 /// `backend/`, … Reading only the top level silently dropped those rules when
 /// such a tool was used as the sync source.

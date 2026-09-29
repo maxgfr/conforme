@@ -103,9 +103,8 @@ fn setup_tool(dir: &TempDir, tool: &str) {
             )
             .unwrap();
         }
-        "continue" => fs::create_dir_all(dir.path().join(".continue")).unwrap(),
         "kiro" => fs::create_dir_all(dir.path().join(".kiro")).unwrap(),
-        "roocode" => fs::create_dir_all(dir.path().join(".roo")).unwrap(),
+        "zoocode" => fs::create_dir_all(dir.path().join(".roo")).unwrap(),
         _ => {}
     }
 }
@@ -185,20 +184,6 @@ fn test_roundtrip_copilot() {
 }
 
 #[test]
-fn test_roundtrip_continuedev() {
-    let adapter = conforme::adapters::continuedev::ContinueDevAdapter;
-    let dir = TempDir::new().unwrap();
-    setup_tool(&dir, "continue");
-
-    let config = roundtrip_config();
-    adapter.write(dir.path(), &config).unwrap();
-    let read_config = adapter.read(dir.path()).unwrap();
-
-    assert_eq!(read_config.instructions, config.instructions);
-    assert_eq!(read_config.rules.len(), 2);
-}
-
-#[test]
 fn test_roundtrip_kiro() {
     let adapter = conforme::adapters::kiro::KiroAdapter;
     let dir = TempDir::new().unwrap();
@@ -220,10 +205,10 @@ fn test_roundtrip_kiro() {
 }
 
 #[test]
-fn test_roundtrip_roocode() {
-    let adapter = conforme::adapters::roocode::RooCodeAdapter;
+fn test_roundtrip_zoocode() {
+    let adapter = conforme::adapters::zoocode::ZooCodeAdapter;
     let dir = TempDir::new().unwrap();
-    setup_tool(&dir, "roocode");
+    setup_tool(&dir, "zoocode");
 
     let config = NormalizedConfig {
         instructions: "Be helpful.".to_string(),
@@ -379,27 +364,10 @@ fn test_roundtrip_windsurf_skills() {
 }
 
 #[test]
-fn test_roundtrip_continuedev_mcp() {
-    let adapter = conforme::adapters::continuedev::ContinueDevAdapter;
+fn test_roundtrip_zoocode_skills_mcp() {
+    let adapter = conforme::adapters::zoocode::ZooCodeAdapter;
     let dir = TempDir::new().unwrap();
-    setup_tool(&dir, "continue");
-
-    adapter.write(dir.path(), &rich_config()).unwrap();
-    let read_config = adapter.read(dir.path()).unwrap();
-
-    // Continue emits `type: streamable-http` — it must parse back as HTTP.
-    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
-    assert_eq!(
-        find_http_url(&read_config, "api").as_deref(),
-        Some("https://example.com/mcp")
-    );
-}
-
-#[test]
-fn test_roundtrip_roocode_skills_mcp() {
-    let adapter = conforme::adapters::roocode::RooCodeAdapter;
-    let dir = TempDir::new().unwrap();
-    setup_tool(&dir, "roocode");
+    setup_tool(&dir, "zoocode");
 
     adapter.write(dir.path(), &rich_config()).unwrap();
     let read_config = adapter.read(dir.path()).unwrap();
@@ -563,7 +531,7 @@ fn test_write_then_generate_matches() {
 
 // --- Source-side discovery: nested rule directories and .claude/CLAUDE.md ---
 //
-// Claude Code, Cursor and Roo Code all scan their rules directory recursively.
+// Claude Code, Cursor and Zoo Code all scan their rules directory recursively.
 // Reading only the top level silently dropped nested rules when one of those
 // tools was used as the sync source.
 
@@ -660,8 +628,8 @@ fn test_cursor_reads_nested_rules() {
 }
 
 #[test]
-fn test_roocode_reads_nested_rules() {
-    let adapter = conforme::adapters::roocode::RooCodeAdapter;
+fn test_zoocode_reads_nested_rules() {
+    let adapter = conforme::adapters::zoocode::ZooCodeAdapter;
     let dir = TempDir::new().unwrap();
     fs::create_dir_all(dir.path().join(".roo/rules/nested")).unwrap();
     fs::write(dir.path().join(".roo/rules/00-general.md"), "General.").unwrap();

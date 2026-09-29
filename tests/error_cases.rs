@@ -26,8 +26,7 @@ fn create_project_with_tools(agents_md: &str, tools: &[&str]) -> TempDir {
                 .unwrap();
             }
             "kiro" => fs::create_dir_all(dir.path().join(".kiro")).unwrap(),
-            "continue" => fs::create_dir_all(dir.path().join(".continue")).unwrap(),
-            "roocode" => fs::create_dir_all(dir.path().join(".roo")).unwrap(),
+            "zoocode" => fs::create_dir_all(dir.path().join(".roo")).unwrap(),
             "gemini" => fs::create_dir_all(dir.path().join(".gemini")).unwrap(),
             "opencode" => fs::create_dir_all(dir.path().join(".opencode")).unwrap(),
             _ => {}
@@ -201,28 +200,6 @@ Run npm run deploy.
         fs::read_to_string(&user_prompt).unwrap(),
         "---\ndescription: Draft notes\n---\nWrite notes.\n"
     );
-}
-
-#[test]
-fn test_sync_mcp_to_continue() {
-    let agents_md = r#"# Instructions
-Be helpful.
-
-## MCP: test-server
-<!-- command: node -->
-<!-- args: server.js -->
-"#;
-    let dir = create_project_with_tools(agents_md, &["continue"]);
-
-    conforme()
-        .args(["-C", dir.path().to_str().unwrap(), "sync"])
-        .assert()
-        .success();
-
-    assert!(dir.path().join(".continue/mcpServers/mcp.json").exists());
-    let mcp = fs::read_to_string(dir.path().join(".continue/mcpServers/mcp.json")).unwrap();
-    assert!(mcp.contains("mcpServers"));
-    assert!(mcp.contains("test-server"));
 }
 
 // ===== Agents sync to Cursor and Kiro =====
