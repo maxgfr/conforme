@@ -34,10 +34,10 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 
 | Tool | Config format | Frontmatter | AGENTS.md |
 |------|--------------|-------------|-----------|
-| Claude Code | `CLAUDE.md` + `.claude/rules/*.md` | `paths` (glob array) | Native when no `CLAUDE.md` exists |
+| Claude Code | `CLAUDE.md` + `.claude/rules/**/*.md` | `paths` (glob list or comma-separated string) | Native when no `CLAUDE.md` exists |
 | Cursor | `.cursor/rules/*.mdc` | `alwaysApply`, `globs`, `description` | Native |
-| Windsurf | `.devin/rules/*.md` (or legacy `.windsurf/rules/*.md`) | `trigger`, `description`, `globs` | Native |
-| GitHub Copilot | `.github/copilot-instructions.md` + `.github/instructions/` | `applyTo`, `excludeAgent` | Native |
+| Windsurf (now Devin Desktop) | `.devin/rules/*.md` (or legacy `.windsurf/rules/*.md`) | `trigger`, `description`, `globs` | Native |
+| GitHub Copilot | `.github/copilot-instructions.md` + `.github/instructions/**/*.instructions.md` | `applyTo`, `excludeAgent` | Native |
 | Kiro (AWS) | `.kiro/steering/*.md` | `inclusion`, `fileMatchPattern`, `name`, `description` | Native |
 | Zoo Code (Roo Code fork) | `.roo/rules/*.md` | None (plain Markdown) | Native |
 
@@ -48,9 +48,9 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 | OpenAI Codex CLI | `AGENTS.md` | Also supports `AGENTS.override.md` |
 | OpenCode | `AGENTS.md` | Falls back to `CLAUDE.md` |
 | Gemini CLI | `GEMINI.md` | Configurable to read AGENTS.md via settings.json |
-| Zed AI | `.rules` | Fallback chain: `.rules` → `.cursorrules` → `AGENTS.md` → `CLAUDE.md` |
+| Zed AI | `.rules` | First match wins: `.rules` → `.cursorrules` → `.windsurfrules` → `.clinerules` → `.github/copilot-instructions.md` → `AGENT.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` |
 | Amp (Sourcegraph) | `AGENTS.md` | Falls back to `AGENT.md` or `CLAUDE.md` |
-| DeepSeek Harness (`dsh`) | `AGENTS.md` | Falls back to `CLAUDE.md`; skills in `.dsh/skills/` |
+| DeepSeek Harness (`dsh`) | `AGENTS.md` | Also loads `CLAUDE.md` when present; skills in `.dsh/skills/` |
 
 ## Quick start
 
@@ -162,7 +162,7 @@ Review all changes for correctness and security.
 | Adapter | Rules | Skills | Agents | MCP |
 |---------|-------|--------|--------|-----|
 | Claude Code | `.claude/rules/*.md` | `.claude/skills/` + `.claude/commands/` | `.claude/agents/*.md` | `.mcp.json` |
-| GitHub Copilot | `.github/instructions/*.md` | `.github/skills/` | `.github/agents/*.agent.md` | `.vscode/mcp.json` (merged) |
+| GitHub Copilot | `.github/instructions/*.instructions.md` | `.github/skills/` | `.github/agents/*.agent.md` | `.vscode/mcp.json` (merged) |
 | Cursor | `.cursor/rules/*.mdc` | `.cursor/skills/` | `.cursor/agents/*.md` | `.cursor/mcp.json` |
 | Kiro (AWS) | `.kiro/steering/*.md` | `.kiro/skills/` | `.kiro/agents/*.md` | `.kiro/settings/mcp.json` |
 | Windsurf (Devin Desktop) | `.devin/rules/*.md` or `.windsurf/rules/*.md` | `.devin/skills/` or `.windsurf/skills/` | - | - |
@@ -222,7 +222,7 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | Claude Code | `.mcp.json` | `mcpServers` | `type: stdio/http`, with `env`, `headers` |
 | Cursor | `.cursor/mcp.json` | `mcpServers` | `type: stdio/http` |
 | Windsurf | _(none)_ | - | Cascade only reads the user-global `~/.config/devin/mcp_config.json`, so conforme generates nothing (Devin Local's project `.devin/mcp_config.json` is not generated yet) |
-| Copilot | `.vscode/mcp.json` (merged) | `servers` | Uses `servers` key (not `mcpServers`); supports `env` + `headers`; VS Code `inputs`/`sandbox` preserved |
+| Copilot | `.vscode/mcp.json` (merged) | `servers` | VS Code format: `servers` key (not `mcpServers`), `env` + `headers`, `inputs`/`sandbox` preserved. The Copilot CLI reads `.mcp.json` instead, which the Claude Code target writes |
 | Kiro | `.kiro/settings/mcp.json` | `mcpServers` | Standard format |
 | Zoo Code | `.roo/mcp.json` (merged) | `mcpServers` | HTTP uses `type: streamable-http` (not `http`), no `env` on remote servers; Zoo's `alwaysAllow`/`disabledTools` preserved |
 | Gemini CLI | `.gemini/settings.json` (merged) | `mcpServers` | No `type` field, uses `httpUrl` (not `url`) for HTTP |
@@ -640,10 +640,6 @@ Add to your CI pipeline:
 
 Or use the pre-commit hook for local enforcement.
 
-## License
-
-MIT
-
 ## Manual skill invocation
 
 Manual skills preserve `disable-model-invocation: true`, OpenCode V2 `metadata.opencode/autoinvoke: "false"`, and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. OpenCode V1 still needs the corresponding `permission.skill` deny entries; skill synchronization does not change user permissions.
@@ -663,3 +659,7 @@ The skill bundle disables implicit selection in Codex and Claude Code. OpenCode 
 ```
 
 On OpenCode 1.18.30, these rules hide the skills from the agent and reject skill-tool loading, while explicit `/name` commands remain available. Installation with `skills add` does not apply this OpenCode V1 configuration.
+
+## License
+
+MIT
