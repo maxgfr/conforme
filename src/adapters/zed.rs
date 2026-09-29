@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use crate::adapters::AiToolAdapter;
+use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::NormalizedConfig;
 
 /// Zed AI adapter.
@@ -39,10 +39,12 @@ impl AiToolAdapter for ZedAdapter {
         path.ends_with(Path::new(".zed/settings.json"))
     }
 
-    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+    fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         // Zed reads skills from the shared `.agents/skills/` location (same as
         // Codex/Amp), so track it for orphan cleanup.
-        vec![project_root.join(".agents").join("skills")]
+        vec![ManagedDir::subdirs(
+            project_root.join(".agents").join("skills"),
+        )]
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
@@ -110,31 +112,24 @@ impl AiToolAdapter for ZedAdapter {
         // `.zed/settings.json` is the user's entire Zed configuration (theme,
         // keybindings, editor settings, …), so we read any existing file and
         // replace only the managed `context_servers` key rather than clobbering it.
+        // Zed settings are JSONC, so comments outside that key are kept too.
         if !config.mcp_servers.is_empty() {
             let config_path = project_root.join(".zed").join("settings.json");
-            let existing = if config_path.exists() {
-                let content = std::fs::read_to_string(&config_path)
-                    .with_context(|| format!("failed to read {}", config_path.display()))?;
-                serde_json::from_str::<serde_json::Value>(&content)
-                    .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
-            } else {
-                serde_json::Value::Object(serde_json::Map::new())
-            };
-
-            let mut root_map = match existing {
-                serde_json::Value::Object(m) => m,
-                _ => serde_json::Map::new(),
-            };
-
-            let context_servers = crate::mcp::build_zed_context_servers_object(&config.mcp_servers);
-            root_map.insert(
-                "context_servers".to_string(),
-                serde_json::Value::Object(context_servers),
+            let existing = crate::json_settings::load(&config_path)?;
+            let context_servers = crate::json_settings::merge_server_entries(
+                existing.as_ref().and_then(|f| f.get("context_servers")),
+                crate::mcp::build_zed_context_servers_object(&config.mcp_servers),
+                crate::mcp::ZED_OWNED_SERVER_KEYS,
             );
-
-            let json = serde_json::to_string_pretty(&serde_json::Value::Object(root_map))
-                .context("failed to serialize .zed/settings.json")?;
-            files.push((config_path, format!("{}\n", json)));
+            let json = crate::json_settings::render(
+                existing.as_ref(),
+                &[(
+                    "context_servers",
+                    serde_json::Value::Object(context_servers),
+                )],
+                &[],
+            )?;
+            files.push((config_path, json));
         }
 
         Ok(files)

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::AiToolAdapter;
+use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::NormalizedConfig;
 
 /// DeepSeek Harness (`dsh`) adapter.
@@ -40,8 +40,10 @@ impl AiToolAdapter for DeepSeekAdapter {
         }
     }
 
-    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
-        vec![project_root.join(".dsh").join("skills")]
+    fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
+        vec![ManagedDir::subdirs(
+            project_root.join(".dsh").join("skills"),
+        )]
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
@@ -59,8 +61,15 @@ impl AiToolAdapter for DeepSeekAdapter {
         // `.dsh/skills` is the harness-native project root; `.agents/skills` is
         // the shared root it also scans, used as a fallback when a project only
         // carries the shared layout.
-        let mut skills =
-            crate::skills::read_skills_from_dir(&project_root.join(".dsh").join("skills"))?;
+        // The harness accepts both `<name>/SKILL.md` bundles and flat
+        // `<name>.md` files there; a bundle wins over a flat file of the same name.
+        let dsh_skills = project_root.join(".dsh").join("skills");
+        let mut skills = crate::skills::read_skills_from_dir(&dsh_skills)?;
+        for flat in crate::skills::read_flat_skills_from_dir(&dsh_skills)? {
+            if !skills.iter().any(|s| s.name == flat.name) {
+                skills.push(flat);
+            }
+        }
         if skills.is_empty() {
             skills =
                 crate::skills::read_skills_from_dir(&project_root.join(".agents").join("skills"))?;

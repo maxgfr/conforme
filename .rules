@@ -2,7 +2,7 @@
 
 ## Project overview
 
-conforme is a Rust CLI that synchronizes AI coding agent configurations across 13 tools. It reads config from a source tool (Claude Code, Cursor, etc.) or AGENTS.md, and propagates to all other tool-specific config files.
+conforme is a Rust CLI that synchronizes AI coding agent configurations across 12 tools. It reads config from a source tool (Claude Code, Cursor, etc.) or AGENTS.md, and propagates to all other tool-specific config files.
 
 ## Build & test
 
@@ -27,6 +27,9 @@ src/
   sync.rs           — Core sync engine: init, sync, check, status, remove commands
   detect.rs         — Tool detection (which tools present in project)
   hash.rs           — SHA-256 content hashing for change detection
+  json_settings.rs  — JSONC-safe merge of conforme's keys into user-owned JSON settings files
+                       (in-place edit keeps comments; unparsable file is refused, never overwritten;
+                       merge_server_entries keeps per-server keys conforme does not own)
   hook.rs           — Git pre-commit hook install/uninstall (like Husky)
   project_config.rs  — .conformerc.toml parser (source, only, exclude, clean options)
   validate.rs        — Config validation (duplicate names, empty content, invalid globs)
@@ -35,8 +38,7 @@ src/
   mcp.rs            — MCP config generation/parsing per tool:
                        - Codex: project `.codex/config.toml`, atomically merged with comment/settings preservation; strict safe parser — merge_codex_mcp_toml / parse_codex_mcp_toml
                        - Standard mcpServers: Claude, Kiro, Cursor
-                       - Roo Code: mcpServers, HTTP uses type "streamable-http" (not "http") — generate_roocode_mcp_json
-                       - Continue.dev: mcpServers, HTTP uses type "streamable-http" (bare "http" is rejected) — generate_continue_mcp_json
+                       - Zoo Code: mcpServers, HTTP uses type "streamable-http" (not "http") — generate_zoocode_mcp_json
                        - Claude .mcp.json parsing accepts http/https, sse, streamable-http, and ws transports (all mapped to the HTTP variant)
                        - Copilot: "servers" key (env + headers supported)
                        - OpenCode: "mcp" key merged into opencode.json, type local/remote, command as array, `environment` key
@@ -55,13 +57,12 @@ src/
     claude.rs       — Claude Code: CLAUDE.md (or .claude/CLAUDE.md when only that exists)
                        + .claude/rules/**/*.md, read recursively (paths: frontmatter)
     cursor.rs       — Cursor: .cursor/rules/**/*.mdc, read recursively (alwaysApply/globs/description); subagents at .cursor/agents/*.md
-    windsurf.rs     — Windsurf: .devin/rules/*.md when .devin/ exists, else .windsurf/rules/*.md (trigger/description/globs)
-    copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md
+    windsurf.rs     — Windsurf (now Devin Desktop): .devin/{rules,skills} when .devin/ exists, else .windsurf/{rules,skills} (trigger/description/globs)
+    copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md; MCP merged into .vscode/mcp.json
     codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively
     opencode.rs     — OpenCode: reads AGENTS.md natively
-    roocode.rs      — Roo Code / Cline: .roo/rules/**/*.md, read recursively (plain Markdown)
+    zoocode.rs      — Zoo Code (community fork of Roo Code): .roo/rules/**/*.md, read recursively (plain Markdown)
     gemini.rs       — Gemini CLI: GEMINI.md
-    continuedev.rs  — Continue.dev: .continue/rules/*.md (name/globs/alwaysApply)
     zed.rs          — Zed AI: .rules file
     kiro.rs         — Kiro (AWS): .kiro/steering/*.md (inclusion/fileMatchPattern)
     amp.rs          — Amp (Sourcegraph): reads AGENTS.md natively
@@ -129,29 +130,28 @@ Review for bugs.
 ### Adapter categories
 
 **Per-rule adapters** (have frontmatter or per-file rules):
-- Claude, Cursor, Windsurf, Copilot, Continue.dev, Kiro, Roo Code
+- Claude, Cursor, Windsurf, Copilot, Kiro, Zoo Code
 
 **Single-file adapters** (merge all content into one file):
 - Codex, OpenCode, Gemini, Zed, Amp, DeepSeek Harness
 
 ### Adapter mapping
 
-| Activation | Claude | Cursor | Windsurf | Copilot | Continue | Kiro |
-|---|---|---|---|---|---|---|
-| Always | in CLAUDE.md | `alwaysApply: true` | `trigger: always_on` | in main file | `alwaysApply: true` | `inclusion: always` |
-| GlobMatch | `paths: [globs]` | `globs:` | `trigger: glob` | `applyTo:` | `globs: [array]` | `inclusion: fileMatch` |
-| AgentDecision | no frontmatter | `description:` | `trigger: model_decision` | in main file | `description:` | `inclusion: auto` |
-| Manual | no frontmatter | `alwaysApply: false` | `trigger: manual` | in main file | `alwaysApply: false` | `inclusion: manual` |
+| Activation | Claude | Cursor | Windsurf | Copilot | Kiro |
+|---|---|---|---|---|---|
+| Always | in CLAUDE.md | `alwaysApply: true` | `trigger: always_on` | in main file | `inclusion: always` |
+| GlobMatch | `paths: [globs]` | `globs:` | `trigger: glob` | `applyTo:` | `inclusion: fileMatch` |
+| AgentDecision | no frontmatter | `description:` | `trigger: model_decision` | in main file | `inclusion: auto` |
+| Manual | no frontmatter | `alwaysApply: false` | `trigger: manual` | in main file | `inclusion: manual` |
 
 ### MCP key mapping per tool
 
 | Tool | JSON key | Notes |
 |---|---|---|
 | Claude, Kiro, Cursor | `mcpServers` | Standard format with `type: stdio/http` |
-| Roo Code | `mcpServers` | Standard format; HTTP uses `type: streamable-http` (not `http`) |
-| Continue.dev | `mcpServers` (inside `.continue/mcpServers/mcp.json`) | HTTP uses `type: streamable-http` (bare `http` is rejected) |
-| Copilot | `servers` | VS Code format; supports `env` + `headers` |
-| Windsurf | _(none)_ | Cascade only reads the user-global `~/.codeium/windsurf/mcp_config.json`; nothing project-scoped is generated |
+| Zoo Code | `mcpServers` (inside `.roo/mcp.json`) | HTTP uses `type: streamable-http` (not `http`), no `env` on remote servers; merged (keeps Zoo's `alwaysAllow`/`disabledTools`) |
+| Copilot | `servers` (inside `.vscode/mcp.json`) | VS Code format; supports `env` + `headers`; merged (keeps `inputs`/`sandbox`) |
+| Windsurf | _(none)_ | Cascade only reads the user-global `~/.config/devin/mcp_config.json`; nothing project-scoped is generated |
 | OpenCode | `mcp` (inside `opencode.json`) | `type: local/remote`; `command` is a single array; env key is `environment`; merged (preserves user keys) |
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; merged into existing settings (preserves theme/keybindings/etc.) |
 | Gemini | `mcpServers` (inside `.gemini/settings.json`) | No type field, uses `httpUrl` for HTTP; merged into existing settings |
@@ -161,13 +161,28 @@ Review for bugs.
 
 ### Rules-directory discovery
 
-Claude Code, Cursor and Roo Code all scan their rules directory **recursively**
+Claude Code, Cursor and Zoo Code all scan their rules directory **recursively**
 (`.claude/rules/frontend/react.md`, `.cursor/rules/backend/rpc.mdc`, …).
 `adapters::collect_rule_files` implements that scan for all three, sorting by
-base name (case-insensitive, so Roo's `00-`/`01-` prefixes keep their meaning)
+base name (case-insensitive, so Zoo's `00-`/`01-` prefixes keep their meaning)
 then by full path. Nested rules are written back flat, one file per rule name.
 `clean_orphans` stays non-recursive, so hand-authored files in subdirectories are
 never deleted.
+
+### Orphan cleanup and shared files
+
+`managed_directories()` returns `ManagedDir`s: each names the file suffix conforme
+writes there (`.md`, `.mdc`, `.instructions.md`, `.agent.md`), and orphan cleanup
+only deletes top-level files with that suffix. Skills directories are
+`ManagedDir::subdirs` (conforme only writes `<name>/SKILL.md` folders), so no
+top-level file there is ever swept. Files a tool accepts but conforme never
+writes (Kiro `.json` agents, dsh flat `<name>.md` skills, plain `.md` Copilot
+agents) therefore survive a sync.
+
+Every JSON file conforme merges into (`opencode.json`, `.zed/settings.json`,
+`.gemini/settings.json`, `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`)
+goes through `json_settings`, and together with `.codex/config.toml` is declared by
+`is_shared_file()` so `remove`/`migrate` never delete it wholesale.
 
 ### Sync algorithm
 
@@ -220,7 +235,7 @@ conforme migrate --source X --output Y    # Migrate config between tools
 
 This project uses Claude Code skills in `.claude/skills/`:
 
-- **verify-providers** — Audit all 13 provider adapters: upstream product still alive, official docs vs adapter code, safety invariants (managed dirs, shared settings files, round-trip, blank output), link check; then fix with regression tests
+- **verify-providers** — Audit all 12 provider adapters: upstream product still alive, official docs vs adapter code, safety invariants (managed dirs, shared settings files, round-trip, blank output), link check; then fix with regression tests
 
 ## MCP servers (.mcp.json)
 
@@ -251,17 +266,21 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - When adding a new adapter, update ALL of: README.md tables, src/help_ai.rs, src/cli.rs tool count, CLAUDE.md architecture section
 - Provider docs must list all official documentation URLs for the tool
 - Test round-trips: `read()` output fed into `generate()` should produce identical files
-- MCP JSON keys per tool: Claude/Kiro/RooCode/Gemini/Cursor/Continue.dev = `mcpServers`, Copilot = `servers`, OpenCode = `mcp` (inside `opencode.json`), Zed = `context_servers`, Amp = `amp.mcpServers`
+- MCP JSON keys per tool: Claude/Kiro/Zoo Code/Gemini/Cursor = `mcpServers`, Copilot = `servers`, OpenCode = `mcp` (inside `opencode.json`), Zed = `context_servers`, Amp = `amp.mcpServers`
 - OpenCode MCP specifics: `command` is a single array `[cmd, ...args]`, env key is `environment` (not `env`), servers live inside `opencode.json` at project root (conforme merges — never clobber user-authored keys)
-- Windsurf has NO project-level MCP file (Cascade only reads `~/.codeium/windsurf/mcp_config.json`); never generate `.windsurf/mcp.json`
-- Never add a user-authored directory (e.g. `.github/prompts/`) to `managed_directories()`: orphan cleanup deletes every file there that conforme did not generate
+- Windsurf has NO project-level MCP file (Cascade only reads `~/.config/devin/mcp_config.json`); never generate `.windsurf/mcp.json`
+- Never add a user-authored directory (e.g. `.github/prompts/`) to `managed_directories()`: orphan cleanup deletes every file there that carries the directory's suffix and that conforme did not generate
+- Give each `ManagedDir` the exact suffix conforme writes there (`ManagedDir::files(dir, ".agent.md")`), and use `ManagedDir::subdirs` for skills directories, so files the tool accepts but conforme never writes (Kiro `.json` agents, dsh flat skills) survive a sync
 - An adapter must generate no files for an empty config and never a blank file (guarded by `test_no_adapter_writes_blank_files`)
 - When an upstream tool is retired (as Amazon Q was), delete its adapter outright rather than keeping it behind a deprecation flag; the removal checklist is the mirror of the "adding a new adapter" one above
-- Any adapter that merges into a user-owned settings file (`opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json`, `.codex/config.toml`) MUST implement `is_shared_file()` so `remove` and `migrate` never delete it wholesale
+- Any adapter that merges into a user-owned settings file (`opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`, `.codex/config.toml`) MUST implement `is_shared_file()` so `remove` and `migrate` never delete it wholesale
+- Merge JSON settings through `json_settings::{load, merge_server_entries, render}`, never `serde_json::from_str(..).unwrap_or_default()`: those files are JSONC, and a parse failure must refuse the write instead of replacing the user's file
 - Amp MCP specifics: dotted `amp.mcpServers` key, no `type` field, merged into `.amp/settings.json` (never clobber user settings)
 - Cursor subagents: `.md` extension (not `.mdc`); no `tools` frontmatter field — tool access is inherited from the parent agent
 - Copilot skills: `.github/skills/<name>/SKILL.md` (NOT `.github/prompts/*.prompt.md` — prompt files are a separate VS Code feature)
 - Any adapter whose `generate()` writes skills, agents, or MCP MUST read them back in `read()`, or `--from <tool>` silently drops them
+- Skills and agents always carry a `description` (`description_or_name`): Codex, Copilot, Gemini, OpenCode and Zoo Code skip one without it
+- Tools with their own tool vocabulary (Gemini CLI, Kiro) get translated `tools` lists, never names copied verbatim from another host
 
 ## rust-conventions
 

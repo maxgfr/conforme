@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use crate::adapters::AiToolAdapter;
+use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::NormalizedConfig;
 
 /// Gemini CLI adapter.
@@ -38,10 +38,10 @@ impl AiToolAdapter for GeminiAdapter {
         path.ends_with(Path::new(".gemini/settings.json"))
     }
 
-    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+    fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
-            project_root.join(".gemini").join("agents"),
-            project_root.join(".gemini").join("skills"),
+            ManagedDir::files(project_root.join(".gemini").join("agents"), ".md"),
+            ManagedDir::subdirs(project_root.join(".gemini").join("skills")),
         ]
     }
 
@@ -59,8 +59,10 @@ impl AiToolAdapter for GeminiAdapter {
         // Read skills, agents, and MCP so a Gemini project round-trips as a source.
         let skills =
             crate::skills::read_skills_from_dir(&project_root.join(".gemini").join("skills"))?;
-        let agents =
-            crate::skills::read_agents_from_dir(&project_root.join(".gemini").join("agents"))?;
+        let agents = crate::skills::read_agents_from_dir(
+            &project_root.join(".gemini").join("agents"),
+            false,
+        )?;
         let mut mcp_servers = Vec::new();
         let settings_path = project_root.join(".gemini").join("settings.json");
         if settings_path.exists() {
@@ -121,29 +123,22 @@ impl AiToolAdapter for GeminiAdapter {
         // no type field, httpUrl for HTTP). `.gemini/settings.json` is the
         // general Gemini settings file (theme, context.fileName, …), so we read
         // any existing file and replace only the managed `mcpServers` key rather
-        // than clobbering user-authored settings.
+        // than clobbering user-authored settings. Gemini-only server options
+        // (`trust`, `timeout`, `includeTools`, …) survive the merge.
         if !config.mcp_servers.is_empty() {
             let config_path = project_root.join(".gemini").join("settings.json");
-            let existing = if config_path.exists() {
-                let content = std::fs::read_to_string(&config_path)
-                    .with_context(|| format!("failed to read {}", config_path.display()))?;
-                serde_json::from_str::<serde_json::Value>(&content)
-                    .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
-            } else {
-                serde_json::Value::Object(serde_json::Map::new())
-            };
-
-            let mut root_map = match existing {
-                serde_json::Value::Object(m) => m,
-                _ => serde_json::Map::new(),
-            };
-
-            let mcp_obj = crate::mcp::build_gemini_mcp_object(&config.mcp_servers);
-            root_map.insert("mcpServers".to_string(), serde_json::Value::Object(mcp_obj));
-
-            let json = serde_json::to_string_pretty(&serde_json::Value::Object(root_map))
-                .context("failed to serialize .gemini/settings.json")?;
-            files.push((config_path, format!("{}\n", json)));
+            let existing = crate::json_settings::load(&config_path)?;
+            let mcp_obj = crate::json_settings::merge_server_entries(
+                existing.as_ref().and_then(|f| f.get("mcpServers")),
+                crate::mcp::build_gemini_mcp_object(&config.mcp_servers),
+                crate::mcp::GEMINI_OWNED_SERVER_KEYS,
+            );
+            let json = crate::json_settings::render(
+                existing.as_ref(),
+                &[("mcpServers", serde_json::Value::Object(mcp_obj))],
+                &[],
+            )?;
+            files.push((config_path, json));
         }
 
         Ok(files)

@@ -1,7 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::AiToolAdapter;
+use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::NormalizedConfig;
 
 /// OpenCode adapter.
@@ -41,11 +41,14 @@ impl AiToolAdapter for OpenCodeAdapter {
         path.file_name().is_some_and(|name| name == "opencode.json")
     }
 
-    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+    fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         // Only the agents directory is managed. The top-level `.opencode/`
         // also holds user-owned files (`package.json` for plugins, commands,
         // tools, …) and must never be swept for orphans.
-        vec![project_root.join(".opencode").join("agents")]
+        vec![ManagedDir::files(
+            project_root.join(".opencode").join("agents"),
+            ".md",
+        )]
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
@@ -65,25 +68,24 @@ impl AiToolAdapter for OpenCodeAdapter {
 
         // Read agents back from `.opencode/agents/*.md`, falling back to the
         // `agent` key in `opencode.json` when no markdown agents exist.
-        let mut agents =
-            crate::skills::read_agents_from_dir(&project_root.join(".opencode").join("agents"))?;
+        let mut agents = crate::skills::read_agents_from_dir(
+            &project_root.join(".opencode").join("agents"),
+            true,
+        )?;
 
         // MCP servers live inside `opencode.json` under the `mcp` key, in
         // OpenCode's own shape (`type: local/remote`, `command` array,
         // `environment`) — not the standard `mcpServers` layout.
+        // OpenCode parses the file as JSONC, so comments are accepted here too.
         let mut mcp_servers = Vec::new();
         let config_path = project_root.join("opencode.json");
-        if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path)
-                .with_context(|| format!("failed to read {}", config_path.display()))?;
-            if let Ok(root) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(mcp) = root.get("mcp") {
-                    mcp_servers = crate::mcp::parse_opencode_mcp_object(mcp);
-                }
-                if agents.is_empty() {
-                    if let Some(agent) = root.get("agent") {
-                        agents = crate::mcp::parse_opencode_agent_object(agent);
-                    }
+        if let Some(root) = crate::json_settings::load(&config_path)? {
+            if let Some(mcp) = root.get("mcp") {
+                mcp_servers = crate::mcp::parse_opencode_mcp_object(mcp);
+            }
+            if agents.is_empty() {
+                if let Some(agent) = root.get("agent") {
+                    agents = crate::mcp::parse_opencode_agent_object(agent);
                 }
             }
         }
@@ -124,39 +126,35 @@ impl AiToolAdapter for OpenCodeAdapter {
         // Merge MCP + agent objects into opencode.json at the project root.
         // OpenCode reads MCP from opencode.json under the `mcp` key (not from a
         // standalone .opencode/mcp.json). We read any existing opencode.json
-        // to preserve user-authored keys, then replace only our managed keys.
+        // to preserve user-authored keys (and JSONC comments), then replace
+        // only our managed keys.
         if !config.mcp_servers.is_empty() || !config.agents.is_empty() {
             let config_path = project_root.join("opencode.json");
-            let existing = if config_path.exists() {
-                let content = std::fs::read_to_string(&config_path)
-                    .with_context(|| format!("failed to read {}", config_path.display()))?;
-                serde_json::from_str::<serde_json::Value>(&content)
-                    .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
-            } else {
-                serde_json::Value::Object(serde_json::Map::new())
-            };
+            let existing = crate::json_settings::load(&config_path)?;
 
-            let mut root_map = match existing {
-                serde_json::Value::Object(m) => m,
-                _ => serde_json::Map::new(),
-            };
-            root_map.entry("$schema".to_string()).or_insert_with(|| {
-                serde_json::Value::String("https://opencode.ai/config.json".to_string())
-            });
-
+            let mut set = Vec::new();
             if !config.mcp_servers.is_empty() {
-                let mcp_obj = crate::mcp::build_opencode_mcp_object(&config.mcp_servers);
-                root_map.insert("mcp".to_string(), serde_json::Value::Object(mcp_obj));
+                let mcp_obj = crate::json_settings::merge_server_entries(
+                    existing.as_ref().and_then(|f| f.get("mcp")),
+                    crate::mcp::build_opencode_mcp_object(&config.mcp_servers),
+                    crate::mcp::OPENCODE_OWNED_SERVER_KEYS,
+                );
+                set.push(("mcp", serde_json::Value::Object(mcp_obj)));
             }
-
             if !config.agents.is_empty() {
                 let agent_obj = crate::mcp::build_opencode_agent_object(&config.agents);
-                root_map.insert("agent".to_string(), serde_json::Value::Object(agent_obj));
+                set.push(("agent", serde_json::Value::Object(agent_obj)));
             }
 
-            let json = serde_json::to_string_pretty(&serde_json::Value::Object(root_map))
-                .context("failed to serialize opencode.json")?;
-            files.push((config_path, format!("{}\n", json)));
+            let json = crate::json_settings::render(
+                existing.as_ref(),
+                &set,
+                &[(
+                    "$schema",
+                    serde_json::Value::String("https://opencode.ai/config.json".to_string()),
+                )],
+            )?;
+            files.push((config_path, json));
         }
 
         Ok(files)

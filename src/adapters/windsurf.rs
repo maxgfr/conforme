@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::AiToolAdapter;
+use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
 use crate::frontmatter;
 
@@ -14,10 +14,22 @@ pub struct WindsurfAdapter;
 /// write (and read) `.devin/rules/` when that directory exists, otherwise keep
 /// the legacy layout that existing projects rely on.
 fn rules_dir(project_root: &Path) -> PathBuf {
+    config_dir(project_root).join("rules")
+}
+
+/// Skills follow the same precedence. Devin Desktop documents
+/// `.windsurf/skills/` as legacy and ignores it once `.devin/skills/` exists
+/// ("the two are not merged"), so a project with `.devin/` gets its skills
+/// there.
+fn skills_dir(project_root: &Path) -> PathBuf {
+    config_dir(project_root).join("skills")
+}
+
+fn config_dir(project_root: &Path) -> PathBuf {
     if project_root.join(".devin").is_dir() {
-        project_root.join(".devin").join("rules")
+        project_root.join(".devin")
     } else {
-        project_root.join(".windsurf").join("rules")
+        project_root.join(".windsurf")
     }
 }
 
@@ -42,22 +54,24 @@ impl AiToolAdapter for WindsurfAdapter {
             skills: true,
             agents: false,
             // Cascade only reads the user-global
-            // ~/.codeium/windsurf/mcp_config.json; there is no project-level
+            // ~/.config/devin/mcp_config.json; there is no project-level
             // MCP file, so conforme has nothing project-scoped to write.
             mcp: false,
         }
     }
 
-    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
-        let mut dirs = vec![rules_dir(project_root)];
+    fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
+        let rules = rules_dir(project_root);
         // When a project has migrated to `.devin/rules/`, stale rules conforme
         // previously generated under `.windsurf/rules/` must go too, or Cascade
         // would keep two divergent copies of the same rule set.
         let legacy = project_root.join(".windsurf").join("rules");
-        if !dirs.contains(&legacy) && legacy.is_dir() {
-            dirs.push(legacy);
+        let legacy_is_stale = legacy != rules && legacy.is_dir();
+        let mut dirs = vec![ManagedDir::files(rules, ".md")];
+        if legacy_is_stale {
+            dirs.push(ManagedDir::files(legacy, ".md"));
         }
-        dirs.push(project_root.join(".windsurf").join("skills"));
+        dirs.push(ManagedDir::subdirs(skills_dir(project_root)));
         dirs
     }
 
@@ -99,8 +113,7 @@ impl AiToolAdapter for WindsurfAdapter {
         }
 
         // Read skills back so a Windsurf project round-trips as a source.
-        let skills =
-            crate::skills::read_skills_from_dir(&project_root.join(".windsurf").join("skills"))?;
+        let skills = crate::skills::read_skills_from_dir(&skills_dir(project_root))?;
 
         Ok(NormalizedConfig {
             instructions,
@@ -138,7 +151,7 @@ impl AiToolAdapter for WindsurfAdapter {
         // Generate skills as .windsurf/skills/<name>/SKILL.md
         if !config.skills.is_empty() {
             files.extend(crate::skills::generate_windsurf_skills(
-                project_root,
+                &skills_dir(project_root),
                 &config.skills,
             )?);
         }
@@ -292,9 +305,43 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join(".devin")).unwrap();
         std::fs::create_dir_all(tmp.path().join(".windsurf").join("rules")).unwrap();
 
-        let dirs = adapter.managed_directories(tmp.path());
+        let dirs: Vec<_> = adapter
+            .managed_directories(tmp.path())
+            .into_iter()
+            .map(|d| d.path)
+            .collect();
         assert!(dirs.contains(&tmp.path().join(".devin").join("rules")));
         assert!(dirs.contains(&tmp.path().join(".windsurf").join("rules")));
+        assert!(dirs.contains(&tmp.path().join(".devin").join("skills")));
+    }
+
+    #[test]
+    fn test_skills_follow_devin_precedence() {
+        use crate::config::NormalizedSkill;
+        let adapter = WindsurfAdapter;
+        let config = NormalizedConfig {
+            skills: vec![NormalizedSkill {
+                name: "deploy".to_string(),
+                description: "Deploy".to_string(),
+                content: "Run deploy.".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let legacy = tempfile::tempdir().unwrap();
+        let files = adapter.generate(legacy.path(), &config).unwrap();
+        assert_eq!(
+            files[0].0,
+            legacy.path().join(".windsurf/skills/deploy/SKILL.md")
+        );
+
+        let devin = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(devin.path().join(".devin")).unwrap();
+        adapter.write(devin.path(), &config).unwrap();
+        assert!(devin.path().join(".devin/skills/deploy/SKILL.md").exists());
+        assert!(!devin.path().join(".windsurf/skills").exists());
+        assert_eq!(adapter.read(devin.path()).unwrap().skills.len(), 1);
     }
 
     use crate::config::{

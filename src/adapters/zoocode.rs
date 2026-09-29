@@ -1,21 +1,21 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use crate::adapters::AiToolAdapter;
+use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
 
-/// Roo Code / Cline adapter.
+/// Zoo Code (community fork of Roo Code) adapter.
 /// Rules in .roo/rules/*.md — plain Markdown, NO YAML frontmatter.
 /// Files loaded in alphabetical order. Mode-specific rules in .roo/rules-{mode}/.
-pub struct RooCodeAdapter;
+pub struct ZooCodeAdapter;
 
-impl AiToolAdapter for RooCodeAdapter {
+impl AiToolAdapter for ZooCodeAdapter {
     fn name(&self) -> &str {
-        "Roo Code"
+        "Zoo Code"
     }
 
     fn id(&self) -> &str {
-        "roocode"
+        "zoocode"
     }
 
     fn detect(&self, project_root: &Path) -> bool {
@@ -33,10 +33,17 @@ impl AiToolAdapter for RooCodeAdapter {
         }
     }
 
-    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+    /// Zoo Code writes its own per-server state (`alwaysAllow`,
+    /// `disabledTools`) into `.roo/mcp.json`, so `remove`/`migrate` must
+    /// never delete the file wholesale.
+    fn is_shared_file(&self, path: &Path) -> bool {
+        path.ends_with(Path::new(".roo/mcp.json"))
+    }
+
+    fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
-            project_root.join(".roo").join("rules"),
-            project_root.join(".roo").join("skills"),
+            ManagedDir::files(project_root.join(".roo").join("rules"), ".md"),
+            ManagedDir::subdirs(project_root.join(".roo").join("skills")),
         ]
     }
 
@@ -45,7 +52,7 @@ impl AiToolAdapter for RooCodeAdapter {
         let mut rules = Vec::new();
 
         let rules_dir = project_root.join(".roo").join("rules");
-        // Roo Code reads `.roo/rules/` recursively, sorting by base name only.
+        // Zoo Code reads `.roo/rules/` recursively, sorting by base name only.
         for path in crate::adapters::collect_rule_files(&rules_dir, "md")? {
             let content = std::fs::read_to_string(&path)
                 .with_context(|| format!("failed to read {}", path.display()))?;
@@ -66,7 +73,7 @@ impl AiToolAdapter for RooCodeAdapter {
             }
         }
 
-        // Read skills and MCP back so a Roo Code project round-trips as a source.
+        // Read skills and MCP back so a Zoo Code project round-trips as a source.
         let skills =
             crate::skills::read_skills_from_dir(&project_root.join(".roo").join("skills"))?;
         let mut mcp_servers = Vec::new();
@@ -94,7 +101,7 @@ impl AiToolAdapter for RooCodeAdapter {
         let mut files = Vec::new();
         let mut idx = 0u32;
 
-        // Roo Code has no frontmatter — files are plain Markdown, loaded alphabetically.
+        // Zoo Code has no frontmatter — files are plain Markdown, loaded alphabetically.
         // Use numeric prefix for ordering: 00-general, 01-rule-name, etc.
 
         if !config.instructions.is_empty() {
@@ -107,7 +114,7 @@ impl AiToolAdapter for RooCodeAdapter {
 
         for rule in &config.rules {
             let filename = format!("{:02}-{}.md", idx, sanitize_name(&rule.name));
-            // Roo Code doesn't support activation modes — all rules are always-on.
+            // Zoo Code doesn't support activation modes — all rules are always-on.
             // For glob/agent-decision rules, we include a comment noting the intended scope.
             let mut content = String::new();
             match &rule.activation {
@@ -129,20 +136,31 @@ impl AiToolAdapter for RooCodeAdapter {
 
         // Generate skills as .roo/skills/<name>/SKILL.md
         if !config.skills.is_empty() {
-            files.extend(crate::skills::generate_roocode_skills(
+            files.extend(crate::skills::generate_zoocode_skills(
                 project_root,
                 &config.skills,
             )?);
         }
 
-        // Generate MCP config as .roo/mcp.json
-        // Roo Code uses `type: "streamable-http"` for HTTP servers (not bare "http").
+        // Merge MCP config into .roo/mcp.json. Zoo Code uses
+        // `type: "streamable-http"` for HTTP servers (not bare "http"), and
+        // writes its own per-server state (`alwaysAllow`, `disabledTools`)
+        // into this file, so existing entries keep the keys conforme does
+        // not own.
         if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_roocode_mcp_json(&config.mcp_servers)?;
-            files.push((
-                project_root.join(".roo").join("mcp.json"),
-                format!("{}\n", mcp_json),
-            ));
+            let mcp_path = project_root.join(".roo").join("mcp.json");
+            let existing = crate::json_settings::load(&mcp_path)?;
+            let servers = crate::json_settings::merge_server_entries(
+                existing.as_ref().and_then(|f| f.get("mcpServers")),
+                crate::mcp::build_zoocode_servers_object(&config.mcp_servers),
+                crate::mcp::ZOOCODE_OWNED_SERVER_KEYS,
+            );
+            let json = crate::json_settings::render(
+                existing.as_ref(),
+                &[("mcpServers", serde_json::Value::Object(servers))],
+                &[],
+            )?;
+            files.push((mcp_path, json));
         }
 
         Ok(files)
@@ -155,8 +173,8 @@ mod tests {
     use crate::config::{McpTransport, NormalizedConfig, NormalizedMcpServer};
     use std::path::Path;
 
-    fn make_adapter() -> RooCodeAdapter {
-        RooCodeAdapter
+    fn make_adapter() -> ZooCodeAdapter {
+        ZooCodeAdapter
     }
 
     #[test]

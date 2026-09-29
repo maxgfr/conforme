@@ -49,11 +49,22 @@ pub fn merge_codex_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> 
 
         match &server.transport {
             McpTransport::Stdio { command, args } => {
-                entry.remove("url");
-                entry.remove("http_headers");
-                entry.remove("env_http_headers");
-                entry.remove("bearer_token_env_var");
-                entry.remove("auth");
+                // Every key Codex rejects on a stdio server ("X is not
+                // supported for stdio"), so a server switched from HTTP to
+                // stdio stays loadable.
+                for key in [
+                    "url",
+                    "http_headers",
+                    "env_http_headers",
+                    "http_headers_helper",
+                    "bearer_token_env_var",
+                    "bearer_token",
+                    "auth",
+                    "oauth",
+                    "oauth_resource",
+                ] {
+                    entry.remove(key);
+                }
                 entry.insert("command", value(command.clone()));
 
                 let mut toml_args = Array::new();
@@ -256,40 +267,71 @@ fn toml_string_map(
 /// Generate a `.mcp.json` file (Claude Code format) from normalized MCP servers.
 /// This is the common format: { "mcpServers": { "name": { ... } } }
 pub fn generate_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
-    build_mcpservers_json(servers, "http")
+    wrap_servers(
+        "mcpServers",
+        build_standard_servers_object(servers, "http", true),
+    )
 }
 
-/// Generate Roo Code's `.roo/mcp.json`.
-/// Identical to the standard `mcpServers` format, except HTTP servers use
-/// `type: "streamable-http"`. Roo Code does not recognize a bare `"http"`
-/// transport — it only accepts `streamable-http` (modern) or `sse` (legacy).
-pub fn generate_roocode_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
-    build_mcpservers_json(servers, "streamable-http")
+/// Generate Zoo Code's `.roo/mcp.json` (a fresh file; the adapter merges into
+/// an existing one through [`build_zoocode_servers_object`]).
+#[cfg(test)]
+pub fn generate_zoocode_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
+    wrap_servers("mcpServers", build_zoocode_servers_object(servers))
 }
 
-/// Generate Continue.dev's MCP config (`.continue/mcpServers/mcp.json`).
-/// Identical to the standard `mcpServers` format, except HTTP servers use
-/// `type: "streamable-http"`. Continue only recognizes `stdio`, `sse`, and
-/// `streamable-http` transport values — a bare `"http"` is not accepted, so
-/// remote servers must be emitted as `streamable-http`.
-pub fn generate_continue_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
-    build_mcpservers_json(servers, "streamable-http")
+/// Build Zoo Code's `mcpServers` object.
+/// Identical to the standard format, except HTTP servers use
+/// `type: "streamable-http"` (Zoo Code does not recognize a bare `"http"`; it
+/// only accepts `streamable-http` or the legacy `sse`), and remote entries
+/// carry no `env`: Zoo's schema requires `env` to be absent on
+/// `sse`/`streamable-http` servers and rejects the entry otherwise.
+pub fn build_zoocode_servers_object(
+    servers: &[NormalizedMcpServer],
+) -> serde_json::Map<String, serde_json::Value> {
+    build_standard_servers_object(servers, "streamable-http", false)
 }
 
-/// Shared builder for the standard `{ "mcpServers": { "name": { ... } } }` format.
-/// `http_type` is the value written for the `type` field of HTTP servers
-/// (`"http"` for most tools, `"streamable-http"` for Roo Code).
-fn build_mcpservers_json(servers: &[NormalizedMcpServer], http_type: &str) -> Result<String> {
+/// Generate Copilot VS Code MCP format (uses `servers` key, not `mcpServers`).
+/// Supports `env` for stdio and `headers` for HTTP transports.
+#[cfg(test)]
+pub fn generate_copilot_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
+    wrap_servers("servers", build_copilot_servers_object(servers))
+}
+
+/// Build the Copilot `servers` object of `.vscode/mcp.json` (the adapter
+/// merges it so the file's `inputs` and `sandbox` keys survive).
+pub fn build_copilot_servers_object(
+    servers: &[NormalizedMcpServer],
+) -> serde_json::Map<String, serde_json::Value> {
+    build_standard_servers_object(servers, "http", true)
+}
+
+fn wrap_servers(key: &str, servers: serde_json::Map<String, serde_json::Value>) -> Result<String> {
     if servers.is_empty() {
         return Ok(String::new());
     }
+    let mut root = serde_json::Map::new();
+    root.insert(key.to_string(), serde_json::Value::Object(servers));
+    serde_json::to_string_pretty(&serde_json::Value::Object(root))
+        .context("failed to serialize MCP config")
+}
 
+/// Shared builder for the standard server entry shape (`type`, `command`/`args`
+/// or `url`/`headers`, `env`). `http_type` is the value written for the `type`
+/// field of HTTP servers (`"http"` for most tools, `"streamable-http"` for Zoo
+/// Code); `env_on_http` is false for tools that reject `env` on remote entries.
+fn build_standard_servers_object(
+    servers: &[NormalizedMcpServer],
+    http_type: &str,
+    env_on_http: bool,
+) -> serde_json::Map<String, serde_json::Value> {
     let mut mcp_servers = serde_json::Map::new();
 
     for server in servers {
         let mut entry = serde_json::Map::new();
 
-        match &server.transport {
+        let is_http = match &server.transport {
             McpTransport::Stdio { command, args } => {
                 entry.insert(
                     "type".to_string(),
@@ -304,6 +346,7 @@ fn build_mcpservers_json(servers: &[NormalizedMcpServer], http_type: &str) -> Re
                     .map(|a| serde_json::Value::String(a.clone()))
                     .collect();
                 entry.insert("args".to_string(), serde_json::Value::Array(json_args));
+                false
             }
             McpTransport::Http { url, headers } => {
                 entry.insert(
@@ -318,10 +361,11 @@ fn build_mcpservers_json(servers: &[NormalizedMcpServer], http_type: &str) -> Re
                         .collect();
                     entry.insert("headers".to_string(), serde_json::Value::Object(h));
                 }
+                true
             }
-        }
+        };
 
-        if !server.env.is_empty() {
+        if !server.env.is_empty() && (env_on_http || !is_http) {
             let env_obj: serde_json::Map<String, serde_json::Value> = server
                 .env
                 .iter()
@@ -333,68 +377,7 @@ fn build_mcpservers_json(servers: &[NormalizedMcpServer], http_type: &str) -> Re
         mcp_servers.insert(server.name.clone(), serde_json::Value::Object(entry));
     }
 
-    let root = serde_json::json!({ "mcpServers": mcp_servers });
-    serde_json::to_string_pretty(&root).context("failed to serialize MCP config")
-}
-
-/// Generate Copilot VS Code MCP format (uses `servers` key, not `mcpServers`).
-/// Supports `env` for stdio and `headers` for HTTP transports.
-pub fn generate_copilot_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
-    if servers.is_empty() {
-        return Ok(String::new());
-    }
-
-    let mut mcp_servers = serde_json::Map::new();
-
-    for server in servers {
-        let mut entry = serde_json::Map::new();
-
-        match &server.transport {
-            McpTransport::Stdio { command, args } => {
-                entry.insert(
-                    "type".to_string(),
-                    serde_json::Value::String("stdio".to_string()),
-                );
-                entry.insert(
-                    "command".to_string(),
-                    serde_json::Value::String(command.clone()),
-                );
-                let json_args: Vec<serde_json::Value> = args
-                    .iter()
-                    .map(|a| serde_json::Value::String(a.clone()))
-                    .collect();
-                entry.insert("args".to_string(), serde_json::Value::Array(json_args));
-            }
-            McpTransport::Http { url, headers } => {
-                entry.insert(
-                    "type".to_string(),
-                    serde_json::Value::String("http".to_string()),
-                );
-                entry.insert("url".to_string(), serde_json::Value::String(url.clone()));
-                if !headers.is_empty() {
-                    let h: serde_json::Map<String, serde_json::Value> = headers
-                        .iter()
-                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                        .collect();
-                    entry.insert("headers".to_string(), serde_json::Value::Object(h));
-                }
-            }
-        }
-
-        if !server.env.is_empty() {
-            let env_obj: serde_json::Map<String, serde_json::Value> = server
-                .env
-                .iter()
-                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                .collect();
-            entry.insert("env".to_string(), serde_json::Value::Object(env_obj));
-        }
-
-        mcp_servers.insert(server.name.clone(), serde_json::Value::Object(entry));
-    }
-
-    let root = serde_json::json!({ "servers": mcp_servers });
-    serde_json::to_string_pretty(&root).context("failed to serialize Copilot MCP config")
+    mcp_servers
 }
 
 /// Build the OpenCode `mcp` object (not a full file — `opencode.json` is merged by the adapter).
@@ -562,6 +545,31 @@ pub fn parse_opencode_agent_object(
     result
 }
 
+// Keys conforme may write into a server entry, per tool, across every
+// transport. When a server is re-synced these are regenerated; any other key
+// an existing entry carries is tool-specific configuration the user (or the
+// tool itself) added, and `json_settings::merge_server_entries` keeps it.
+// Enable/disable flags are listed so a sync re-enables the server, matching
+// the Codex merge: leaving it disabled would make `check` pass while the tool
+// still hides the server.
+pub const ZED_OWNED_SERVER_KEYS: &[&str] = &["command", "args", "env", "url", "headers"];
+pub const AMP_OWNED_SERVER_KEYS: &[&str] = &["command", "args", "env", "url", "headers"];
+pub const GEMINI_OWNED_SERVER_KEYS: &[&str] =
+    &["command", "args", "env", "url", "httpUrl", "headers"];
+pub const OPENCODE_OWNED_SERVER_KEYS: &[&str] = &[
+    "type",
+    "command",
+    "environment",
+    "url",
+    "headers",
+    "enabled",
+];
+pub const COPILOT_OWNED_SERVER_KEYS: &[&str] =
+    &["type", "command", "args", "env", "url", "headers"];
+pub const ZOOCODE_OWNED_SERVER_KEYS: &[&str] = &[
+    "type", "command", "args", "env", "url", "headers", "disabled",
+];
+
 /// Build the Zed `context_servers` object (not a full file — `.zed/settings.json`
 /// is merged by the adapter so user-authored settings such as theme and
 /// keybindings are preserved). Flat shape: stdio uses `command`/`args`/`env`,
@@ -726,20 +734,21 @@ pub fn build_opencode_agent_object(
 
     for agent in agents {
         let mut entry = serde_json::Map::new();
-        if !agent.description.is_empty() {
-            entry.insert(
-                "description".to_string(),
-                serde_json::Value::String(agent.description.clone()),
-            );
-        }
+        entry.insert(
+            "description".to_string(),
+            serde_json::Value::String(crate::skills::description_or_name(
+                &agent.description,
+                &agent.name,
+            )),
+        );
         entry.insert(
             "mode".to_string(),
             serde_json::Value::String("subagent".to_string()),
         );
-        if let Some(model) = &agent.model {
+        if let Some(model) = crate::skills::opencode_model(agent.model.as_deref()) {
             entry.insert(
                 "model".to_string(),
-                serde_json::Value::String(model.clone()),
+                serde_json::Value::String(model.to_string()),
             );
         }
         if !agent.content.is_empty() {
@@ -765,8 +774,9 @@ pub fn build_opencode_agent_object(
 /// `httpUrl`, Zed/Amp remote `url`; a Windsurf-style `serverUrl` is also
 /// accepted for hand-written files).
 pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
-    let root: serde_json::Value =
-        serde_json::from_str(content).context("failed to parse MCP JSON")?;
+    // JSONC-tolerant: Zed, VS Code and Zoo Code settings may hold comments
+    // and trailing commas.
+    let root = crate::json_settings::parse_jsonc(content).context("failed to parse MCP JSON")?;
 
     let servers_key = if root.get("mcpServers").is_some() {
         "mcpServers"
@@ -981,7 +991,11 @@ startup_timeout_sec = 20
 url = "https://example.com/mcp"
 auth = "oauth"
 bearer_token_env_var = "TOKEN"
+bearer_token = "legacy"
 env_http_headers = { Authorization = "TOKEN" }
+http_headers_helper = "./headers.sh"
+oauth = { client_id = "conforme" }
+oauth_resource = "https://example.com"
 "#;
         let stdio_server = NormalizedMcpServer {
             name: "server".to_string(),
@@ -993,9 +1007,16 @@ env_http_headers = { Authorization = "TOKEN" }
         };
 
         let stdio_result = merge_codex_mcp_toml(existing_http, &[stdio_server]).unwrap();
-        assert!(!stdio_result.contains("auth"));
-        assert!(!stdio_result.contains("bearer_token_env_var"));
-        assert!(!stdio_result.contains("env_http_headers"));
+        // Codex rejects each of these on a stdio server.
+        for key in [
+            "auth",
+            "bearer_token",
+            "env_http_headers",
+            "http_headers_helper",
+            "oauth",
+        ] {
+            assert!(!stdio_result.contains(key), "{key} kept:\n{stdio_result}");
+        }
         assert_eq!(parse_codex_mcp_toml(&stdio_result).unwrap().len(), 1);
 
         let existing_stdio = r#"[mcp_servers.server]
@@ -1150,7 +1171,7 @@ bearer_token_env_var = "MCP_TOKEN"
     }
 
     #[test]
-    fn test_generate_roocode_mcp_json_http_uses_streamable_http() {
+    fn test_generate_zoocode_mcp_json_http_uses_streamable_http() {
         let servers = vec![NormalizedMcpServer {
             name: "context7".to_string(),
             transport: McpTransport::Http {
@@ -1159,8 +1180,8 @@ bearer_token_env_var = "MCP_TOKEN"
             },
             env: BTreeMap::new(),
         }];
-        let result = generate_roocode_mcp_json(&servers).unwrap();
-        // Roo Code requires `streamable-http`, never a bare `http` type value.
+        let result = generate_zoocode_mcp_json(&servers).unwrap();
+        // Zoo Code requires `streamable-http`, never a bare `http` type value.
         assert!(result.contains("\"type\": \"streamable-http\""));
         assert!(!result.contains("\"type\": \"http\""));
         assert!(result.contains("mcpServers"));
@@ -1169,8 +1190,36 @@ bearer_token_env_var = "MCP_TOKEN"
     }
 
     #[test]
-    fn test_generate_roocode_mcp_json_stdio_matches_standard() {
-        // For stdio servers Roo Code uses the same shape as the standard format.
+    fn test_zoocode_remote_server_carries_no_env() {
+        // Zoo Code's schema requires `env` to be absent on sse/streamable-http
+        // entries and rejects the server otherwise; stdio keeps its env.
+        let env = BTreeMap::from([("TOKEN".to_string(), "x".to_string())]);
+        let servers = vec![
+            NormalizedMcpServer {
+                name: "remote".to_string(),
+                transport: McpTransport::Http {
+                    url: "https://example.com/mcp".to_string(),
+                    headers: BTreeMap::new(),
+                },
+                env: env.clone(),
+            },
+            NormalizedMcpServer {
+                name: "local".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec![],
+                },
+                env,
+            },
+        ];
+        let servers = build_zoocode_servers_object(&servers);
+        assert!(servers["remote"].get("env").is_none());
+        assert_eq!(servers["local"]["env"]["TOKEN"], "x");
+    }
+
+    #[test]
+    fn test_generate_zoocode_mcp_json_stdio_matches_standard() {
+        // For stdio servers Zoo Code uses the same shape as the standard format.
         let servers = vec![NormalizedMcpServer {
             name: "fs".to_string(),
             transport: McpTransport::Stdio {
@@ -1180,43 +1229,7 @@ bearer_token_env_var = "MCP_TOKEN"
             env: BTreeMap::new(),
         }];
         assert_eq!(
-            generate_roocode_mcp_json(&servers).unwrap(),
-            generate_mcp_json(&servers).unwrap()
-        );
-    }
-
-    #[test]
-    fn test_generate_continue_mcp_json_http_uses_streamable_http() {
-        // Continue.dev rejects a bare `http` transport — HTTP servers must use
-        // `streamable-http` (or `sse`).
-        let servers = vec![NormalizedMcpServer {
-            name: "context7".to_string(),
-            transport: McpTransport::Http {
-                url: "https://mcp.context7.com/mcp".to_string(),
-                headers: BTreeMap::new(),
-            },
-            env: BTreeMap::new(),
-        }];
-        let result = generate_continue_mcp_json(&servers).unwrap();
-        assert!(result.contains("\"type\": \"streamable-http\""));
-        assert!(!result.contains("\"type\": \"http\""));
-        assert!(result.contains("mcpServers"));
-        assert!(result.contains("https://mcp.context7.com/mcp"));
-    }
-
-    #[test]
-    fn test_generate_continue_mcp_json_stdio_matches_standard() {
-        // For stdio servers Continue uses the same shape as the standard format.
-        let servers = vec![NormalizedMcpServer {
-            name: "fs".to_string(),
-            transport: McpTransport::Stdio {
-                command: "npx".to_string(),
-                args: vec!["-y".to_string(), "@mcp/fs".to_string()],
-            },
-            env: BTreeMap::new(),
-        }];
-        assert_eq!(
-            generate_continue_mcp_json(&servers).unwrap(),
+            generate_zoocode_mcp_json(&servers).unwrap(),
             generate_mcp_json(&servers).unwrap()
         );
     }
@@ -1240,7 +1253,7 @@ bearer_token_env_var = "MCP_TOKEN"
 
     #[test]
     fn test_parse_mcp_json_streamable_http_roundtrip() {
-        // A Roo Code config with `streamable-http` must parse back to an HTTP transport.
+        // A Zoo Code config with `streamable-http` must parse back to an HTTP transport.
         let servers = vec![NormalizedMcpServer {
             name: "ctx".to_string(),
             transport: McpTransport::Http {
@@ -1249,7 +1262,7 @@ bearer_token_env_var = "MCP_TOKEN"
             },
             env: BTreeMap::new(),
         }];
-        let json = generate_roocode_mcp_json(&servers).unwrap();
+        let json = generate_zoocode_mcp_json(&servers).unwrap();
         let parsed = parse_mcp_json(&json).unwrap();
         assert_eq!(parsed.len(), 1);
         match &parsed[0].transport {
@@ -1496,7 +1509,7 @@ bearer_token_env_var = "MCP_TOKEN"
             name: "reviewer".to_string(),
             description: "Code review".to_string(),
             content: "Review code.".to_string(),
-            model: Some("gpt-4o".to_string()),
+            model: Some("openai/gpt-4o".to_string()),
             tools: vec![],
             ..Default::default()
         }];
@@ -1507,10 +1520,29 @@ bearer_token_env_var = "MCP_TOKEN"
             "Code review"
         );
         assert_eq!(entry.get("mode").unwrap().as_str().unwrap(), "subagent");
-        assert_eq!(entry.get("model").unwrap().as_str().unwrap(), "gpt-4o");
+        assert_eq!(
+            entry.get("model").unwrap().as_str().unwrap(),
+            "openai/gpt-4o"
+        );
         assert_eq!(
             entry.get("prompt").unwrap().as_str().unwrap(),
             "Review code."
         );
+    }
+
+    #[test]
+    fn test_opencode_agent_drops_bare_model_and_fills_description() {
+        // OpenCode resolves `model` as `provider/model`: a bare id would become
+        // provider `gpt-4o` with an empty model, so it is left out. An agent
+        // without a description is not listed, so the name stands in.
+        let agents = vec![crate::config::NormalizedAgent {
+            name: "reviewer".to_string(),
+            model: Some("gpt-4o".to_string()),
+            ..Default::default()
+        }];
+        let map = build_opencode_agent_object(&agents);
+        let entry = map["reviewer"].as_object().unwrap();
+        assert!(entry.get("model").is_none());
+        assert_eq!(entry["description"], "reviewer");
     }
 }

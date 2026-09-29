@@ -42,11 +42,11 @@ Also reads `AGENT.md` (singular) as fallback.
 
 - Skills can bundle MCP servers via `mcp.json` in skill directory
 - Skills support `includeTools` with glob patterns to filter exposed tools
-- Amp has custom commands in `.agents/commands/<name>.md` (not synced by conforme)
-- Amp spawns subagents internally via Task tool but does not support user-defined agent files
-- Settings at `.amp/settings.json` under `amp.mcpServers` key. That file is Amp's whole workspace settings blob, so conforme **merges** the `amp.mcpServers` key into any existing file rather than overwriting it, and `remove amp` / `migrate --source amp` leave the file in place
+- Amp spawns subagents internally via the Task tool; custom subagents exist only as TypeScript plugins (`amp.createAgent`), not agent files, so conforme syncs no agents here
+- Settings at `.amp/settings.json` under `amp.mcpServers` key. That file is Amp's whole workspace settings blob, so conforme **merges** the `amp.mcpServers` key into any existing file rather than overwriting it, and `remove amp` / `migrate --source amp` leave the file in place. The merge is JSONC-aware (comments outside the key survive, an unparsable file is left untouched) and keeps per-server keys conforme never emits
+- Workspace MCP servers must be approved with `amp mcp approve` before Amp starts them; precedence is CLI flag > workspace > user > skills
 - No `type` field in MCP entries — transport is inferred from the shape: stdio uses `command`/`args`, remote uses `url` (+ optional `headers`)
 - User settings live at `~/.config/amp/settings.json`; workspace settings are the nearest `.amp/settings.json` searched upward
 - Falls back to `AGENT.md` or `CLAUDE.md` if `AGENTS.md` not found
 - Amp's docs moved from `ampcode.com/manual` to `ampcode.com/docs` (the old paths 301-redirect); the manual is now split into per-topic pages under `/docs/customize/`
-- Skill discovery order puts `~/.config/agents/skills/`, `~/.agents/skills/` and `~/.config/amp/skills/` ahead of the project roots; conforme writes the project `.agents/skills/`, which Amp searches in the current directory and its parents
+- Skill discovery is first-match-by-name across: `~/.config/agents/skills/`, `~/.agents/skills/`, `~/.config/amp/skills/`, the project `.agents/skills/` and `.claude/skills/` (searched in the current directory and its parents), `amp.skills.path`, built-in skills, and the personal and workspace skill repositories (added 2026-08-11). conforme writes the project `.agents/skills/`

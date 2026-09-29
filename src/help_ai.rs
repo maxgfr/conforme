@@ -18,11 +18,11 @@ pub fn print_help_ai() {
         "claude",
         "CLAUDE.md + .claude/rules/*.md",
         &[
-            "Frontmatter: paths (glob array)",
+            "Frontmatter: paths (glob array; a comma-separated string is also read)",
             "Always rules → embedded in CLAUDE.md",
             "Glob rules → .claude/rules/{name}.md with paths: frontmatter",
             "Commands (.claude/commands/*.md) → synced as skills to other tools",
-            "Does NOT read AGENTS.md natively (use @AGENTS.md include)",
+            "Reads AGENTS.md natively only when no CLAUDE.md exists (conforme writes CLAUDE.md)",
         ],
     );
     print_tool(
@@ -33,20 +33,20 @@ pub fn print_help_ai() {
             "Frontmatter: alwaysApply (bool), globs (string), description (string)",
             "4 rule types: Always, Auto Attached (globs), Agent Requested (description), Manual",
             "Skills synced to .cursor/skills/<name>/SKILL.md",
-            "Subagents synced to .cursor/agents/<name>.md (plain .md, no tools field)",
+            "Subagents synced to .cursor/agents/<name>.md (plain .md, no tools field, lowercase-hyphen name)",
             "Reads AGENTS.md natively",
         ],
     );
     print_tool(
-        "Windsurf",
+        "Windsurf (now Devin Desktop)",
         "windsurf",
         ".devin/rules/*.md (preferred) or .windsurf/rules/*.md (legacy)",
         &[
             "Frontmatter: trigger (always_on|glob|model_decision|manual), description, globs",
             "Rules written to .devin/rules/ when a .devin/ directory exists, else .windsurf/rules/",
-            "Skills synced to .windsurf/skills/<name>/SKILL.md",
+            "Skills synced to .devin/skills/<name>/SKILL.md when .devin/ exists, else .windsurf/skills/",
             "Reads AGENTS.md natively",
-            "No project-level MCP: Cascade only reads ~/.codeium/windsurf/mcp_config.json",
+            "No project-level MCP: Cascade only reads ~/.config/devin/mcp_config.json",
         ],
     );
     print_tool(
@@ -58,17 +58,8 @@ pub fn print_help_ai() {
             "Glob rules → .github/instructions/{name}.instructions.md",
             "Skills synced to .github/skills/<name>/SKILL.md",
             "Agents synced to .github/agents/<name>.agent.md",
-            "MCP synced to .vscode/mcp.json (uses the `servers` key)",
+            "MCP merged into .vscode/mcp.json (`servers` key; VS Code `inputs`/`sandbox` kept)",
             "Reads AGENTS.md, CLAUDE.md, and GEMINI.md natively",
-        ],
-    );
-    print_tool(
-        "Continue.dev",
-        "continue",
-        ".continue/rules/*.md",
-        &[
-            "Frontmatter: name, globs (array), alwaysApply (bool), description",
-            "Globs use YAML array format, not comma-separated",
         ],
     );
     print_tool(
@@ -78,18 +69,20 @@ pub fn print_help_ai() {
         &[
             "Frontmatter: inclusion (always|fileMatch|auto|manual), fileMatchPattern, name, description",
             "Successor to Amazon Q CLI",
+            "Agents synced to .kiro/agents/<name>.md with tools translated to Kiro tags (read, write, shell, web, …)",
             "Reads AGENTS.md natively",
         ],
     );
     print_tool(
-        "Roo Code / Cline",
-        "roocode",
+        "Zoo Code (community fork of Roo Code)",
+        "zoocode",
         ".roo/rules/*.md",
         &[
             "Plain Markdown — NO YAML frontmatter",
             "Files loaded alphabetically (use numeric prefixes: 00-, 01-)",
             "Skills synced to .roo/skills/<name>/SKILL.md",
             "Mode-specific rules in .roo/rules-{mode}/",
+            "MCP merged into .roo/mcp.json (streamable-http for HTTP; alwaysAllow/disabledTools kept)",
             "Reads AGENTS.md natively",
         ],
     );
@@ -117,7 +110,7 @@ pub fn print_help_ai() {
         &[
             "Skills synced to .opencode/skills/<name>/SKILL.md (name, description, and manual invocation metadata)",
             "MCP merged into opencode.json under `mcp` key (type:local/remote, command as single array, key `environment`)",
-            "Agents merged into opencode.json under `agent` key + per-agent .opencode/agents/<name>.md",
+            "Agents merged into opencode.json under `agent` key + per-agent .opencode/agents/<name>.md (model only as provider/model)",
             "Also scans .claude/skills/, .agents/skills/",
         ],
     );
@@ -128,7 +121,7 @@ pub fn print_help_ai() {
         &[
             "Hierarchical: ~/.gemini/GEMINI.md → project → subdirs",
             "Skills synced to .gemini/skills/<name>/SKILL.md (name, description, and manual invocation metadata)",
-            "Agents synced to .gemini/agents/<name>.md (kind:local frontmatter)",
+            "Agents synced to .gemini/agents/<name>.md (kind:local frontmatter, tools translated to Gemini names)",
             "MCP synced to .gemini/settings.json (Gemini format: no type field, httpUrl for HTTP)",
             "Supports @file.md imports",
         ],
@@ -151,7 +144,7 @@ pub fn print_help_ai() {
         &[
             "Default instructionFileCandidates: AGENTS.md then CLAUDE.md",
             "Local overlay candidates: AGENTS.local.md then CLAUDE.local.md",
-            "Skills synced to .dsh/skills/<name>/SKILL.md (name + description, kebab-case names)",
+            "Skills synced to .dsh/skills/<name>/SKILL.md (name + description, kebab-case names); flat <name>.md skills are read and never deleted",
             "Also scans the shared .agents/skills/ root",
             "MCP lives in the user-level cordis.patch.yml ($DSH_HOME) — not project-scoped",
         ],

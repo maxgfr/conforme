@@ -75,16 +75,71 @@ pub(crate) fn read_skills_from_dir(skills_dir: &Path) -> Result<Vec<NormalizedSk
     Ok(skills)
 }
 
+/// Read flat `<dir>/<name>.md` skill files, the single-file layout the
+/// DeepSeek Harness accepts next to `<name>/SKILL.md` bundles.
+pub(crate) fn read_flat_skills_from_dir(skills_dir: &Path) -> Result<Vec<NormalizedSkill>> {
+    let mut skills = Vec::new();
+    if !skills_dir.is_dir() {
+        return Ok(skills);
+    }
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(skills_dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "md"))
+        .collect();
+    paths.sort();
+    for path in paths {
+        let content = std::fs::read_to_string(&path)?;
+        let (fields, body) = frontmatter::parse(&content)?;
+        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+        skills.push(NormalizedSkill {
+            name: fields
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&stem)
+                .to_string(),
+            description: fields
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            content: body.trim().to_string(),
+            allowed_tools: parse_frontmatter_tool_list(fields.get("allowed-tools")),
+            manual_invocation: fields
+                .get("disable-model-invocation")
+                .and_then(yaml_flag)
+                .unwrap_or(false),
+        });
+    }
+    Ok(skills)
+}
+
+/// A frontmatter boolean. Claude Code documents that boolean fields accept
+/// `yes`/`no`, `on`/`off` and `1`/`0` besides `true`/`false`; YAML 1.2
+/// parses those as strings or integers, so they are matched here.
+pub(crate) fn yaml_flag(value: &serde_yaml_ng::Value) -> Option<bool> {
+    match value {
+        serde_yaml_ng::Value::Bool(b) => Some(*b),
+        serde_yaml_ng::Value::Number(n) => match n.as_i64() {
+            Some(1) => Some(true),
+            Some(0) => Some(false),
+            _ => None,
+        },
+        serde_yaml_ng::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "yes" | "on" | "1" => Some(true),
+            "false" | "no" | "off" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Read explicit-only settings from supported skill metadata.
 pub(crate) fn read_manual_invocation(
     fields: &BTreeMap<String, serde_yaml_ng::Value>,
     skill_dir: &Path,
 ) -> Result<bool> {
-    if fields
-        .get("disable-model-invocation")
-        .and_then(|v| v.as_bool())
-        == Some(true)
-    {
+    if fields.get("disable-model-invocation").and_then(yaml_flag) == Some(true) {
         return Ok(true);
     }
     if let Some(value) = fields
@@ -106,6 +161,18 @@ pub(crate) fn read_manual_invocation(
             == Some(false));
     }
     Ok(false)
+}
+
+/// The `description` to write for a skill or agent. Codex, Copilot, Gemini,
+/// OpenCode and Zoo Code silently skip a skill or agent without one (Gemini
+/// also rejects an empty string), so an empty description falls back to the
+/// name rather than being left out.
+pub(crate) fn description_or_name(description: &str, name: &str) -> String {
+    if description.trim().is_empty() {
+        name.to_string()
+    } else {
+        description.to_string()
+    }
 }
 
 fn add_invocation_fields(
@@ -152,52 +219,66 @@ fn invocation_policy(
 
 /// Read `<dir>/*.md` agent files into `NormalizedAgent`s (the common frontmatter
 /// subset: `name`, `description`, `model`, `tools`). Used by adapters whose
-/// subagents live one-per-markdown-file.
-pub(crate) fn read_agents_from_dir(agents_dir: &Path) -> Result<Vec<NormalizedAgent>> {
+/// subagents live one-per-markdown-file. `recursive` follows sub-directories,
+/// for tools that scan their agents directory recursively (OpenCode).
+pub(crate) fn read_agents_from_dir(
+    agents_dir: &Path,
+    recursive: bool,
+) -> Result<Vec<NormalizedAgent>> {
     let mut agents = Vec::new();
     if !agents_dir.is_dir() {
         return Ok(agents);
     }
-    let mut entries: Vec<_> = std::fs::read_dir(agents_dir)?
-        .filter_map(|e| e.ok())
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-    for entry in entries {
-        let path = entry.path();
-        if path.extension().is_some_and(|e| e == "md") {
-            let content = std::fs::read_to_string(&path)?;
-            let (fields, body) = frontmatter::parse(&content)?;
-            let name = fields
-                .get("name")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| {
-                    path.file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string()
-                });
-            let description = fields
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let model = fields
-                .get("model")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let tools = parse_frontmatter_tool_list(fields.get("tools"));
-            agents.push(NormalizedAgent {
-                name,
-                description,
-                content: body.trim().to_string(),
-                model,
-                tools,
-                ..Default::default()
-            });
-        }
+    let paths = if recursive {
+        crate::adapters::collect_rule_files(agents_dir, "md")?
+    } else {
+        let mut paths: Vec<PathBuf> = std::fs::read_dir(agents_dir)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "md"))
+            .collect();
+        paths.sort();
+        paths
+    };
+    for path in paths {
+        let content = std::fs::read_to_string(&path)?;
+        let (fields, body) = frontmatter::parse(&content)?;
+        let name = fields
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| agent_name_from_path(&path));
+        let description = fields
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let model = fields
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let tools = parse_frontmatter_tool_list(fields.get("tools"));
+        agents.push(NormalizedAgent {
+            name,
+            description,
+            content: body.trim().to_string(),
+            model,
+            tools,
+            ..Default::default()
+        });
     }
     Ok(agents)
+}
+
+/// The agent name a file stands for when its frontmatter has no `name`:
+/// the file name without `.agent.md` (Copilot) or `.md`.
+fn agent_name_from_path(path: &Path) -> String {
+    let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+    file_name
+        .strip_suffix(".agent.md")
+        .or_else(|| file_name.strip_suffix(".md"))
+        .unwrap_or(&file_name)
+        .to_string()
 }
 
 /// Generate Claude Code skill files in `.claude/skills/<name>/SKILL.md`.
@@ -215,12 +296,10 @@ pub fn generate_claude_skills(
 
         let mut fields = BTreeMap::new();
         fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        if !skill.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(skill.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
+        );
         if !skill.allowed_tools.is_empty() {
             fields.insert(
                 "allowed-tools".to_string(),
@@ -255,12 +334,10 @@ pub fn generate_cursor_skills(
 
         let mut fields = BTreeMap::new();
         fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        if !skill.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(skill.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
+        );
 
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
@@ -288,12 +365,10 @@ pub fn generate_codex_skills(
 
         let mut fields = BTreeMap::new();
         fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        if !skill.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(skill.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
+        );
 
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
@@ -327,12 +402,10 @@ pub fn generate_copilot_skills(
 
         let mut fields = BTreeMap::new();
         fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        if !skill.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(skill.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
+        );
         if !skill.allowed_tools.is_empty() {
             fields.insert(
                 "allowed-tools".to_string(),
@@ -366,12 +439,10 @@ pub fn generate_copilot_agents(
             "name".to_string(),
             serde_yaml_ng::Value::String(agent.name.clone()),
         );
-        if !agent.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(agent.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
+        );
         if let Some(model) = &agent.model {
             fields.insert(
                 "model".to_string(),
@@ -414,7 +485,7 @@ pub fn generate_claude_agents(
         );
         fields.insert(
             "description".to_string(),
-            serde_yaml_ng::Value::String(agent.description.clone()),
+            serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
         );
         if let Some(model) = &agent.model {
             fields.insert(
@@ -462,16 +533,15 @@ pub fn generate_cursor_agents(
     for agent in agents {
         let filename = format!("{}.md", sanitize_name(&agent.name));
         let mut fields = BTreeMap::new();
+        // Cursor subagent names use lowercase letters and hyphens.
         fields.insert(
             "name".to_string(),
-            serde_yaml_ng::Value::String(agent.name.clone()),
+            serde_yaml_ng::Value::String(sanitize_name(&agent.name)),
         );
-        if !agent.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(agent.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
+        );
         if let Some(model) = &agent.model {
             fields.insert(
                 "model".to_string(),
@@ -499,35 +569,151 @@ pub fn generate_kiro_agents(
         // Kiro derives the agent name from the file path — the custom-agent
         // frontmatter has no `name` field, so we do not emit one.
         let mut fields = BTreeMap::new();
-        if !agent.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(agent.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
+        );
         if let Some(model) = &agent.model {
             fields.insert(
                 "model".to_string(),
                 serde_yaml_ng::Value::String(model.clone()),
             );
         }
-        if !agent.tools.is_empty() {
-            let yaml_tools: Vec<serde_yaml_ng::Value> = agent
-                .tools
-                .iter()
-                .map(|t| serde_yaml_ng::Value::String(t.clone()))
-                .collect();
-            fields.insert(
-                "tools".to_string(),
-                serde_yaml_ng::Value::Sequence(yaml_tools),
-            );
-        }
+        insert_tool_list(&mut fields, &kiro_tools(&agent.tools));
 
         let content = frontmatter::serialize(&fields, &format!("{}\n", agent.content))?;
         files.push((agents_dir.join(filename), content));
     }
 
     Ok(files)
+}
+
+/// Common tool names other hosts use (Claude Code, Copilot) and their
+/// equivalent in Gemini CLI and Kiro, which each accept only their own
+/// vocabulary. Matching is case-insensitive.
+const TOOL_EQUIVALENTS: &[(&str, &str, &str)] = &[
+    // (source name, Gemini tool, Kiro tag)
+    ("read", "read_file", "read"),
+    ("glob", "glob", "read"),
+    ("grep", "grep_search", "read"),
+    ("search", "grep_search", "read"),
+    ("ls", "list_directory", "read"),
+    ("write", "write_file", "write"),
+    ("edit", "replace", "write"),
+    ("multiedit", "replace", "write"),
+    ("bash", "run_shell_command", "shell"),
+    ("execute", "run_shell_command", "shell"),
+    ("shell", "run_shell_command", "shell"),
+    ("terminal", "run_shell_command", "shell"),
+    ("webfetch", "web_fetch", "web"),
+    ("websearch", "google_web_search", "web"),
+    ("web", "web_fetch", "web"),
+    ("todowrite", "write_todos", "todo_list"),
+    ("todo", "write_todos", "todo_list"),
+    ("task", "invoke_agent", "subagent"),
+    ("agent", "invoke_agent", "subagent"),
+];
+
+/// Gemini CLI built-in tool names (`ALL_BUILTIN_TOOL_NAMES` plus the legacy
+/// `search_file_content` alias). A subagent listing any other name is
+/// rejected whole.
+const GEMINI_TOOLS: &[&str] = &[
+    "glob",
+    "write_todos",
+    "write_file",
+    "google_web_search",
+    "web_fetch",
+    "replace",
+    "run_shell_command",
+    "grep_search",
+    "search_file_content",
+    "read_many_files",
+    "read_file",
+    "list_directory",
+    "activate_skill",
+    "ask_user",
+    "get_internal_docs",
+    "enter_plan_mode",
+    "exit_plan_mode",
+    "update_topic",
+    "complete_task",
+    "invoke_agent",
+    "read_mcp_resource",
+    "list_mcp_resources",
+];
+
+/// Kiro agent `tools` tags (besides `@server[/tool]` references).
+const KIRO_TOOLS: &[&str] = &[
+    "read",
+    "write",
+    "shell",
+    "web",
+    "subagent",
+    "knowledge",
+    "todo_list",
+    "@builtin",
+    "@mcp",
+    "*",
+];
+
+/// Translate a tool list into Gemini CLI tool names. Names Gemini already
+/// knows (built-ins, `mcp_<server>_<tool>`, `discovered_tool_*`) pass
+/// through, known equivalents are mapped, and anything else is dropped so the
+/// agent is not rejected.
+fn gemini_tools(tools: &[String]) -> Vec<String> {
+    translate_tools(
+        tools,
+        |t| GEMINI_TOOLS.contains(&t) || t.starts_with("mcp_") || t.starts_with("discovered_tool_"),
+        |row| row.1,
+    )
+}
+
+/// Translate a tool list into Kiro tags, the same way as [`gemini_tools`].
+fn kiro_tools(tools: &[String]) -> Vec<String> {
+    translate_tools(
+        tools,
+        |t| KIRO_TOOLS.contains(&t) || t.starts_with('@'),
+        |row| row.2,
+    )
+}
+
+fn translate_tools(
+    tools: &[String],
+    native: impl Fn(&str) -> bool,
+    target: fn(&(&str, &'static str, &'static str)) -> &'static str,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tool in tools {
+        let mapped = if native(tool) {
+            Some(tool.as_str())
+        } else {
+            TOOL_EQUIVALENTS
+                .iter()
+                .find(|row| row.0.eq_ignore_ascii_case(tool))
+                .map(target)
+        };
+        if let Some(name) = mapped {
+            if !out.iter().any(|t| t == name) {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Insert `tools` as a YAML list, or leave it out when empty.
+fn insert_tool_list(fields: &mut BTreeMap<String, serde_yaml_ng::Value>, tools: &[String]) {
+    if tools.is_empty() {
+        return;
+    }
+    let yaml_tools = tools
+        .iter()
+        .map(|t| serde_yaml_ng::Value::String(t.clone()))
+        .collect();
+    fields.insert(
+        "tools".to_string(),
+        serde_yaml_ng::Value::Sequence(yaml_tools),
+    );
 }
 
 /// Generate Gemini CLI subagent files in `.gemini/agents/<name>.md`.
@@ -546,27 +732,15 @@ pub fn generate_gemini_agents(
             "name".to_string(),
             serde_yaml_ng::Value::String(sanitize_name(&agent.name)),
         );
-        if !agent.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(agent.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
+        );
         fields.insert(
             "kind".to_string(),
             serde_yaml_ng::Value::String("local".to_string()),
         );
-        if !agent.tools.is_empty() {
-            let yaml_tools: Vec<serde_yaml_ng::Value> = agent
-                .tools
-                .iter()
-                .map(|t| serde_yaml_ng::Value::String(t.clone()))
-                .collect();
-            fields.insert(
-                "tools".to_string(),
-                serde_yaml_ng::Value::Sequence(yaml_tools),
-            );
-        }
+        insert_tool_list(&mut fields, &gemini_tools(&agent.tools));
         if let Some(model) = &agent.model {
             fields.insert(
                 "model".to_string(),
@@ -596,12 +770,10 @@ pub fn generate_kiro_skills(
 
         let mut fields = BTreeMap::new();
         fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        if !skill.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(skill.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
+        );
 
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
@@ -614,13 +786,13 @@ pub fn generate_kiro_skills(
     Ok(files)
 }
 
-/// Generate Windsurf skill files in `.windsurf/skills/<name>/SKILL.md`.
+/// Generate Windsurf skill files in `<skills_dir>/<name>/SKILL.md`, where the
+/// adapter picks `.devin/skills/` or the legacy `.windsurf/skills/`.
 /// Windsurf skills use only `name` and `description` in frontmatter.
 pub fn generate_windsurf_skills(
-    project_root: &Path,
+    skills_dir: &Path,
     skills: &[NormalizedSkill],
 ) -> Result<Vec<(PathBuf, String)>> {
-    let skills_dir = project_root.join(".windsurf").join("skills");
     let mut files = Vec::new();
 
     for skill in skills {
@@ -630,12 +802,10 @@ pub fn generate_windsurf_skills(
 
         let mut fields = BTreeMap::new();
         fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        if !skill.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(skill.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
+        );
 
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
@@ -648,9 +818,9 @@ pub fn generate_windsurf_skills(
     Ok(files)
 }
 
-/// Generate Roo Code skill files in `.roo/skills/<name>/SKILL.md`.
-/// Roo Code skills use `name` and `description` in frontmatter.
-pub fn generate_roocode_skills(
+/// Generate Zoo Code skill files in `.roo/skills/<name>/SKILL.md`.
+/// Zoo Code skills use `name` and `description` in frontmatter.
+pub fn generate_zoocode_skills(
     project_root: &Path,
     skills: &[NormalizedSkill],
 ) -> Result<Vec<(PathBuf, String)>> {
@@ -664,12 +834,10 @@ pub fn generate_roocode_skills(
 
         let mut fields = BTreeMap::new();
         fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        if !skill.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(skill.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
+        );
 
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
@@ -699,12 +867,10 @@ pub fn generate_opencode_skills(
 
         let mut fields = BTreeMap::new();
         fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        if !skill.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(skill.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
+        );
 
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
@@ -729,20 +895,18 @@ pub fn generate_opencode_agents_md(
     for agent in agents {
         let filename = format!("{}.md", sanitize_name(&agent.name));
         let mut fields = BTreeMap::new();
-        if !agent.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(agent.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
+        );
         fields.insert(
             "mode".to_string(),
             serde_yaml_ng::Value::String("subagent".to_string()),
         );
-        if let Some(model) = &agent.model {
+        if let Some(model) = opencode_model(agent.model.as_deref()) {
             fields.insert(
                 "model".to_string(),
-                serde_yaml_ng::Value::String(model.clone()),
+                serde_yaml_ng::Value::String(model.to_string()),
             );
         }
 
@@ -751,6 +915,17 @@ pub fn generate_opencode_agents_md(
     }
 
     Ok(files)
+}
+
+/// The `model` to write for an OpenCode agent. OpenCode resolves it as
+/// `provider/model`, so a bare id such as `gpt-4o` or `sonnet` would become
+/// provider `gpt-4o` with an empty model; such values are left out and the
+/// agent uses OpenCode's default model.
+pub(crate) fn opencode_model(model: Option<&str>) -> Option<&str> {
+    model.filter(|m| {
+        m.split_once('/')
+            .is_some_and(|(provider, id)| !provider.is_empty() && !id.is_empty())
+    })
 }
 
 /// Generate DeepSeek Harness skill files in `.dsh/skills/<name>/SKILL.md`.
@@ -772,12 +947,10 @@ pub fn generate_deepseek_skills(
 
         let mut fields = BTreeMap::new();
         fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        if !skill.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(skill.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
+        );
 
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
@@ -806,12 +979,10 @@ pub fn generate_gemini_skills(
 
         let mut fields = BTreeMap::new();
         fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        if !skill.description.is_empty() {
-            fields.insert(
-                "description".to_string(),
-                serde_yaml_ng::Value::String(skill.description.clone()),
-            );
-        }
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
+        );
         // Gemini docs: "do not include any other fields" — no allowed-tools
 
         add_invocation_fields(&mut fields, skill);
@@ -828,6 +999,73 @@ pub fn generate_gemini_skills(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_empty_description_falls_back_to_name_for_every_host() {
+        // Codex, Copilot, Gemini, OpenCode and Zoo Code skip a skill or agent
+        // without a description, so none may be written without one.
+        let root = Path::new("/tmp/test");
+        let skills = vec![NormalizedSkill {
+            name: "deploy".to_string(),
+            content: "Run deploy.".to_string(),
+            ..Default::default()
+        }];
+        let agents = vec![NormalizedAgent {
+            name: "reviewer".to_string(),
+            content: "Review.".to_string(),
+            ..Default::default()
+        }];
+        let skill_files = [
+            generate_claude_skills(root, &skills).unwrap(),
+            generate_cursor_skills(root, &skills).unwrap(),
+            generate_codex_skills(root, &skills).unwrap(),
+            generate_copilot_skills(root, &skills).unwrap(),
+            generate_kiro_skills(root, &skills).unwrap(),
+            generate_windsurf_skills(&root.join(".windsurf/skills"), &skills).unwrap(),
+            generate_zoocode_skills(root, &skills).unwrap(),
+            generate_opencode_skills(root, &skills).unwrap(),
+            generate_deepseek_skills(root, &skills).unwrap(),
+            generate_gemini_skills(root, &skills).unwrap(),
+        ];
+        for files in skill_files {
+            assert!(
+                files[0].1.contains("description: deploy\n"),
+                "{}",
+                files[0].1
+            );
+        }
+        let agent_files = [
+            generate_claude_agents(root, &agents).unwrap(),
+            generate_cursor_agents(root, &agents).unwrap(),
+            generate_copilot_agents(root, &agents).unwrap(),
+            generate_kiro_agents(root, &agents).unwrap(),
+            generate_gemini_agents(root, &agents).unwrap(),
+            generate_opencode_agents_md(root, &agents).unwrap(),
+        ];
+        for files in agent_files {
+            assert!(
+                files[0].1.contains("description: reviewer\n"),
+                "{}",
+                files[0].1
+            );
+        }
+    }
+
+    #[test]
+    fn test_cursor_agent_name_is_sanitized() {
+        // Cursor subagent names use lowercase letters and hyphens.
+        let agents = vec![NormalizedAgent {
+            name: "Code Reviewer".to_string(),
+            description: "Review".to_string(),
+            ..Default::default()
+        }];
+        let files = generate_cursor_agents(Path::new("/tmp/test"), &agents).unwrap();
+        assert!(
+            files[0].1.contains("name: code-reviewer\n"),
+            "{}",
+            files[0].1
+        );
+    }
 
     #[test]
     fn test_generate_claude_skill() {

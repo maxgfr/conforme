@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::AiToolAdapter;
+use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
 use crate::frontmatter;
 
@@ -36,11 +36,11 @@ impl AiToolAdapter for KiroAdapter {
         }
     }
 
-    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+    fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
-            project_root.join(".kiro").join("steering"),
-            project_root.join(".kiro").join("skills"),
-            project_root.join(".kiro").join("agents"),
+            ManagedDir::files(project_root.join(".kiro").join("steering"), ".md"),
+            ManagedDir::subdirs(project_root.join(".kiro").join("skills")),
+            ManagedDir::files(project_root.join(".kiro").join("agents"), ".md"),
         ]
     }
 
@@ -85,7 +85,7 @@ impl AiToolAdapter for KiroAdapter {
         let skills =
             crate::skills::read_skills_from_dir(&project_root.join(".kiro").join("skills"))?;
         let agents =
-            crate::skills::read_agents_from_dir(&project_root.join(".kiro").join("agents"))?;
+            crate::skills::read_agents_from_dir(&project_root.join(".kiro").join("agents"), false)?;
         let mut mcp_servers = Vec::new();
         let mcp_path = project_root.join(".kiro").join("settings").join("mcp.json");
         if mcp_path.exists() {

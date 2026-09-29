@@ -8,6 +8,8 @@
 - Configuration: https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md
 - Skills: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/skills.md
 - Skills tutorial: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/tutorials/skills-getting-started.md
+- Creating skills: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/creating-skills.md
+- Trusted folders: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/trusted-folders.md
 - Subagents: https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md
 - MCP: https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md
 - MCP tutorial: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/tutorials/mcp-setup.md
@@ -46,8 +48,14 @@ No activation modes. Single GEMINI.md file, all content always-on.
   - HTTP servers use `httpUrl` (not `url`)
   - Headers supported for HTTP
   - `.gemini/settings.json` is the general Gemini settings file (theme, `context.fileName`, …), so conforme **merges** the `mcpServers` key into any existing file rather than overwriting it, and `remove gemini` / `migrate --source gemini` leave the file in place
+  - The merge is JSONC-aware (comments outside `mcpServers` survive; an unparsable file is left untouched and sync fails) and keeps Gemini-only per-server options conforme never emits (`trust`, `timeout`, `includeTools`, `excludeTools`, `cwd`, …)
+  - The source is authoritative for *which* servers exist: a server present only in `.gemini/settings.json` (for example one added with `gemini mcp add -s project`) is replaced on sync. This is deliberate — the same rule as every other JSON MCP target
+- Project MCP servers and skills load only in trusted folders (since v0.59, "filter mcpServers in restricted mode")
+- Skills and agents need a non-empty `description` (a skill without one is silently skipped, an agent is rejected); conforme always writes one, falling back to the name
 - Agent frontmatter includes `kind: local`. `kind` is **optional** upstream and already defaults to `local` (the other accepted value is `remote`); conforme emits it explicitly so the transport is unambiguous on a round-trip. Only `name` and `description` are required
-- Agent frontmatter also supports `temperature`, `max_turns`, `timeout_mins`, and `mcpServers`; `model` defaults to `inherit`
+- The agent schema is strict and rejects the whole agent when `tools` holds an unknown name. conforme translates common tool names from other hosts (`Read` → `read_file`, `Grep` → `grep_search`, `Bash` → `run_shell_command`, `Edit` → `replace`, `WebFetch` → `web_fetch`, …), keeps Gemini built-ins and `mcp_<server>_<tool>` names, and drops anything else
+- Agent names must match `^[a-z0-9-_]+$`; conforme's name sanitizer keeps non-ASCII letters, so an agent name with accented letters is still rejected (known gap)
+- Agent frontmatter also supports `display_name`, `temperature`, `max_turns`, `timeout_mins`, and `mcp_servers`; `model` defaults to `inherit`. Files whose name starts with `_` are skipped
 - Hierarchical: `~/.gemini/GEMINI.md` -> project -> subdirs
 - Supports `@file.md` imports in GEMINI.md
 - `GEMINI.md` is only the *default* context file name: `context.fileName` in `settings.json` accepts a name or a list (e.g. `["AGENTS.md", "GEMINI.md"]`). Gemini CLI does **not** read `AGENTS.md` unless configured to, which is why conforme writes `GEMINI.md`

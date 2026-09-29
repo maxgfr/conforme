@@ -30,9 +30,8 @@ fn create_project_with_tools(agents_md: &str, tools: &[&str]) -> TempDir {
             }
             "codex" => fs::create_dir_all(dir.path().join(".codex")).unwrap(),
             "opencode" => fs::create_dir_all(dir.path().join(".opencode")).unwrap(),
-            "roocode" => fs::create_dir_all(dir.path().join(".roo")).unwrap(),
+            "zoocode" => fs::create_dir_all(dir.path().join(".roo")).unwrap(),
             "gemini" => fs::create_dir_all(dir.path().join(".gemini")).unwrap(),
-            "continue" => fs::create_dir_all(dir.path().join(".continue")).unwrap(),
             "zed" => fs::write(dir.path().join(".rules"), "").unwrap(),
             "kiro" => fs::create_dir_all(dir.path().join(".kiro")).unwrap(),
             "amp" => fs::create_dir_all(dir.path().join(".amp")).unwrap(),
@@ -433,7 +432,7 @@ fn test_sync_creates_gemini_config() {
 }
 
 #[test]
-fn test_sync_creates_roocode_config() {
+fn test_sync_creates_zoocode_config() {
     let agents_md = r#"# Instructions
 General rules.
 
@@ -442,7 +441,7 @@ General rules.
 
 Write tests.
 "#;
-    let dir = create_project_with_tools(agents_md, &["roocode"]);
+    let dir = create_project_with_tools(agents_md, &["zoocode"]);
 
     conforme()
         .args(["-C", dir.path().to_str().unwrap(), "sync"])
@@ -451,34 +450,6 @@ Write tests.
 
     assert!(dir.path().join(".roo/rules/00-general.md").exists());
     assert!(dir.path().join(".roo/rules/01-testing.md").exists());
-}
-
-#[test]
-fn test_sync_creates_continue_config() {
-    let agents_md = r#"# Instructions
-Be consistent.
-
-## Rule: TypeScript
-<!-- activation: glob **/*.ts -->
-
-Use strict mode.
-"#;
-    let dir = create_project_with_tools(agents_md, &["continue"]);
-
-    conforme()
-        .args(["-C", dir.path().to_str().unwrap(), "sync"])
-        .assert()
-        .success();
-
-    let general = dir.path().join(".continue/rules/general.md");
-    assert!(general.exists());
-    let content = fs::read_to_string(&general).unwrap();
-    assert!(content.contains("alwaysApply: true"));
-
-    let ts = dir.path().join(".continue/rules/typescript.md");
-    assert!(ts.exists());
-    let content = fs::read_to_string(&ts).unwrap();
-    assert!(content.contains("globs:"));
 }
 
 #[test]
@@ -526,8 +497,8 @@ fn test_sync_every_tool() {
     let dir = create_project_with_tools(
         agents_md,
         &[
-            "cursor", "claude", "windsurf", "copilot", "codex", "opencode", "roocode", "gemini",
-            "continue", "zed", "kiro", "amp", "deepseek",
+            "cursor", "claude", "windsurf", "copilot", "codex", "opencode", "zoocode", "gemini",
+            "zed", "kiro", "amp", "deepseek",
         ],
     );
 
@@ -541,7 +512,6 @@ fn test_sync_every_tool() {
     assert!(dir.path().join(".windsurf/rules/general.md").exists());
     assert!(dir.path().join("GEMINI.md").exists());
     assert!(dir.path().join(".roo/rules/00-general.md").exists());
-    assert!(dir.path().join(".continue/rules/general.md").exists());
     assert!(dir.path().join(".rules").exists());
     assert!(dir.path().join(".kiro/steering/general.md").exists());
 }
@@ -956,6 +926,193 @@ Review for bugs.
     assert!(command.exists(), "sync deleted a user command");
 }
 
+/// Zed, OpenCode, VS Code (Copilot), Gemini, Amp and Zoo Code settings may be
+/// JSONC. A comment or trailing comma used to make conforme fall back to an
+/// empty object and rewrite the file with its own keys only, wiping every
+/// user setting. The merge must keep user keys and comments, and a second
+/// run must see the file as in sync.
+#[test]
+fn test_sync_preserves_jsonc_settings_files() {
+    let agents_md = r#"# Instructions
+Be helpful.
+
+## MCP: filesystem
+<!-- command: npx -->
+"#;
+    let cases = [
+        ("zed", ".zed/settings.json"),
+        ("gemini", ".gemini/settings.json"),
+        ("amp", ".amp/settings.json"),
+        ("opencode", "opencode.json"),
+        ("copilot", ".vscode/mcp.json"),
+        ("zoocode", ".roo/mcp.json"),
+    ];
+    let user_content = "// project settings\n{\n  // keep me\n  \"user_setting\": \"kept\",\n}\n";
+
+    for (tool, settings) in cases {
+        let dir = create_project_with_tools(agents_md, &[tool]);
+        let settings_path = dir.path().join(settings);
+        fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+        fs::write(&settings_path, user_content).unwrap();
+
+        conforme()
+            .args(["-C", dir.path().to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+        let merged = fs::read_to_string(&settings_path).unwrap();
+        assert!(
+            merged.contains("\"kept\""),
+            "{tool}: user key lost\n{merged}"
+        );
+        assert!(
+            merged.contains("// keep me"),
+            "{tool}: comment lost\n{merged}"
+        );
+        assert!(
+            merged.contains("filesystem"),
+            "{tool}: MCP not merged\n{merged}"
+        );
+
+        conforme()
+            .args(["-C", dir.path().to_str().unwrap(), "check"])
+            .assert()
+            .success();
+    }
+}
+
+/// A settings file conforme cannot parse must be left untouched: the sync
+/// fails loudly instead of replacing it with conforme's keys alone.
+#[test]
+fn test_sync_refuses_to_overwrite_unparsable_settings() {
+    let agents_md = r#"# Instructions
+Be helpful.
+
+## MCP: filesystem
+<!-- command: npx -->
+"#;
+    let dir = create_project_with_tools(agents_md, &["zed"]);
+    let settings_path = dir.path().join(".zed/settings.json");
+    fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+    let broken = "{ \"theme\": \"One Dark\", \"vim_mode\": ";
+    fs::write(&settings_path, broken).unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("will not overwrite"));
+    assert_eq!(fs::read_to_string(&settings_path).unwrap(), broken);
+}
+
+/// `.vscode/mcp.json` and `.roo/mcp.json` also hold state conforme does not
+/// generate: VS Code `inputs` (prompted secrets), and Zoo Code's per-server
+/// `alwaysAllow`/`disabledTools`. Sync must keep it, and `remove` must not
+/// delete the file wholesale.
+#[test]
+fn test_sync_and_remove_preserve_tool_state_in_mcp_files() {
+    let agents_md = r#"# Instructions
+Be helpful.
+
+## MCP: filesystem
+<!-- command: npx -->
+"#;
+    let cases = [
+        (
+            "copilot",
+            ".vscode/mcp.json",
+            r#"{"inputs":[{"id":"token","type":"promptString"}],"servers":{"filesystem":{"command":"old","envFile":".env"}}}"#,
+            ["\"promptString\"", "\"envFile\""],
+        ),
+        (
+            "zoocode",
+            ".roo/mcp.json",
+            r#"{"mcpServers":{"filesystem":{"command":"old","alwaysAllow":["read_file"],"disabledTools":["write_file"]}}}"#,
+            ["\"read_file\"", "\"write_file\""],
+        ),
+    ];
+
+    for (tool, mcp_file, user_content, markers) in cases {
+        let dir = create_project_with_tools(agents_md, &[tool]);
+        let mcp_path = dir.path().join(mcp_file);
+        fs::create_dir_all(mcp_path.parent().unwrap()).unwrap();
+        fs::write(&mcp_path, user_content).unwrap();
+
+        conforme()
+            .args(["-C", dir.path().to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+        let merged = fs::read_to_string(&mcp_path).unwrap();
+        assert!(
+            merged.contains("\"npx\""),
+            "{tool}: server not updated\n{merged}"
+        );
+        assert!(
+            !merged.contains("\"old\""),
+            "{tool}: stale command kept\n{merged}"
+        );
+        for marker in markers {
+            assert!(merged.contains(marker), "{tool}: lost {marker}\n{merged}");
+        }
+
+        conforme()
+            .args(["-C", dir.path().to_str().unwrap(), "remove", tool])
+            .assert()
+            .success();
+        assert!(mcp_path.exists(), "{tool}: `remove` deleted {mcp_file}");
+    }
+}
+
+/// Orphan cleanup only deletes the kind of file conforme writes into a
+/// directory. Kiro also accepts `.kiro/agents/<name>.json`, the DeepSeek
+/// Harness accepts flat `.dsh/skills/<name>.md` skills, and a Copilot agent
+/// may be a plain `.github/agents/<name>.md`; conforme generates none of
+/// them, so a sync must never delete them.
+#[test]
+fn test_orphan_cleanup_spares_files_conforme_never_writes() {
+    let agents_md = r#"# Instructions
+Be helpful.
+
+## Skill: deploy
+<!-- description: Deploy the app -->
+Run deploy.
+
+## Agent: reviewer
+<!-- description: Code review -->
+Review for bugs.
+"#;
+    let dir = create_project_with_tools(agents_md, &["kiro", "deepseek", "copilot"]);
+    let user_files = [
+        (".kiro/agents/planner.json", r#"{"name":"planner"}"#),
+        (
+            ".dsh/skills/release.md",
+            "---\nname: release\ndescription: Cut a release\n---\nRelease.\n",
+        ),
+        (
+            ".github/agents/triage.md",
+            "---\ndescription: Triage\n---\nTriage issues.\n",
+        ),
+    ];
+    for (path, content) in user_files {
+        let path = dir.path().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, content).unwrap();
+    }
+    // A stale file of the generated kind is still an orphan.
+    fs::create_dir_all(dir.path().join(".kiro/agents")).unwrap();
+    fs::write(dir.path().join(".kiro/agents/old.md"), "Old.\n").unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    for (path, _) in user_files {
+        assert!(dir.path().join(path).exists(), "sync deleted {path}");
+    }
+    assert!(dir.path().join(".kiro/agents/reviewer.md").exists());
+    assert!(!dir.path().join(".kiro/agents/old.md").exists());
+}
+
 #[test]
 fn test_migrate_from_codex_preserves_shared_config() {
     let dir = TempDir::new().unwrap();
@@ -1281,8 +1438,7 @@ Review all changes for bugs.
     let dir = create_project_with_tools(
         agents_md,
         &[
-            "cursor", "claude", "windsurf", "copilot", "kiro", "roocode", "continue", "gemini",
-            "zed",
+            "cursor", "claude", "windsurf", "copilot", "kiro", "zoocode", "gemini", "zed",
         ],
     );
 
@@ -1321,17 +1477,13 @@ Review all changes for bugs.
     assert!(dir.path().join(".gemini/agents/reviewer.md").exists());
     assert!(dir.path().join(".gemini/settings.json").exists());
 
-    // Roo Code: rules + mcp
+    // Zoo Code: rules + mcp
     assert!(dir.path().join(".roo/rules/00-general.md").exists());
     assert!(dir.path().join(".roo/mcp.json").exists());
 
     // Windsurf: rules only (Cascade has no project-level MCP file)
     assert!(dir.path().join(".windsurf/rules/general.md").exists());
     assert!(!dir.path().join(".windsurf/mcp.json").exists());
-
-    // Continue: rules + mcp
-    assert!(dir.path().join(".continue/rules/general.md").exists());
-    assert!(dir.path().join(".continue/mcpServers/mcp.json").exists());
 
     // Zed: .rules + settings
     assert!(dir.path().join(".rules").exists());

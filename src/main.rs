@@ -7,6 +7,7 @@ mod gitignore;
 mod hash;
 mod help_ai;
 mod hook;
+mod json_settings;
 mod markdown;
 mod mcp;
 mod project_config;

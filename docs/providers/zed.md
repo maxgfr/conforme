@@ -45,6 +45,8 @@ Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` 
   - No `"type"` field
   - Flat shape: stdio uses `command`/`args`/`env`, remote uses `url`/`headers` (no `source` wrapper, no nested command object — that is an older, superseded Zed schema)
   - `.zed/settings.json` holds the user's entire Zed configuration, so conforme **merges** the `context_servers` key into any existing file rather than overwriting it, and `remove zed` / `migrate --source zed` leave the file in place
+  - Zed settings are JSONC. The merge edits only `context_servers` in place, so comments and trailing commas elsewhere survive; per-server keys conforme never emits are kept, and a file conforme cannot parse is left untouched (sync fails)
+- Project skills and project MCP servers only take effect in a trusted worktree (project MCP servers auto-start only when the project is trusted)
 - Zed has "Agent Profiles" but configured via settings, not project files
 - The old `zed.dev/docs/ai/rules` page is gone (404): as of Zed v1.4.0 reusable rules were replaced by **Skills** and always-on rules by **Instructions**. `.rules` itself still works as a project instruction file — it is just documented on the Instructions page now
 - Personal instructions live at `~/.config/zed/AGENTS.md` (macOS/Linux) or `%APPDATA%\Zed\AGENTS.md`; project instruction files override them

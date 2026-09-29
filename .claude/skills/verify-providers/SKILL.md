@@ -99,8 +99,13 @@ Add these checks, which the fact sheet alone does not cover:
   shared with other tools) must not be listed.
 - **Merged settings**: every file `generate()` merges into rather than owns
   (`opencode.json`, `.zed/settings.json`, `.gemini/settings.json`,
-  `.amp/settings.json`, `.codex/config.toml`) is covered by
-  `is_shared_file()`, so `remove` and `migrate` preserve it.
+  `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`,
+  `.codex/config.toml`) is covered by `is_shared_file()`, so `remove` and
+  `migrate` preserve it, and JSON ones go through `json_settings` so a JSONC
+  comment or an unparsable file never wipes the user's settings.
+- **Orphan suffixes**: every `ManagedDir` names the suffix conforme writes
+  there; list the file kinds the tool accepts in that directory and confirm
+  none that conforme does not write shares it.
 - **Round-trip**: every feature `generate()` writes, `read()` parses back,
   otherwise `--from <tool>` silently drops it.
 - **Blank output**: an empty config yields no file, and a full config yields

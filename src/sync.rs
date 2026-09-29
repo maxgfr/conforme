@@ -738,7 +738,12 @@ pub fn run_migrate(
 
     // Collect source files to delete (generated files for the source adapter)
     let source_files = source_adapter.generate(project_root, &config)?;
-    let source_managed_dirs = source_adapter.managed_directories(project_root);
+    // Migrating away from a tool clears its managed directories wholesale.
+    let source_managed_dirs: Vec<std::path::PathBuf> = source_adapter
+        .managed_directories(project_root)
+        .into_iter()
+        .map(|dir| dir.path)
+        .collect();
 
     if dry_run {
         // Show what would be written
