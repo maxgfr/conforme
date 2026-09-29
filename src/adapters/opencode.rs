@@ -68,8 +68,10 @@ impl AiToolAdapter for OpenCodeAdapter {
 
         // Read agents back from `.opencode/agents/*.md`, falling back to the
         // `agent` key in `opencode.json` when no markdown agents exist.
-        let mut agents =
-            crate::skills::read_agents_from_dir(&project_root.join(".opencode").join("agents"))?;
+        let mut agents = crate::skills::read_agents_from_dir(
+            &project_root.join(".opencode").join("agents"),
+            true,
+        )?;
 
         // MCP servers live inside `opencode.json` under the `mcp` key, in
         // OpenCode's own shape (`type: local/remote`, `command` array,

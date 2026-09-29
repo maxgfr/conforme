@@ -642,6 +642,118 @@ fn test_zoocode_reads_nested_rules() {
     assert_eq!(config.rules[0].name, "01-style");
 }
 
+/// Claude Code accepts `paths` as a comma-separated string, scans
+/// `.claude/agents/` recursively, and reads `yes`/`on`/`1` as booleans.
+#[test]
+fn test_claude_reads_documented_frontmatter_variants() {
+    let adapter = conforme::adapters::claude::ClaudeAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".claude/rules")).unwrap();
+    fs::write(
+        dir.path().join(".claude/rules/web.md"),
+        "---\npaths: \"src/**/*.ts, src/**/*.tsx\"\n---\nUse strict mode.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join(".claude/agents/review")).unwrap();
+    fs::write(
+        dir.path().join(".claude/agents/review/security.md"),
+        "---\nname: security\ndescription: Security review\n---\nCheck auth.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join(".claude/commands")).unwrap();
+    fs::write(
+        dir.path().join(".claude/commands/release.md"),
+        "---\ndescription: Cut a release\ndisable-model-invocation: yes\n---\nRelease.\n",
+    )
+    .unwrap();
+
+    let config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(
+        config.rules[0].activation,
+        ActivationMode::GlobMatch(vec!["src/**/*.ts".into(), "src/**/*.tsx".into()])
+    );
+    assert_eq!(config.agents.len(), 1, "nested agent dropped");
+    assert_eq!(config.agents[0].name, "security");
+    assert!(config.skills[0].manual_invocation, "`yes` not read as true");
+}
+
+/// Copilot discovers `*.instructions.md` in sub-directories, and an agent
+/// file without a `name` is named after the file without `.agent.md`.
+#[test]
+fn test_copilot_reads_nested_instructions_and_agent_names() {
+    let adapter = conforme::adapters::copilot::CopilotAdapter;
+    let dir = TempDir::new().unwrap();
+    setup_tool(&dir, "copilot");
+    fs::create_dir_all(dir.path().join(".github/instructions/frontend")).unwrap();
+    fs::write(
+        dir.path()
+            .join(".github/instructions/frontend/react.instructions.md"),
+        "---\napplyTo: \"**/*.tsx\"\n---\nUse hooks.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join(".github/agents")).unwrap();
+    fs::write(
+        dir.path().join(".github/agents/planner.agent.md"),
+        "---\ndescription: Plan work\n---\nPlan.\n",
+    )
+    .unwrap();
+
+    let config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(config.rules.len(), 1, "nested instructions dropped");
+    assert_eq!(config.rules[0].name, "react");
+    assert_eq!(config.agents[0].name, "planner");
+}
+
+/// OpenCode scans `.opencode/agents/` recursively.
+#[test]
+fn test_opencode_reads_nested_agents() {
+    let adapter = conforme::adapters::opencode::OpenCodeAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".opencode/agents/review")).unwrap();
+    fs::write(
+        dir.path().join(".opencode/agents/review/security.md"),
+        "---\ndescription: Security review\nmode: subagent\n---\nCheck auth.\n",
+    )
+    .unwrap();
+
+    let config = adapter.read(dir.path()).unwrap();
+
+    assert_eq!(config.agents.len(), 1, "nested agent dropped");
+    assert_eq!(config.agents[0].name, "security");
+}
+
+/// The DeepSeek Harness accepts flat `.dsh/skills/<name>.md` skills next to
+/// `<name>/SKILL.md` bundles; a bundle wins over a flat file of the same name.
+#[test]
+fn test_deepseek_reads_flat_skills() {
+    let adapter = conforme::adapters::deepseek::DeepSeekAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".dsh/skills/deploy")).unwrap();
+    fs::write(
+        dir.path().join(".dsh/skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy (bundle)\n---\nDeploy.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".dsh/skills/deploy.md"),
+        "---\nname: deploy\ndescription: Deploy (flat)\n---\nOld.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".dsh/skills/release.md"),
+        "---\nname: release\ndescription: Cut a release\n---\nRelease.\n",
+    )
+    .unwrap();
+
+    let config = adapter.read(dir.path()).unwrap();
+
+    let names: Vec<_> = config.skills.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["deploy", "release"]);
+    assert_eq!(config.skills[0].description, "Deploy (bundle)");
+}
+
 #[test]
 fn manual_skill_invocation_survives_every_skill_adapter() {
     for adapter in conforme::adapters::all_adapters() {

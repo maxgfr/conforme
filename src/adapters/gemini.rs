@@ -59,8 +59,10 @@ impl AiToolAdapter for GeminiAdapter {
         // Read skills, agents, and MCP so a Gemini project round-trips as a source.
         let skills =
             crate::skills::read_skills_from_dir(&project_root.join(".gemini").join("skills"))?;
-        let agents =
-            crate::skills::read_agents_from_dir(&project_root.join(".gemini").join("agents"))?;
+        let agents = crate::skills::read_agents_from_dir(
+            &project_root.join(".gemini").join("agents"),
+            false,
+        )?;
         let mut mcp_servers = Vec::new();
         let settings_path = project_root.join(".gemini").join("settings.json");
         if settings_path.exists() {

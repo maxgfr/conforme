@@ -418,7 +418,7 @@ Be helpful.
 
 ## Agent: reviewer
 <!-- description: Code review agent -->
-<!-- model: gpt-4o -->
+<!-- model: openai/gpt-4o -->
 
 Review all changes for bugs.
 "#;
@@ -436,14 +436,48 @@ Review all changes for bugs.
     assert!(json_content.contains("\"agent\""));
     assert!(json_content.contains("\"reviewer\""));
     assert!(json_content.contains("\"mode\": \"subagent\""));
-    assert!(json_content.contains("gpt-4o"));
+    assert!(json_content.contains("\"model\": \"openai/gpt-4o\""));
 
     let md_agent = dir.path().join(".opencode/agents/reviewer.md");
     assert!(md_agent.exists());
     let md = fs::read_to_string(&md_agent).unwrap();
     assert!(md.contains("description: Code review agent"));
     assert!(md.contains("mode: subagent"));
+    assert!(md.contains("model: openai/gpt-4o"));
     assert!(md.contains("Review all changes for bugs."));
+}
+
+/// Gemini CLI rejects a whole subagent whose `tools` holds a name it does not
+/// know, and Kiro only accepts its own tags. Claude/Copilot tool names are
+/// translated, and names with no equivalent are dropped.
+#[test]
+fn test_sync_agent_tools_use_target_vocabulary() {
+    let agents_md = r#"# Instructions
+Be helpful.
+
+## Agent: reviewer
+<!-- description: Code review agent -->
+<!-- tools: Read, Grep, Bash, codebase -->
+
+Review all changes for bugs.
+"#;
+    let dir = create_project_with_tools(agents_md, &["gemini", "kiro"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let gemini = fs::read_to_string(dir.path().join(".gemini/agents/reviewer.md")).unwrap();
+    assert!(
+        gemini.contains("tools:\n- read_file\n- grep_search\n- run_shell_command\n"),
+        "{gemini}"
+    );
+    assert!(!gemini.contains("codebase"));
+
+    let kiro = fs::read_to_string(dir.path().join(".kiro/agents/reviewer.md")).unwrap();
+    assert!(kiro.contains("tools:\n- read\n- shell\n"), "{kiro}");
+    assert!(!kiro.contains("Bash"));
 }
 
 #[test]

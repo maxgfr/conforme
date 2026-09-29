@@ -85,7 +85,7 @@ impl AiToolAdapter for KiroAdapter {
         let skills =
             crate::skills::read_skills_from_dir(&project_root.join(".kiro").join("skills"))?;
         let agents =
-            crate::skills::read_agents_from_dir(&project_root.join(".kiro").join("agents"))?;
+            crate::skills::read_agents_from_dir(&project_root.join(".kiro").join("agents"), false)?;
         let mut mcp_servers = Vec::new();
         let mcp_path = project_root.join(".kiro").join("settings").join("mcp.json");
         if mcp_path.exists() {

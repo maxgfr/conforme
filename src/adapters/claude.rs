@@ -106,21 +106,26 @@ impl AiToolAdapter for ClaudeAdapter {
                 .to_string_lossy()
                 .to_string();
 
-            let activation =
-                if let Some(serde_yaml_ng::Value::Sequence(paths)) = fields.get("paths") {
-                    let globs: Vec<String> = paths
-                        .iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    if globs.is_empty() {
-                        ActivationMode::Always
-                    } else {
-                        ActivationMode::GlobMatch(globs)
-                    }
-                } else {
-                    ActivationMode::Always
-                };
+            // `paths` is a YAML list or a comma-separated string; a rule
+            // without it always loads.
+            let globs: Vec<String> = match fields.get("paths") {
+                Some(serde_yaml_ng::Value::Sequence(paths)) => paths
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+                Some(serde_yaml_ng::Value::String(paths)) => paths
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let activation = if globs.is_empty() {
+                ActivationMode::Always
+            } else {
+                ActivationMode::GlobMatch(globs)
+            };
 
             rules.push(NormalizedRule {
                 name,
@@ -199,60 +204,57 @@ impl AiToolAdapter for ClaudeAdapter {
                         allowed_tools,
                         manual_invocation: fields
                             .get("disable-model-invocation")
-                            .and_then(|v| v.as_bool())
+                            .and_then(crate::skills::yaml_flag)
                             == Some(true),
                     });
                 }
             }
         }
 
-        // Read agents from .claude/agents/*.md
+        // Read agents from .claude/agents/**/*.md — Claude Code scans the
+        // agents directory recursively, like the rules directory.
         let mut agents = Vec::new();
         let agents_dir = project_root.join(".claude").join("agents");
-        if agents_dir.is_dir() {
-            let mut entries: Vec<_> = std::fs::read_dir(&agents_dir)?
-                .filter_map(|e| e.ok())
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "md") {
-                    let content = std::fs::read_to_string(&path)?;
-                    let (fields, body) = frontmatter::parse(&content)?;
-                    let name = fields
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_else(|| path.file_stem().unwrap().to_str().unwrap())
-                        .to_string();
-                    let description = fields
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let model = fields
-                        .get("model")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let tools = parse_tool_list(fields.get("tools"));
-                    let color = fields
-                        .get("color")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let permission_mode = fields
-                        .get("permissionMode")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    agents.push(NormalizedAgent {
-                        name,
-                        description,
-                        content: body.trim().to_string(),
-                        model,
-                        tools,
-                        color,
-                        permission_mode,
-                    });
-                }
-            }
+        for path in crate::adapters::collect_rule_files(&agents_dir, "md")? {
+            let content = std::fs::read_to_string(&path)?;
+            let (fields, body) = frontmatter::parse(&content)?;
+            let name = fields
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| {
+                    path.file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string()
+                });
+            let description = fields
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let model = fields
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let tools = parse_tool_list(fields.get("tools"));
+            let color = fields
+                .get("color")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let permission_mode = fields
+                .get("permissionMode")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            agents.push(NormalizedAgent {
+                name,
+                description,
+                content: body.trim().to_string(),
+                model,
+                tools,
+                color,
+                permission_mode,
+            });
         }
 
         // Read MCP servers from .mcp.json

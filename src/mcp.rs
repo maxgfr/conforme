@@ -734,20 +734,21 @@ pub fn build_opencode_agent_object(
 
     for agent in agents {
         let mut entry = serde_json::Map::new();
-        if !agent.description.is_empty() {
-            entry.insert(
-                "description".to_string(),
-                serde_json::Value::String(agent.description.clone()),
-            );
-        }
+        entry.insert(
+            "description".to_string(),
+            serde_json::Value::String(crate::skills::description_or_name(
+                &agent.description,
+                &agent.name,
+            )),
+        );
         entry.insert(
             "mode".to_string(),
             serde_json::Value::String("subagent".to_string()),
         );
-        if let Some(model) = &agent.model {
+        if let Some(model) = crate::skills::opencode_model(agent.model.as_deref()) {
             entry.insert(
                 "model".to_string(),
-                serde_json::Value::String(model.clone()),
+                serde_json::Value::String(model.to_string()),
             );
         }
         if !agent.content.is_empty() {
@@ -1508,7 +1509,7 @@ bearer_token_env_var = "MCP_TOKEN"
             name: "reviewer".to_string(),
             description: "Code review".to_string(),
             content: "Review code.".to_string(),
-            model: Some("gpt-4o".to_string()),
+            model: Some("openai/gpt-4o".to_string()),
             tools: vec![],
             ..Default::default()
         }];
@@ -1519,10 +1520,29 @@ bearer_token_env_var = "MCP_TOKEN"
             "Code review"
         );
         assert_eq!(entry.get("mode").unwrap().as_str().unwrap(), "subagent");
-        assert_eq!(entry.get("model").unwrap().as_str().unwrap(), "gpt-4o");
+        assert_eq!(
+            entry.get("model").unwrap().as_str().unwrap(),
+            "openai/gpt-4o"
+        );
         assert_eq!(
             entry.get("prompt").unwrap().as_str().unwrap(),
             "Review code."
         );
+    }
+
+    #[test]
+    fn test_opencode_agent_drops_bare_model_and_fills_description() {
+        // OpenCode resolves `model` as `provider/model`: a bare id would become
+        // provider `gpt-4o` with an empty model, so it is left out. An agent
+        // without a description is not listed, so the name stands in.
+        let agents = vec![crate::config::NormalizedAgent {
+            name: "reviewer".to_string(),
+            model: Some("gpt-4o".to_string()),
+            ..Default::default()
+        }];
+        let map = build_opencode_agent_object(&agents);
+        let entry = map["reviewer"].as_object().unwrap();
+        assert!(entry.get("model").is_none());
+        assert_eq!(entry["description"], "reviewer");
     }
 }

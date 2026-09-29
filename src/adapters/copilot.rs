@@ -68,52 +68,41 @@ impl AiToolAdapter for CopilotAdapter {
 
         let mut rules = Vec::new();
         let instr_dir = project_root.join(".github").join("instructions");
-        if instr_dir.is_dir() {
-            let mut entries: Vec<_> = std::fs::read_dir(&instr_dir)?
-                .filter_map(|e| e.ok())
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                let path = entry.path();
-                if path
-                    .file_name()
-                    .is_some_and(|n| n.to_string_lossy().ends_with(".instructions.md"))
-                {
-                    let content = std::fs::read_to_string(&path)
-                        .with_context(|| format!("failed to read {}", path.display()))?;
-                    let (fields, body) = frontmatter::parse(&content)?;
+        // Copilot also discovers `*.instructions.md` in sub-directories.
+        for path in crate::adapters::collect_rule_files(&instr_dir, "md")? {
+            let Some(name) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".instructions.md"))
+                .map(|n| n.to_string())
+            else {
+                continue;
+            };
+            let content = std::fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            let (fields, body) = frontmatter::parse(&content)?;
 
-                    let name = path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .strip_suffix(".instructions.md")
-                        .unwrap_or("unknown")
-                        .to_string();
-
-                    let activation =
-                        if let Some(apply_to) = fields.get("applyTo").and_then(|v| v.as_str()) {
-                            let patterns: Vec<String> = apply_to
-                                .split(',')
-                                .map(|s| s.trim().to_string())
-                                .filter(|s| !s.is_empty())
-                                .collect();
-                            if patterns.is_empty() {
-                                ActivationMode::Always
-                            } else {
-                                ActivationMode::GlobMatch(patterns)
-                            }
-                        } else {
-                            ActivationMode::Always
-                        };
-
-                    rules.push(NormalizedRule {
-                        name,
-                        content: body.trim().to_string(),
-                        activation,
-                    });
+            let activation = if let Some(apply_to) = fields.get("applyTo").and_then(|v| v.as_str())
+            {
+                let patterns: Vec<String> = apply_to
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if patterns.is_empty() {
+                    ActivationMode::Always
+                } else {
+                    ActivationMode::GlobMatch(patterns)
                 }
-            }
+            } else {
+                ActivationMode::Always
+            };
+
+            rules.push(NormalizedRule {
+                name,
+                content: body.trim().to_string(),
+                activation,
+            });
         }
 
         // Read skills from .github/skills/<name>/SKILL.md. `.github/prompts/`
@@ -122,8 +111,10 @@ impl AiToolAdapter for CopilotAdapter {
             crate::skills::read_skills_from_dir(&project_root.join(".github").join("skills"))?;
 
         // Read subagents (.github/agents/<name>.agent.md).
-        let agents =
-            crate::skills::read_agents_from_dir(&project_root.join(".github").join("agents"))?;
+        let agents = crate::skills::read_agents_from_dir(
+            &project_root.join(".github").join("agents"),
+            false,
+        )?;
 
         // Read MCP servers from .vscode/mcp.json (VS Code `servers` key).
         let mut mcp_servers = Vec::new();
