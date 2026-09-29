@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::AiToolAdapter;
+use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
 use crate::frontmatter;
 
@@ -34,14 +34,24 @@ impl AiToolAdapter for CopilotAdapter {
         }
     }
 
-    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+    /// `.vscode/mcp.json` also holds VS Code's `inputs` and `sandbox`
+    /// settings; conforme only merges `servers` into it, so `remove`/`migrate`
+    /// must never delete the file wholesale.
+    fn is_shared_file(&self, path: &Path) -> bool {
+        path.ends_with(Path::new(".vscode/mcp.json"))
+    }
+
+    fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
-            project_root.join(".github").join("instructions"),
-            project_root.join(".github").join("skills"),
+            ManagedDir::files(
+                project_root.join(".github").join("instructions"),
+                ".instructions.md",
+            ),
+            ManagedDir::subdirs(project_root.join(".github").join("skills")),
             // `.github/prompts/` is deliberately NOT managed: VS Code prompt
             // files are a user-authored feature, and orphan cleanup deletes
             // everything in a managed directory that conforme did not generate.
-            project_root.join(".github").join("agents"),
+            ManagedDir::files(project_root.join(".github").join("agents"), ".agent.md"),
         ]
     }
 
@@ -194,13 +204,24 @@ impl AiToolAdapter for CopilotAdapter {
             &config.agents,
         )?);
 
-        // Generate MCP config as .vscode/mcp.json (Copilot uses `servers` key)
+        // Merge MCP config into .vscode/mcp.json (Copilot uses `servers` key).
+        // The file also holds VS Code's `inputs` (prompted secrets referenced
+        // as `${input:…}`) and `sandbox` settings, and VS Code parses it as
+        // JSONC, so only `servers` is replaced.
         if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_copilot_mcp_json(&config.mcp_servers)?;
-            files.push((
-                project_root.join(".vscode").join("mcp.json"),
-                format!("{}\n", mcp_json),
-            ));
+            let mcp_path = project_root.join(".vscode").join("mcp.json");
+            let existing = crate::json_settings::load(&mcp_path)?;
+            let servers = crate::json_settings::merge_server_entries(
+                existing.as_ref().and_then(|f| f.get("servers")),
+                crate::mcp::build_copilot_servers_object(&config.mcp_servers),
+                crate::mcp::COPILOT_OWNED_SERVER_KEYS,
+            );
+            let json = crate::json_settings::render(
+                existing.as_ref(),
+                &[("servers", serde_json::Value::Object(servers))],
+                &[],
+            )?;
+            files.push((mcp_path, json));
         }
 
         Ok(files)

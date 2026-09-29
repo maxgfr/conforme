@@ -614,13 +614,13 @@ pub fn generate_kiro_skills(
     Ok(files)
 }
 
-/// Generate Windsurf skill files in `.windsurf/skills/<name>/SKILL.md`.
+/// Generate Windsurf skill files in `<skills_dir>/<name>/SKILL.md`, where the
+/// adapter picks `.devin/skills/` or the legacy `.windsurf/skills/`.
 /// Windsurf skills use only `name` and `description` in frontmatter.
 pub fn generate_windsurf_skills(
-    project_root: &Path,
+    skills_dir: &Path,
     skills: &[NormalizedSkill],
 ) -> Result<Vec<(PathBuf, String)>> {
-    let skills_dir = project_root.join(".windsurf").join("skills");
     let mut files = Vec::new();
 
     for skill in skills {

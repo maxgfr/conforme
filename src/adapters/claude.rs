@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::AiToolAdapter;
+use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::{
     sanitize_name, ActivationMode, NormalizedAgent, NormalizedConfig, NormalizedRule,
     NormalizedSkill,
@@ -75,11 +75,11 @@ impl AiToolAdapter for ClaudeAdapter {
         }
     }
 
-    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+    fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
-            project_root.join(".claude").join("rules"),
-            project_root.join(".claude").join("skills"),
-            project_root.join(".claude").join("agents"),
+            ManagedDir::files(project_root.join(".claude").join("rules"), ".md"),
+            ManagedDir::subdirs(project_root.join(".claude").join("skills")),
+            ManagedDir::files(project_root.join(".claude").join("agents"), ".md"),
         ]
     }
 

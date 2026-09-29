@@ -55,9 +55,11 @@ pub trait AiToolAdapter: Send + Sync {
         AdapterCapabilities::default()
     }
 
-    /// Directories managed by this adapter (for orphan cleanup).
-    /// Files in these directories that are not in the generate() output will be removed.
-    fn managed_directories(&self, _project_root: &Path) -> Vec<PathBuf> {
+    /// Directories managed by this adapter (for orphan cleanup, `watch`, and
+    /// `migrate`). During `sync`, top-level files in these directories that
+    /// carry the directory's `orphan_suffix` and are not in the generate()
+    /// output are removed.
+    fn managed_directories(&self, _project_root: &Path) -> Vec<ManagedDir> {
         Vec::new()
     }
 
@@ -91,10 +93,42 @@ pub trait AiToolAdapter: Send + Sync {
     ) -> Result<Vec<(PathBuf, String)>>;
 }
 
+/// A directory an adapter writes into.
+pub struct ManagedDir {
+    pub path: PathBuf,
+    /// File-name suffix of the files conforme writes directly in `path`
+    /// (`.md`, `.mdc`, `.agent.md`, …). Orphan cleanup only deletes top-level
+    /// files with this suffix, so files the tool also accepts but conforme
+    /// never writes (Kiro `.json` agents, dsh flat `<name>.md` skills,
+    /// hand-written Copilot `.md` agents) survive. `None` means conforme only
+    /// writes sub-directories there (skills), so no top-level file is ever
+    /// one of its orphans.
+    pub orphan_suffix: Option<&'static str>,
+}
+
+impl ManagedDir {
+    /// A directory holding conforme-generated files ending in `suffix`.
+    pub fn files(path: PathBuf, suffix: &'static str) -> Self {
+        Self {
+            path,
+            orphan_suffix: Some(suffix),
+        }
+    }
+
+    /// A directory where conforme only writes sub-directories (skills).
+    pub fn subdirs(path: PathBuf) -> Self {
+        Self {
+            path,
+            orphan_suffix: None,
+        }
+    }
+}
+
 /// Clean orphan files from managed directories.
-/// Removes files that exist on disk but are not in the expected file list.
+/// Removes top-level files that carry the directory's orphan suffix, exist on
+/// disk, and are not in the expected file list.
 pub fn clean_orphans(
-    managed_dirs: &[PathBuf],
+    managed_dirs: &[ManagedDir],
     expected_files: &[(PathBuf, String)],
 ) -> Result<Vec<PathBuf>> {
     let expected_set: std::collections::HashSet<_> =
@@ -102,13 +136,19 @@ pub fn clean_orphans(
 
     let mut cleaned = Vec::new();
     for dir in managed_dirs {
-        if !dir.is_dir() {
+        let Some(suffix) = dir.orphan_suffix else {
+            continue;
+        };
+        if !dir.path.is_dir() {
             continue;
         }
-        for entry in std::fs::read_dir(dir)? {
+        for entry in std::fs::read_dir(&dir.path)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() && !expected_set.contains(&path) {
+            let generated_kind = path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with(suffix));
+            if generated_kind && path.is_file() && !expected_set.contains(&path) {
                 std::fs::remove_file(&path)?;
                 cleaned.push(path);
             }

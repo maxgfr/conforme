@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use crate::adapters::AiToolAdapter;
+use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
 
 /// Zoo Code (community fork of Roo Code) adapter.
@@ -33,10 +33,17 @@ impl AiToolAdapter for ZooCodeAdapter {
         }
     }
 
-    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
+    /// Zoo Code writes its own per-server state (`alwaysAllow`,
+    /// `disabledTools`) into `.roo/mcp.json`, so `remove`/`migrate` must
+    /// never delete the file wholesale.
+    fn is_shared_file(&self, path: &Path) -> bool {
+        path.ends_with(Path::new(".roo/mcp.json"))
+    }
+
+    fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
-            project_root.join(".roo").join("rules"),
-            project_root.join(".roo").join("skills"),
+            ManagedDir::files(project_root.join(".roo").join("rules"), ".md"),
+            ManagedDir::subdirs(project_root.join(".roo").join("skills")),
         ]
     }
 
@@ -135,14 +142,25 @@ impl AiToolAdapter for ZooCodeAdapter {
             )?);
         }
 
-        // Generate MCP config as .roo/mcp.json
-        // Zoo Code uses `type: "streamable-http"` for HTTP servers (not bare "http").
+        // Merge MCP config into .roo/mcp.json. Zoo Code uses
+        // `type: "streamable-http"` for HTTP servers (not bare "http"), and
+        // writes its own per-server state (`alwaysAllow`, `disabledTools`)
+        // into this file, so existing entries keep the keys conforme does
+        // not own.
         if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_zoocode_mcp_json(&config.mcp_servers)?;
-            files.push((
-                project_root.join(".roo").join("mcp.json"),
-                format!("{}\n", mcp_json),
-            ));
+            let mcp_path = project_root.join(".roo").join("mcp.json");
+            let existing = crate::json_settings::load(&mcp_path)?;
+            let servers = crate::json_settings::merge_server_entries(
+                existing.as_ref().and_then(|f| f.get("mcpServers")),
+                crate::mcp::build_zoocode_servers_object(&config.mcp_servers),
+                crate::mcp::ZOOCODE_OWNED_SERVER_KEYS,
+            );
+            let json = crate::json_settings::render(
+                existing.as_ref(),
+                &[("mcpServers", serde_json::Value::Object(servers))],
+                &[],
+            )?;
+            files.push((mcp_path, json));
         }
 
         Ok(files)

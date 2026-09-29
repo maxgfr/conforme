@@ -106,7 +106,7 @@ fn get_watch_paths(
         if let Some(adapter) = adapters.iter().find(|a| a.id() == source_id.as_str()) {
             // Watch the managed directories of the source adapter
             let managed = adapter.managed_directories(project_root);
-            paths.extend(managed);
+            paths.extend(managed.into_iter().map(|dir| dir.path));
 
             // Also watch tool-specific main files
             match source_id.as_str() {

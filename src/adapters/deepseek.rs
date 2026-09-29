@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::AiToolAdapter;
+use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::NormalizedConfig;
 
 /// DeepSeek Harness (`dsh`) adapter.
@@ -40,8 +40,10 @@ impl AiToolAdapter for DeepSeekAdapter {
         }
     }
 
-    fn managed_directories(&self, project_root: &Path) -> Vec<PathBuf> {
-        vec![project_root.join(".dsh").join("skills")]
+    fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
+        vec![ManagedDir::subdirs(
+            project_root.join(".dsh").join("skills"),
+        )]
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
