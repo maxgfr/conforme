@@ -92,8 +92,14 @@ Because this configuration is user-level and not project-scoped, conforme does
 - No activation modes, no agents, no project-scoped MCP
 - `generate()` writes `.dsh/skills/<name>/SKILL.md` (AGENTS.md is read natively)
 - `read()` round-trips AGENTS.md (falling back to CLAUDE.md) plus skills from
-  `.dsh/skills/`, falling back to the shared `.agents/skills/` root
-- Managed directory for orphan cleanup: `.dsh/skills`
+  `.dsh/skills/` — both `<name>/SKILL.md` bundles and flat `<name>.md` files,
+  a bundle winning over a flat file of the same name — falling back to the
+  shared `.agents/skills/` root
+- Managed directory: `.dsh/skills`. conforme only writes bundles there, so
+  orphan cleanup never deletes a top-level file (flat skills are safe)
+- The harness loads *every* existing file among `AGENTS.md` and `CLAUDE.md`;
+  `read()` takes only the first one found. This is a deliberate
+  simplification: conforme writes neither file for this target
 
 ## Notes
 

@@ -23,7 +23,8 @@ cargo install --path .
 1. **Write your config** in your preferred tool (Claude Code, Cursor, Windsurf, etc.) or directly in `AGENTS.md`
 2. **Run `conforme sync`** — it reads from your chosen source and propagates to all detected tools
 3. **Only changed files are updated** — content is compared using SHA-256 hashes, so unchanged files are never touched
-4. **Orphan files are cleaned** — when you rename or remove a rule, the old generated files are automatically deleted
+4. **Orphan files are cleaned** — when you rename or remove a rule, the old generated files are automatically deleted. Only files of the kind conforme writes are touched: files a tool accepts but conforme never generates (Kiro `.json` agents, flat DeepSeek skills, hand-written `.md` Copilot agents) are left alone
+5. **Shared settings are merged, never replaced** — settings files that also hold your own configuration (`opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`, `.codex/config.toml`) only have conforme's key updated. JSONC comments and trailing commas are kept, per-server options a tool added (Zoo Code approvals, Gemini `trust`, …) survive, and a file conforme cannot parse is never overwritten
 
 You can set your source tool once in `.conformerc.toml` or pass it on the command line with `--from`. If no source is specified, conforme defaults to `AGENTS.md`.
 
@@ -33,7 +34,7 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 
 | Tool | Config format | Frontmatter | AGENTS.md |
 |------|--------------|-------------|-----------|
-| Claude Code | `CLAUDE.md` + `.claude/rules/*.md` | `paths` (glob array) | via `@AGENTS.md` include |
+| Claude Code | `CLAUDE.md` + `.claude/rules/*.md` | `paths` (glob array) | Native when no `CLAUDE.md` exists |
 | Cursor | `.cursor/rules/*.mdc` | `alwaysApply`, `globs`, `description` | Native |
 | Windsurf | `.devin/rules/*.md` (or legacy `.windsurf/rules/*.md`) | `trigger`, `description`, `globs` | Native |
 | GitHub Copilot | `.github/copilot-instructions.md` + `.github/instructions/` | `applyTo`, `excludeAgent` | Native |
@@ -161,11 +162,11 @@ Review all changes for correctness and security.
 | Adapter | Rules | Skills | Agents | MCP |
 |---------|-------|--------|--------|-----|
 | Claude Code | `.claude/rules/*.md` | `.claude/skills/` + `.claude/commands/` | `.claude/agents/*.md` | `.mcp.json` |
-| GitHub Copilot | `.github/instructions/*.md` | `.github/skills/` | `.github/agents/*.agent.md` | `.vscode/mcp.json` |
+| GitHub Copilot | `.github/instructions/*.md` | `.github/skills/` | `.github/agents/*.agent.md` | `.vscode/mcp.json` (merged) |
 | Cursor | `.cursor/rules/*.mdc` | `.cursor/skills/` | `.cursor/agents/*.md` | `.cursor/mcp.json` |
 | Kiro (AWS) | `.kiro/steering/*.md` | `.kiro/skills/` | `.kiro/agents/*.md` | `.kiro/settings/mcp.json` |
-| Windsurf | `.devin/rules/*.md` or `.windsurf/rules/*.md` | `.windsurf/skills/` | - | - |
-| Zoo Code | `.roo/rules/*.md` | `.roo/skills/` | - | `.roo/mcp.json` |
+| Windsurf (Devin Desktop) | `.devin/rules/*.md` or `.windsurf/rules/*.md` | `.devin/skills/` or `.windsurf/skills/` | - | - |
+| Zoo Code | `.roo/rules/*.md` | `.roo/skills/` | - | `.roo/mcp.json` (merged) |
 | Gemini CLI | `GEMINI.md` | `.gemini/skills/` | `.gemini/agents/*.md` | `.gemini/settings.json` |
 | OpenCode | native (AGENTS.md) | `.opencode/skills/` | `opencode.json#agent` + `.opencode/agents/*.md` | `opencode.json#mcp` |
 | Zed AI | `.rules` | `.agents/skills/` | - | `.zed/settings.json` |
@@ -185,7 +186,7 @@ When using Claude Code as source (`source = "claude"`), conforme also reads **cu
 | Cursor | `.cursor/skills/<name>/SKILL.md` | `name`, `description` |
 | Copilot | `.github/skills/<name>/SKILL.md` | `name`, `description`, `allowed-tools` |
 | Kiro | `.kiro/skills/<name>/SKILL.md` | `name`, `description` |
-| Windsurf | `.windsurf/skills/<name>/SKILL.md` | `name`, `description` |
+| Windsurf | `.devin/skills/<name>/SKILL.md` (or `.windsurf/skills/` without `.devin/`) | `name`, `description` |
 | Zoo Code | `.roo/skills/<name>/SKILL.md` | `name`, `description` |
 | Gemini CLI | `.gemini/skills/<name>/SKILL.md` | `name`, `description` (no other fields) |
 | OpenCode | `.opencode/skills/<name>/SKILL.md` | `name`, `description` (no `allowed-tools`) |
@@ -204,11 +205,13 @@ Agents (sub-agents) are custom AI assistants with a model, tools, and system pro
 | Claude Code | `.claude/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
 | Copilot | `.github/agents/<name>.agent.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
 | Cursor | `.cursor/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model` (no `tools` — inherited) |
-| Kiro | `.kiro/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
-| Gemini CLI | `.gemini/agents/<name>.md` | YAML frontmatter: `name`, `description`, `kind: local`, `model`, `tools` |
-| OpenCode | `opencode.json` (`agent` key) + `.opencode/agents/<name>.md` | JSON merged into `opencode.json`; markdown for per-project agents |
+| Kiro | `.kiro/agents/<name>.md` | YAML frontmatter: `description`, `model`, `tools` (Kiro tags: `read`, `write`, `shell`, …; name from the file) |
+| Gemini CLI | `.gemini/agents/<name>.md` | YAML frontmatter: `name`, `description`, `kind: local`, `model`, `tools` (Gemini tool names) |
+| OpenCode | `opencode.json` (`agent` key) + `.opencode/agents/<name>.md` | JSON merged into `opencode.json`; markdown for per-project agents; `model` only when written as `provider/model` |
 
 Tools without agents support: Windsurf, Zoo Code, Codex CLI, Zed AI, Amp, DeepSeek Harness.
+
+Gemini CLI and Kiro only accept their own tool names, so common names are translated (`Read` → `read_file` / `read`, `Bash` → `run_shell_command` / `shell`, `WebFetch` → `web_fetch` / `web`, …) and names with no equivalent are dropped. A skill or agent without a description gets its name as description, since several tools skip one that has none.
 
 ### MCP format equivalence
 
@@ -218,10 +221,10 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 |------|------|----------|-------------|
 | Claude Code | `.mcp.json` | `mcpServers` | `type: stdio/http`, with `env`, `headers` |
 | Cursor | `.cursor/mcp.json` | `mcpServers` | `type: stdio/http` |
-| Windsurf | _(none)_ | - | Cascade only reads the user-global `~/.codeium/windsurf/mcp_config.json`; no project-level file exists, so conforme generates nothing |
-| Copilot | `.vscode/mcp.json` | `servers` | Uses `servers` key (not `mcpServers`); supports `env` + `headers` |
+| Windsurf | _(none)_ | - | Cascade only reads the user-global `~/.config/devin/mcp_config.json`, so conforme generates nothing (Devin Local's project `.devin/mcp_config.json` is not generated yet) |
+| Copilot | `.vscode/mcp.json` (merged) | `servers` | Uses `servers` key (not `mcpServers`); supports `env` + `headers`; VS Code `inputs`/`sandbox` preserved |
 | Kiro | `.kiro/settings/mcp.json` | `mcpServers` | Standard format |
-| Zoo Code | `.roo/mcp.json` | `mcpServers` | HTTP uses `type: streamable-http` (not `http`); legacy alias `sse` |
+| Zoo Code | `.roo/mcp.json` (merged) | `mcpServers` | HTTP uses `type: streamable-http` (not `http`), no `env` on remote servers; Zoo's `alwaysAllow`/`disabledTools` preserved |
 | Gemini CLI | `.gemini/settings.json` (merged) | `mcpServers` | No `type` field, uses `httpUrl` (not `url`) for HTTP |
 | OpenCode | `opencode.json` (merged) | `mcp` | `type: local/remote`; `command` as single array; env key is `environment` |
 | Zed AI | `.zed/settings.json` (merged) | `context_servers` | No `type` field; remote uses `url` + `headers` |

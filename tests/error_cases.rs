@@ -152,7 +152,7 @@ Be helpful.
 "#;
     let dir = create_project_with_tools(agents_md, &["windsurf"]);
 
-    // Cascade reads MCP servers only from ~/.codeium/windsurf/mcp_config.json:
+    // Cascade reads MCP servers only from ~/.config/devin/mcp_config.json:
     // no project file is written, and the user is told the servers were skipped.
     conforme()
         .args(["-C", dir.path().to_str().unwrap(), "sync"])

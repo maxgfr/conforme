@@ -54,7 +54,7 @@ impl AiToolAdapter for WindsurfAdapter {
             skills: true,
             agents: false,
             // Cascade only reads the user-global
-            // ~/.codeium/windsurf/mcp_config.json; there is no project-level
+            // ~/.config/devin/mcp_config.json; there is no project-level
             // MCP file, so conforme has nothing project-scoped to write.
             mcp: false,
         }

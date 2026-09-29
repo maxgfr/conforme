@@ -19,7 +19,7 @@
 | Feature | Path | Format |
 |---------|------|--------|
 | Instructions | `CLAUDE.md` | Markdown (always-active rules inlined) |
-| Rules (glob) | `.claude/rules/*.md` | YAML frontmatter: `paths` (glob array) |
+| Rules (glob) | `.claude/rules/*.md` | YAML frontmatter: `paths` (glob list, or a comma-separated string) |
 | Skills | `.claude/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description`, `allowed-tools` |
 | Commands | `.claude/commands/*.md` | YAML frontmatter: `description`, `allowed-tools`, `model` |
 | Agents | `.claude/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model`, `tools`, `color`, `permissionMode` |
@@ -52,7 +52,12 @@
 - Hooks and permissions are Claude-specific, not synced to other tools
 - `allowed-tools` accepts a space- or comma-separated string (or a YAML list); conforme writes the space-separated form `"Read Bash Write"` and parses both on read
 - Rules without `paths` frontmatter are always-active (no agent-decision/manual distinction)
+- `paths` accepts a YAML list or a comma-separated string; conforme reads both and writes a list
 - `.claude/rules/` is discovered **recursively**, so rules may be organised under `frontend/`, `backend/`, … conforme reads nested rules too (they are written back flat, one file per rule name)
+- `.claude/agents/` is scanned **recursively** as well; conforme reads nested agents and writes them back flat
+- Boolean frontmatter fields accept `yes`/`no`, `on`/`off` and `1`/`0` besides `true`/`false`; conforme reads all of them (e.g. `disable-model-invocation: yes`)
+- Since 2.1.277 (2026-09-18) Claude Code reads `AGENTS.md` itself when the project has no `CLAUDE.md`. conforme always writes `CLAUDE.md` when there is content, so Claude Code keeps reading the inlined `CLAUDE.md` and that fallback is unused
+- A skill or agent is always written with a `description`, falling back to its name when the source has none (other tools skip entries without one)
 - A project `CLAUDE.md` may live at `./CLAUDE.md` **or** `./.claude/CLAUDE.md`. conforme prefers the root file, and falls back to `./.claude/CLAUDE.md` when only that one exists — for both reading and writing, so a project using the nested location is neither read as empty nor given a competing second instruction file
 - MCP: `type: "stdio"` is optional in `.mcp.json` (transport is inferred from `command`). HTTP transport accepts `"http"` (and the `"streamable-http"` alias); the older `"sse"` transport is deprecated and the `"ws"` (WebSocket) transport is also parsed on read — conforme maps all remote transports to its HTTP variant (`url` + `headers`)
 - `tools` (subagents) and `allowed-tools` (skills/commands) accept a space-separated string, a comma-separated string, or a YAML list; conforme parses all three forms on read

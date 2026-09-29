@@ -45,8 +45,11 @@
 - `.cursor/rules/` may be organised in subdirectories; conforme reads nested `.mdc` rules too (written back flat, one file per rule name)
 - Subagents use plain `.md` (not `.mdc`) — per Cursor's v2.4 docs
 - Cursor subagents recognize only `name`, `description`, `model`, `readonly`, `is_background`. No `tools` field — tool access is inherited from the parent agent
+- Subagent names use lowercase letters and hyphens; conforme sanitizes the `name` it writes (`Code Reviewer` → `code-reviewer`)
+- A glob rule is written with `globs` and, when the source has one, a `description`; Cursor's docs do not say how a rule carrying both is classified (unverified)
 - `model` value must be `inherit`, `fast`, or a Cursor-recognized model identifier
 - Skills use the standard SKILL.md format; `name` and `description` are required, and `paths`, `disable-model-invocation`, `icon`, `color` and `metadata` are optional (conforme emits only `name` + `description`)
 - Cursor also discovers skills from `.agents/skills/` and, for compatibility, `.claude/skills/` and `.codex/skills/`; subagents likewise from `.claude/agents/` and `.codex/agents/`. conforme writes the Cursor-native `.cursor/` locations
+- Cursor walks the skills root recursively; conforme reads only `.cursor/skills/<name>/SKILL.md` one level deep (known gap for nested skill folders)
 - Cursor reads AGENTS.md natively as fallback
 - MCP uses the standard `mcpServers` JSON format. Local servers use `type: "stdio"` + `command`/`args`; per Cursor's MCP docs, remote servers need only `url` (+ optional `headers`/`auth`) and omit `type`. conforme emits a `type: "http"` field on remote servers, which Cursor ignores

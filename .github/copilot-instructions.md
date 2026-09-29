@@ -27,6 +27,9 @@ src/
   sync.rs           — Core sync engine: init, sync, check, status, remove commands
   detect.rs         — Tool detection (which tools present in project)
   hash.rs           — SHA-256 content hashing for change detection
+  json_settings.rs  — JSONC-safe merge of conforme's keys into user-owned JSON settings files
+                       (in-place edit keeps comments; unparsable file is refused, never overwritten;
+                       merge_server_entries keeps per-server keys conforme does not own)
   hook.rs           — Git pre-commit hook install/uninstall (like Husky)
   project_config.rs  — .conformerc.toml parser (source, only, exclude, clean options)
   validate.rs        — Config validation (duplicate names, empty content, invalid globs)
@@ -54,8 +57,8 @@ src/
     claude.rs       — Claude Code: CLAUDE.md (or .claude/CLAUDE.md when only that exists)
                        + .claude/rules/**/*.md, read recursively (paths: frontmatter)
     cursor.rs       — Cursor: .cursor/rules/**/*.mdc, read recursively (alwaysApply/globs/description); subagents at .cursor/agents/*.md
-    windsurf.rs     — Windsurf: .devin/rules/*.md when .devin/ exists, else .windsurf/rules/*.md (trigger/description/globs)
-    copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md
+    windsurf.rs     — Windsurf (now Devin Desktop): .devin/{rules,skills} when .devin/ exists, else .windsurf/{rules,skills} (trigger/description/globs)
+    copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md; MCP merged into .vscode/mcp.json
     codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively
     opencode.rs     — OpenCode: reads AGENTS.md natively
     zoocode.rs      — Zoo Code (community fork of Roo Code): .roo/rules/**/*.md, read recursively (plain Markdown)
@@ -146,9 +149,9 @@ Review for bugs.
 | Tool | JSON key | Notes |
 |---|---|---|
 | Claude, Kiro, Cursor | `mcpServers` | Standard format with `type: stdio/http` |
-| Zoo Code | `mcpServers` | Standard format; HTTP uses `type: streamable-http` (not `http`) |
-| Copilot | `servers` | VS Code format; supports `env` + `headers` |
-| Windsurf | _(none)_ | Cascade only reads the user-global `~/.codeium/windsurf/mcp_config.json`; nothing project-scoped is generated |
+| Zoo Code | `mcpServers` (inside `.roo/mcp.json`) | HTTP uses `type: streamable-http` (not `http`), no `env` on remote servers; merged (keeps Zoo's `alwaysAllow`/`disabledTools`) |
+| Copilot | `servers` (inside `.vscode/mcp.json`) | VS Code format; supports `env` + `headers`; merged (keeps `inputs`/`sandbox`) |
+| Windsurf | _(none)_ | Cascade only reads the user-global `~/.config/devin/mcp_config.json`; nothing project-scoped is generated |
 | OpenCode | `mcp` (inside `opencode.json`) | `type: local/remote`; `command` is a single array; env key is `environment`; merged (preserves user keys) |
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; merged into existing settings (preserves theme/keybindings/etc.) |
 | Gemini | `mcpServers` (inside `.gemini/settings.json`) | No type field, uses `httpUrl` for HTTP; merged into existing settings |
@@ -165,6 +168,21 @@ base name (case-insensitive, so Zoo's `00-`/`01-` prefixes keep their meaning)
 then by full path. Nested rules are written back flat, one file per rule name.
 `clean_orphans` stays non-recursive, so hand-authored files in subdirectories are
 never deleted.
+
+### Orphan cleanup and shared files
+
+`managed_directories()` returns `ManagedDir`s: each names the file suffix conforme
+writes there (`.md`, `.mdc`, `.instructions.md`, `.agent.md`), and orphan cleanup
+only deletes top-level files with that suffix. Skills directories are
+`ManagedDir::subdirs` (conforme only writes `<name>/SKILL.md` folders), so no
+top-level file there is ever swept. Files a tool accepts but conforme never
+writes (Kiro `.json` agents, dsh flat `<name>.md` skills, plain `.md` Copilot
+agents) therefore survive a sync.
+
+Every JSON file conforme merges into (`opencode.json`, `.zed/settings.json`,
+`.gemini/settings.json`, `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`)
+goes through `json_settings`, and together with `.codex/config.toml` is declared by
+`is_shared_file()` so `remove`/`migrate` never delete it wholesale.
 
 ### Sync algorithm
 

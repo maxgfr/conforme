@@ -51,6 +51,10 @@ Mode-specific rules go in `.roo/rules-{modeSlug}/` directories (e.g., `.roo/rule
 - Mode-specific *rules* are controlled via directory placement (`.roo/rules-{modeSlug}/`), not a frontmatter field; mode-specific skills live in `.roo/skills-{modeSlug}/`, which conforme does not generate
 - Skills are discovered from project `.roo/skills/` and `.agents/skills/`, plus the global `~/.roo/skills/` and `~/.agents/skills/`
 - Custom "modes" are distinct from agents/subagents, but they ARE file-based: a project-level `.roomodes` (YAML or JSON) file at the workspace root (plus a global `custom_modes.yaml`)
-- MCP: conforme emits `type: "streamable-http"` for HTTP servers (via `generate_zoocode_mcp_json`); stdio servers use `command`/`args`
+- MCP: conforme emits `type: "streamable-http"` for HTTP servers (via `build_zoocode_servers_object`); stdio servers use `command`/`args`/`env`
+- Remote (`sse`/`streamable-http`) entries carry no `env`: Zoo's schema requires it to be absent there and rejects the server otherwise
+- Zoo writes its own per-server state (`alwaysAllow`, `disabledTools`) into `.roo/mcp.json`, so conforme **merges** the `mcpServers` key: those keys (and any other key conforme does not emit, such as `timeout`, `cwd`, `watchPaths`) survive a sync, `disabled` is reset so a synced server is re-enabled, a file conforme cannot parse (JSONC is accepted) is left untouched, and `remove zoocode` / `migrate --source zoocode` keep the file
+- Skills require `name` (equal to the folder name) and `description`; conforme always writes a description, falling back to the name
+- Skill manual-invocation keys conforme writes (`disable-model-invocation`, `metadata`, `agents/openai.yaml`) are ignored by Zoo, which has no manual-only mechanism
 - Reads AGENTS.md natively
 - Also detects `.roorules` and `.clinerules` files (and the legacy `.roorules-{modeSlug}` mode-specific files)
