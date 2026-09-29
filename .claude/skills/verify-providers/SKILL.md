@@ -28,8 +28,8 @@ grep -n 'Box::new' src/adapters/mod.rs
 ```
 
 Done when: one audit row exists per registered adapter, and the count matches
-`README.md` ("Supported tools (N)"), `src/cli.rs` (`long_about`),
-`CLAUDE.md` and this skill's description.
+`README.md` ("Supported tools (N)" and "to N-1 others"), `src/cli.rs`
+(`long_about`), and `CLAUDE.md` (project overview and Skills section).
 
 ## 2. Check the upstream product is alive
 
@@ -44,10 +44,20 @@ each adapter, from the URLs in `docs/providers/<tool>.md`, establish:
   and which paths win when the successor reads both (for example `.kiro/`
   over `.amazonq/`).
 
-Verdict per adapter: **alive**, **absorbed by `<successor adapter>`**, or
-**retired**. Absorbed and retired adapters are deleted outright in step 7;
-conforme carries no deprecation flags. Done when: every adapter has a verdict
-with the URL that proves it.
+Verdict per adapter, with the URL that proves it:
+
+- **alive**;
+- **renamed**: the product ships under a new name and still reads the paths
+  conforme writes (Windsurf became Devin Desktop). Update the docs and any
+  paths the new name prefers; keeping or renaming the tool id is the user's
+  call in step 6;
+- **forked**: the original is retired but a maintained fork reads the same
+  files (Roo Code, continued by Zoo Code). Rename the adapter to the fork in
+  step 7 rather than deleting working output;
+- **absorbed by `<successor adapter>`** or **retired**: deleted outright in
+  step 7; conforme carries no deprecation flags.
+
+Done when: every adapter has a verdict with its proof URL.
 
 ## 3. Fetch the current documentation
 
@@ -92,11 +102,12 @@ Add these checks, which the fact sheet alone does not cover:
   that path. A best-effort file nobody consumes is drift, and the fix is to
   stop writing it, drop the capability, and let `sync` warn that the feature
   is skipped.
-- **User-owned locations**: every entry in `managed_directories()` is a
-  directory only conforme writes to. Orphan cleanup deletes every file there
-  that the current config did not generate, so a directory the user also
-  authors in (`.github/prompts/`, the top-level `.opencode/`, `.agents/skills`
-  shared with other tools) must not be listed.
+- **User-owned locations**: orphan cleanup deletes every top-level file of a
+  `managed_directories()` entry that carries the entry's suffix and that the
+  current config did not generate. A directory the user authors in with the
+  same file kind (`.github/prompts/`, the top-level `.opencode/`) must not be
+  listed; a shared skills root (`.agents/skills`) is only safe as
+  `ManagedDir::subdirs`.
 - **Merged settings**: every file `generate()` merges into rather than owns
   (`opencode.json`, `.zed/settings.json`, `.gemini/settings.json`,
   `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`,
@@ -106,8 +117,15 @@ Add these checks, which the fact sheet alone does not cover:
 - **Orphan suffixes**: every `ManagedDir` names the suffix conforme writes
   there; list the file kinds the tool accepts in that directory and confirm
   none that conforme does not write shares it.
+- **Required fields and vocabularies**: for each skill and agent format,
+  which keys the tool requires (a missing `description` makes several tools
+  skip the entry) and which values it accepts (Gemini and Kiro tool names,
+  OpenCode `provider/model`, name character sets). Anything copied verbatim
+  from another host must be valid in this one.
 - **Round-trip**: every feature `generate()` writes, `read()` parses back,
-  otherwise `--from <tool>` silently drops it.
+  otherwise `--from <tool>` silently drops it. Also check the layouts the tool
+  reads that conforme does not write (nested directories, flat files,
+  alternate spellings such as a comma-separated `paths` string).
 - **Blank output**: an empty config yields no file, and a full config yields
   no blank file (`test_no_adapter_writes_blank_files` guards it).
 
@@ -117,7 +135,7 @@ check above, for every adapter.
 ## 5. Verify every documentation link
 
 ```bash
-grep -oh 'https://[^ )>,]*' docs/providers/*.md | sed 's/[.,]$//' | sort -u > urls.txt
+grep -oh 'https://[^ )>,`"]*' docs/providers/*.md README.md CLAUDE.md | sed 's/[.,]$//' | sort -u > urls.txt
 while read -r u; do printf '%s %s\n' "$(curl -sS -o /dev/null -w '%{http_code}' -A 'Mozilla/5.0' --max-time 25 -L "$u")" "$u"; done < urls.txt | sort | grep -v '^200'
 ```
 
@@ -132,9 +150,10 @@ decisions, and confirm the third one:
 
 - **fix now**: drift, broken links, failed safety checks;
 - **leave**: deliberate deviations already documented as such;
-- **delete the adapter**: absorbed or retired upstream (step 2). Deleting a
-  tool id is a breaking change and ships as a major release; say so before
-  merging.
+- **delete or rename the adapter**: absorbed, retired, forked or renamed
+  upstream (step 2). Deleting or renaming a tool id is a breaking change and
+  ships as a major release: the commit needs `!` and a `BREAKING CHANGE:`
+  footer with the migration, and say so before merging.
 
 ## 7. Fix, with a regression test per finding
 
@@ -153,7 +172,9 @@ usual set is:
    removed) gets an integration test that reproduces the loss and asserts
    the file survives;
 5. a deleted adapter also leaves the registry, `all_adapters()` order-based
-   tests, `.gitignore` templates, and the dogfooded output directory.
+   tests, `.gitignore` templates, and the dogfooded output directory; a
+   renamed one changes its module, struct, id, `docs/providers/` file and
+   every test fixture that names it.
 
 Then regenerate the dogfooded configs and run the full gate:
 
@@ -163,8 +184,8 @@ cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt -- --check
 ```
 
 Done when: the gate is green, `git status` shows only intended files, and a
-`grep -rni '<old tool id>'` outside `CHANGELOG.md` returns only sentences
-that describe the removal.
+`grep -rni '<old tool id>'` returns only sentences that describe the removal
+or rename (release notes live on GitHub Releases, not in the tree).
 
 ## 8. Report
 
@@ -174,4 +195,6 @@ One table, one row per adapter:
 
 followed by the three lists from step 6 and the PR link. State plainly what
 was not verified (a page that could not be read, a behaviour only a manual
-run in the IDE would confirm).
+run in the IDE would confirm) and the known gaps left for a later change.
+After the merge, check that semantic-release published the expected version
+and that the release binaries are attached.
