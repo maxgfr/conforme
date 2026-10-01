@@ -1,7 +1,44 @@
 use owo_colors::OwoColorize;
 use std::collections::HashSet;
 
-use crate::config::{ActivationMode, McpTransport, NormalizedConfig};
+use crate::config::{
+    rule_file_name, sanitize_name, ActivationMode, McpTransport, NormalizedConfig,
+};
+
+/// Longest skill description Codex and Zoo Code accept; a longer one makes
+/// them skip the skill.
+const MAX_DESCRIPTION_LEN: usize = 1024;
+
+/// Every rule, skill and agent name becomes a file or folder name: through
+/// [`rule_file_name`] for rules, and [`sanitize_name`] (kebab-case ASCII, the
+/// `name` field too) for skills and agents. A name that sanitizes to nothing
+/// cannot be written, and two names that sanitize alike would overwrite each
+/// other's file.
+fn check_file_names<'a>(
+    kind: &str,
+    names: impl Iterator<Item = &'a String>,
+    sanitize: fn(&str) -> String,
+    errors: &mut Vec<String>,
+) {
+    let mut seen: std::collections::HashMap<String, &String> = Default::default();
+    for name in names {
+        if name.trim().is_empty() {
+            continue;
+        }
+        let sanitized = sanitize(name);
+        if sanitized.is_empty() {
+            errors.push(format!(
+                "{kind} name '{name}' has no ASCII letter or digit; tools need a kebab-case name"
+            ));
+        } else if let Some(other) = seen.insert(sanitized.clone(), name) {
+            if other != name {
+                errors.push(format!(
+                    "{kind} names '{other}' and '{name}' both become '{sanitized}'"
+                ));
+            }
+        }
+    }
+}
 
 /// Validate a NormalizedConfig and print warnings. Returns true if valid (no errors).
 pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
@@ -33,6 +70,13 @@ pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
         }
     }
 
+    check_file_names(
+        "Rule",
+        config.rules.iter().map(|r| &r.name),
+        rule_file_name,
+        &mut errors,
+    );
+
     // Check for duplicate skill names
     let mut seen_skills = HashSet::new();
     for skill in &config.skills {
@@ -42,7 +86,19 @@ pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
         if skill.content.trim().is_empty() {
             warnings.push(format!("Skill '{}' has empty content", skill.name));
         }
+        if skill.description.chars().count() > MAX_DESCRIPTION_LEN {
+            warnings.push(format!(
+                "Skill '{}' has a description over {MAX_DESCRIPTION_LEN} characters; Codex and Zoo Code skip it",
+                skill.name
+            ));
+        }
     }
+    check_file_names(
+        "Skill",
+        config.skills.iter().map(|s| &s.name),
+        sanitize_name,
+        &mut errors,
+    );
 
     // Check for duplicate agent names
     let mut seen_agents = HashSet::new();
@@ -54,6 +110,12 @@ pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
             warnings.push(format!("Agent '{}' has empty content", agent.name));
         }
     }
+    check_file_names(
+        "Agent",
+        config.agents.iter().map(|a| &a.name),
+        sanitize_name,
+        &mut errors,
+    );
 
     // Check for duplicate MCP server names
     let mut seen_mcp = HashSet::new();
@@ -184,5 +246,37 @@ mod tests {
         };
 
         assert!(!validate(&config, false));
+    }
+
+    #[test]
+    fn test_names_must_sanitize_to_distinct_ascii() {
+        let skill = |name: &str| NormalizedSkill {
+            name: name.to_string(),
+            content: "x".to_string(),
+            ..Default::default()
+        };
+        let config = |skills| NormalizedConfig {
+            skills,
+            ..Default::default()
+        };
+        assert!(!validate(&config(vec![skill("部署")]), false));
+        assert!(!validate(
+            &config(vec![skill("Deploy App"), skill("deploy-app")]),
+            false
+        ));
+        assert!(validate(&config(vec![skill("Déployer")]), false));
+
+        // Rules only become files, which may keep non-ASCII letters.
+        let rule = NormalizedConfig {
+            rules: vec![NormalizedRule {
+                name: "部署".to_string(),
+                content: "x".to_string(),
+                activation: ActivationMode::Always,
+            }],
+            ..Default::default()
+        };
+        assert!(validate(&rule, false));
+        assert_eq!(rule_file_name("部署 Rule"), "部署-rule");
+        assert_eq!(rule_file_name("Déployer"), "deployer");
     }
 }

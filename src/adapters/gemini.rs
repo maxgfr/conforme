@@ -40,7 +40,11 @@ impl AiToolAdapter for GeminiAdapter {
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
-            ManagedDir::files(project_root.join(".gemini").join("agents"), ".md"),
+            // Gemini skips `_`-prefixed agent files: they are the user's drafts.
+            ManagedDir::files_except(project_root.join(".gemini").join("agents"), ".md", |path| {
+                path.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with('_'))
+            }),
             ManagedDir::subdirs(project_root.join(".gemini").join("skills")),
         ]
     }
@@ -59,15 +63,25 @@ impl AiToolAdapter for GeminiAdapter {
         // Read skills, agents, and MCP so a Gemini project round-trips as a source.
         let skills =
             crate::skills::read_skills_from_dir(&project_root.join(".gemini").join("skills"))?;
-        let agents = crate::skills::read_agents_from_dir(
-            &project_root.join(".gemini").join("agents"),
-            false,
-        )?;
+        // Gemini skips agent files whose name starts with `_` (drafts), so a
+        // disabled agent is not propagated to the other tools either.
+        let agent_files: Vec<PathBuf> =
+            crate::skills::agent_files(&project_root.join(".gemini").join("agents"), false)?
+                .into_iter()
+                .filter(|p| {
+                    !p.file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with('_'))
+                })
+                .collect();
+        let agents = crate::skills::read_agent_files(&agent_files)?;
         let mut mcp_servers = Vec::new();
         let settings_path = project_root.join(".gemini").join("settings.json");
         if settings_path.exists() {
             let settings = std::fs::read_to_string(&settings_path)?;
-            mcp_servers = crate::mcp::parse_mcp_json(&settings)?;
+            mcp_servers = crate::mcp::canonicalize_env_refs(
+                crate::mcp::parse_mcp_json(&settings)?,
+                crate::mcp::EnvRefStyle::DollarOrBare,
+            );
         }
 
         Ok(NormalizedConfig {
@@ -125,21 +139,13 @@ impl AiToolAdapter for GeminiAdapter {
         // any existing file and replace only the managed `mcpServers` key rather
         // than clobbering user-authored settings. Gemini-only server options
         // (`trust`, `timeout`, `includeTools`, …) survive the merge.
-        if !config.mcp_servers.is_empty() {
-            let config_path = project_root.join(".gemini").join("settings.json");
-            let existing = crate::json_settings::load(&config_path)?;
-            let mcp_obj = crate::json_settings::merge_server_entries(
-                existing.as_ref().and_then(|f| f.get("mcpServers")),
-                crate::mcp::build_gemini_mcp_object(&config.mcp_servers),
-                crate::mcp::GEMINI_OWNED_SERVER_KEYS,
-            );
-            let json = crate::json_settings::render(
-                existing.as_ref(),
-                &[("mcpServers", serde_json::Value::Object(mcp_obj))],
-                &[],
-            )?;
-            files.push((config_path, json));
-        }
+        files.extend(crate::json_settings::server_settings_file(
+            &project_root.join(".gemini").join("settings.json"),
+            "mcpServers",
+            crate::mcp::build_gemini_mcp_object(&config.mcp_servers),
+            crate::mcp::GEMINI_OWNED_SERVER_KEYS,
+            &[],
+        )?);
 
         Ok(files)
     }

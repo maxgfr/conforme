@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::{
-    sanitize_name, ActivationMode, NormalizedAgent, NormalizedConfig, NormalizedRule,
+    rule_file_name, split_globs, ActivationMode, NormalizedAgent, NormalizedConfig, NormalizedRule,
     NormalizedSkill,
 };
 use crate::frontmatter;
@@ -32,6 +32,23 @@ fn parse_tool_list(value: Option<&serde_yaml_ng::Value>) -> Vec<String> {
 }
 
 pub struct ClaudeAdapter;
+
+/// Whether a file is one Claude Code loads as a subagent: it needs a
+/// non-empty `name` and `description` (a file without `name` is documentation
+/// kept beside the agents, one without `description` is skipped).
+fn is_claude_agent_file(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|content| frontmatter::parse(&content).ok())
+        .is_some_and(|(fields, _)| {
+            ["name", "description"].iter().all(|key| {
+                fields
+                    .get(*key)
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|v| !v.trim().is_empty())
+            })
+        })
+}
 
 /// Resolve the project instruction file.
 ///
@@ -75,11 +92,22 @@ impl AiToolAdapter for ClaudeAdapter {
         }
     }
 
+    /// `.mcp.json` is merged, not owned: it also holds per-server settings
+    /// conforme never writes, and Copilot CLI reads it too.
+    fn is_shared_file(&self, path: &Path) -> bool {
+        path.ends_with(Path::new(".mcp.json"))
+    }
+
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
             ManagedDir::files(project_root.join(".claude").join("rules"), ".md"),
             ManagedDir::subdirs(project_root.join(".claude").join("skills")),
-            ManagedDir::files(project_root.join(".claude").join("agents"), ".md"),
+            // A `.md` without `name` and `description` there is not an agent
+            // Claude Code loads (a README, a draft), so it is never one of
+            // conforme's orphans.
+            ManagedDir::files_except(project_root.join(".claude").join("agents"), ".md", |path| {
+                !is_claude_agent_file(path)
+            }),
         ]
     }
 
@@ -114,11 +142,9 @@ impl AiToolAdapter for ClaudeAdapter {
                     .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
                     .filter(|s| !s.is_empty())
                     .collect(),
-                Some(serde_yaml_ng::Value::String(paths)) => paths
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect(),
+                // Brace groups (`src/**/*.{ts,tsx}`, the form Claude Code
+                // recommends) keep their inner commas.
+                Some(serde_yaml_ng::Value::String(paths)) => split_globs(paths),
                 _ => Vec::new(),
             };
             let activation = if globs.is_empty() {
@@ -174,41 +200,39 @@ impl AiToolAdapter for ClaudeAdapter {
             }
         }
 
-        // Read commands from .claude/commands/*.md (mapped to skills for cross-tool sync)
+        // Read commands from .claude/commands/**/*.md (mapped to skills for
+        // cross-tool sync). A nested command is namespaced by its folders:
+        // `frontend/component.md` is `/frontend:component`.
         let commands_dir = project_root.join(".claude").join("commands");
-        if commands_dir.is_dir() {
-            let mut entries: Vec<_> = std::fs::read_dir(&commands_dir)?
-                .filter_map(|e| e.ok())
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "md") {
-                    let content = std::fs::read_to_string(&path)?;
-                    let (fields, body) = frontmatter::parse(&content)?;
-                    let name = path
-                        .file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    let description = fields
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let allowed_tools = parse_tool_list(fields.get("allowed-tools"));
-                    skills.push(NormalizedSkill {
-                        name,
-                        description,
-                        content: body.trim().to_string(),
-                        allowed_tools,
-                        manual_invocation: fields
-                            .get("disable-model-invocation")
-                            .and_then(crate::skills::yaml_flag)
-                            == Some(true),
-                    });
-                }
-            }
+        let mut command_paths = crate::adapters::collect_rule_files(&commands_dir, "md")?;
+        command_paths.sort();
+        for path in command_paths {
+            let content = std::fs::read_to_string(&path)?;
+            let (fields, body) = frontmatter::parse(&content)?;
+            let name = path
+                .strip_prefix(&commands_dir)
+                .unwrap_or(&path)
+                .with_extension("")
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join(":");
+            let description = fields
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let allowed_tools = parse_tool_list(fields.get("allowed-tools"));
+            skills.push(NormalizedSkill {
+                name,
+                description,
+                content: body.trim().to_string(),
+                allowed_tools,
+                manual_invocation: fields
+                    .get("disable-model-invocation")
+                    .and_then(crate::skills::yaml_flag)
+                    == Some(true),
+            });
         }
 
         // Read agents from .claude/agents/**/*.md — Claude Code scans the
@@ -218,21 +242,20 @@ impl AiToolAdapter for ClaudeAdapter {
         for path in crate::adapters::collect_rule_files(&agents_dir, "md")? {
             let content = std::fs::read_to_string(&path)?;
             let (fields, body) = frontmatter::parse(&content)?;
-            let name = fields
-                .get("name")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| {
-                    path.file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string()
-                });
-            let description = fields
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            // Claude Code treats a file without `name` as documentation kept
+            // beside the agents (a README), and skips one without
+            // `description`; neither is an agent to propagate.
+            let field = |key: &str| {
+                fields
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_string)
+            };
+            let (Some(name), Some(description)) = (field("name"), field("description")) else {
+                continue;
+            };
             let model = fields
                 .get("model")
                 .and_then(|v| v.as_str())
@@ -294,7 +317,7 @@ impl AiToolAdapter for ClaudeAdapter {
                     claude_content.push_str(&rule.content);
                 }
                 _ => {
-                    let filename = format!("{}.md", sanitize_name(&rule.name));
+                    let filename = format!("{}.md", rule_file_name(&rule.name));
                     rule_files.push((rule, filename));
                 }
             }
@@ -339,11 +362,15 @@ impl AiToolAdapter for ClaudeAdapter {
             &config.agents,
         )?);
 
-        // Generate MCP config as .mcp.json
-        if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
-            files.push((project_root.join(".mcp.json"), format!("{}\n", mcp_json)));
-        }
+        // Merge MCP servers into .mcp.json. Per-server keys conforme never
+        // writes (`oauth`, `headersHelper`, `timeout`, …) survive a sync.
+        files.extend(crate::json_settings::server_settings_file(
+            &project_root.join(".mcp.json"),
+            "mcpServers",
+            crate::mcp::build_claude_servers_object(&config.mcp_servers),
+            crate::mcp::CLAUDE_OWNED_SERVER_KEYS,
+            &[],
+        )?);
 
         Ok(files)
     }
@@ -503,8 +530,97 @@ mod tests {
             .unwrap();
         assert!(agent_file.0.ends_with("reviewer.md"));
         assert!(agent_file.1.contains("description: Code review"));
-        assert!(agent_file.1.contains("model: gpt-4o"));
         assert!(agent_file.1.contains("Review code."));
+        // A Copilot tool name is translated (an unresolvable list makes Claude
+        // Code refuse to launch the agent) and another vendor's model is left
+        // out.
+        assert!(agent_file.1.contains("tools: Grep\n"), "{}", agent_file.1);
+        assert!(!agent_file.1.contains("model:"), "{}", agent_file.1);
+    }
+
+    #[test]
+    fn test_agent_tools_from_other_hosts_are_translated() {
+        let config = NormalizedConfig {
+            agents: vec![NormalizedAgent {
+                name: "reviewer".to_string(),
+                description: "Review".to_string(),
+                model: Some("opus".to_string()),
+                tools: vec![
+                    "read_file".to_string(),
+                    "run_shell_command".to_string(),
+                    "mcp_github_list_issues".to_string(),
+                    "@slack".to_string(),
+                    "Agent(worker)".to_string(),
+                    "githubRepo".to_string(),
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let files = ClaudeAdapter.generate(Path::new("/r"), &config).unwrap();
+        assert!(
+            files[0].1.contains(
+                "tools: Read, Bash, mcp__github__list_issues, mcp__slack, Agent(worker)\n"
+            ),
+            "{}",
+            files[0].1
+        );
+        assert!(files[0].1.contains("model: opus\n"));
+    }
+
+    #[test]
+    fn test_read_skips_agent_docs_and_reads_nested_commands() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".claude/agents")).unwrap();
+        std::fs::write(root.join(".claude/agents/README.md"), "# Our agents\n").unwrap();
+        std::fs::write(
+            root.join(".claude/agents/draft.md"),
+            "---\nname: draft\n---\nNo description.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".claude/agents/reviewer.md"),
+            "---\nname: reviewer\ndescription: Review\n---\nReview.\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join(".claude/commands/frontend")).unwrap();
+        std::fs::write(
+            root.join(".claude/commands/frontend/component.md"),
+            "---\ndescription: Make a component\n---\nBuild it.\n",
+        )
+        .unwrap();
+
+        let config = ClaudeAdapter.read(root).unwrap();
+        let agents: Vec<_> = config.agents.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(agents, vec!["reviewer"]);
+        assert_eq!(config.skills[0].name, "frontend:component");
+
+        // Orphan cleanup keeps the README: it is not an agent.
+        let generated = ClaudeAdapter
+            .generate(root, &NormalizedConfig::default())
+            .unwrap();
+        let cleaned =
+            crate::adapters::clean_orphans(&ClaudeAdapter.managed_directories(root), &generated)
+                .unwrap();
+        assert!(root.join(".claude/agents/README.md").exists());
+        assert!(cleaned.contains(&root.join(".claude/agents/reviewer.md")));
+    }
+
+    #[test]
+    fn test_read_paths_string_keeps_brace_groups() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".claude/rules")).unwrap();
+        std::fs::write(
+            tmp.path().join(".claude/rules/ts.md"),
+            "---\npaths: \"src/**/*.{ts,tsx}, lib/**\"\n---\nTS.\n",
+        )
+        .unwrap();
+        let config = ClaudeAdapter.read(tmp.path()).unwrap();
+        assert_eq!(
+            config.rules[0].activation,
+            ActivationMode::GlobMatch(vec!["src/**/*.{ts,tsx}".into(), "lib/**".into()])
+        );
     }
 
     #[test]

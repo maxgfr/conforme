@@ -113,24 +113,13 @@ impl AiToolAdapter for ZedAdapter {
         // keybindings, editor settings, …), so we read any existing file and
         // replace only the managed `context_servers` key rather than clobbering it.
         // Zed settings are JSONC, so comments outside that key are kept too.
-        if !config.mcp_servers.is_empty() {
-            let config_path = project_root.join(".zed").join("settings.json");
-            let existing = crate::json_settings::load(&config_path)?;
-            let context_servers = crate::json_settings::merge_server_entries(
-                existing.as_ref().and_then(|f| f.get("context_servers")),
-                crate::mcp::build_zed_context_servers_object(&config.mcp_servers),
-                crate::mcp::ZED_OWNED_SERVER_KEYS,
-            );
-            let json = crate::json_settings::render(
-                existing.as_ref(),
-                &[(
-                    "context_servers",
-                    serde_json::Value::Object(context_servers),
-                )],
-                &[],
-            )?;
-            files.push((config_path, json));
-        }
+        files.extend(crate::json_settings::server_settings_file(
+            &project_root.join(".zed").join("settings.json"),
+            "context_servers",
+            crate::mcp::build_zed_context_servers_object(&config.mcp_servers),
+            crate::mcp::ZED_OWNED_SERVER_KEYS,
+            &[],
+        )?);
 
         Ok(files)
     }

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{AiToolAdapter, ManagedDir};
-use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
+use crate::config::{rule_file_name, ActivationMode, NormalizedConfig, NormalizedRule};
 use crate::frontmatter;
 
 /// Kiro (AWS) adapter.
@@ -34,6 +34,11 @@ impl AiToolAdapter for KiroAdapter {
             agents: true,
             mcp: true,
         }
+    }
+
+    /// `.kiro/settings/mcp.json` is merged, not owned (see `generate`).
+    fn is_shared_file(&self, path: &Path) -> bool {
+        path.ends_with(Path::new(".kiro/settings/mcp.json"))
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
@@ -121,7 +126,7 @@ impl AiToolAdapter for KiroAdapter {
         }
 
         for rule in &config.rules {
-            let filename = format!("{}.md", sanitize_name(&rule.name));
+            let filename = format!("{}.md", rule_file_name(&rule.name));
             let fields = build_kiro_fields(rule);
             let content = frontmatter::serialize(&fields, &format!("{}\n", rule.content))?;
             files.push((steering_dir.join(filename), content));
@@ -141,14 +146,16 @@ impl AiToolAdapter for KiroAdapter {
             )?);
         }
 
-        // Generate MCP config as .kiro/settings/mcp.json
-        if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
-            files.push((
-                project_root.join(".kiro").join("settings").join("mcp.json"),
-                format!("{}\n", mcp_json),
-            ));
-        }
+        // Merge MCP servers into .kiro/settings/mcp.json. Kiro keeps per-server
+        // state there (`autoApprove`, `disabledTools`, `oauth`, …), which a
+        // sync must not erase.
+        files.extend(crate::json_settings::server_settings_file(
+            &project_root.join(".kiro").join("settings").join("mcp.json"),
+            "mcpServers",
+            crate::mcp::build_kiro_servers_object(&config.mcp_servers),
+            crate::mcp::KIRO_OWNED_SERVER_KEYS,
+            &[],
+        )?);
 
         Ok(files)
     }
@@ -230,9 +237,13 @@ fn build_kiro_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_ng::V
                 "name".to_string(),
                 serde_yaml_ng::Value::String(rule.name.clone()),
             );
+            // `auto` rules require a description: Kiro decides from it.
             fields.insert(
                 "description".to_string(),
-                serde_yaml_ng::Value::String(description.clone()),
+                serde_yaml_ng::Value::String(crate::skills::description_or_name(
+                    description,
+                    &rule.name,
+                )),
             );
         }
         ActivationMode::Manual => {

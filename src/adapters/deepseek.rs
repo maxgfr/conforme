@@ -40,6 +40,10 @@ impl AiToolAdapter for DeepSeekAdapter {
         }
     }
 
+    fn reads_agents_md(&self) -> bool {
+        true
+    }
+
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![ManagedDir::subdirs(
             project_root.join(".dsh").join("skills"),
@@ -47,17 +51,6 @@ impl AiToolAdapter for DeepSeekAdapter {
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
-        // Mirrors the harness default `instructionFileCandidates`: AGENTS.md
-        // first, CLAUDE.md second.
-        let instructions = ["AGENTS.md", "CLAUDE.md"]
-            .iter()
-            .map(|name| project_root.join(name))
-            .find(|path| path.exists())
-            .map(std::fs::read_to_string)
-            .transpose()?
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-
         // `.dsh/skills` is the harness-native project root; `.agents/skills` is
         // the shared root it also scans, used as a fallback when a project only
         // carries the shared layout.
@@ -75,12 +68,16 @@ impl AiToolAdapter for DeepSeekAdapter {
                 crate::skills::read_skills_from_dir(&project_root.join(".agents").join("skills"))?;
         }
 
-        Ok(NormalizedConfig {
-            instructions,
-            rules: Vec::new(),
-            skills,
-            ..Default::default()
-        })
+        crate::markdown::read_native_agents_md(
+            project_root,
+            &["AGENTS.md", "CLAUDE.md"],
+            NormalizedConfig {
+                instructions: String::new(),
+                rules: Vec::new(),
+                skills,
+                ..Default::default()
+            },
+        )
     }
 
     fn generate(

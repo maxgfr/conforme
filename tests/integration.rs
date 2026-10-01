@@ -19,7 +19,7 @@ fn create_project_with_tools(agents_md: &str, tools: &[&str]) -> TempDir {
         match *tool {
             "cursor" => fs::create_dir_all(dir.path().join(".cursor")).unwrap(),
             "claude" => fs::create_dir_all(dir.path().join(".claude")).unwrap(),
-            "windsurf" => fs::create_dir_all(dir.path().join(".windsurf")).unwrap(),
+            "devin" => fs::create_dir_all(dir.path().join(".devin")).unwrap(),
             "copilot" => {
                 fs::create_dir_all(dir.path().join(".github")).unwrap();
                 fs::write(
@@ -184,7 +184,7 @@ Follow REST conventions.
 }
 
 #[test]
-fn test_sync_creates_windsurf_config() {
+fn test_sync_creates_devin_config() {
     let agents_md = r#"# Instructions
 Be helpful.
 
@@ -193,19 +193,19 @@ Be helpful.
 
 Write thorough tests.
 "#;
-    let dir = create_project_with_tools(agents_md, &["windsurf"]);
+    let dir = create_project_with_tools(agents_md, &["devin"]);
 
     conforme()
         .args(["-C", dir.path().to_str().unwrap(), "sync"])
         .assert()
         .success();
 
-    let general = dir.path().join(".windsurf/rules/general.md");
+    let general = dir.path().join(".devin/rules/general.md");
     assert!(general.exists());
     let content = fs::read_to_string(&general).unwrap();
     assert!(content.contains("trigger: always_on"));
 
-    let testing = dir.path().join(".windsurf/rules/testing.md");
+    let testing = dir.path().join(".devin/rules/testing.md");
     assert!(testing.exists());
     let content = fs::read_to_string(&testing).unwrap();
     assert!(content.contains("trigger: glob"));
@@ -261,7 +261,7 @@ fn test_sync_dry_run_no_changes() {
 #[test]
 fn test_sync_only_flag() {
     let agents_md = "# Instructions\nHello.\n";
-    let dir = create_project_with_tools(agents_md, &["cursor", "windsurf"]);
+    let dir = create_project_with_tools(agents_md, &["cursor", "devin"]);
 
     conforme()
         .args([
@@ -276,8 +276,8 @@ fn test_sync_only_flag() {
 
     // Cursor should have files
     assert!(dir.path().join(".cursor/rules/general.mdc").exists());
-    // Windsurf should NOT
-    assert!(!dir.path().join(".windsurf/rules/general.md").exists());
+    // Devin should NOT
+    assert!(!dir.path().join(".devin/rules/general.md").exists());
 }
 
 #[test]
@@ -399,7 +399,7 @@ Global rules.
 
 Use React best practices.
 "#;
-    let dir = create_project_with_tools(agents_md, &["cursor", "claude", "windsurf", "copilot"]);
+    let dir = create_project_with_tools(agents_md, &["cursor", "claude", "devin", "copilot"]);
 
     conforme()
         .args(["-C", dir.path().to_str().unwrap(), "sync"])
@@ -409,7 +409,7 @@ Use React best practices.
     // Verify all tools got files
     assert!(dir.path().join("CLAUDE.md").exists());
     assert!(dir.path().join(".cursor/rules/general.mdc").exists());
-    assert!(dir.path().join(".windsurf/rules/general.md").exists());
+    assert!(dir.path().join(".devin/rules/general.md").exists());
     assert!(dir.path().join(".github/copilot-instructions.md").exists());
 }
 
@@ -497,7 +497,7 @@ fn test_sync_every_tool() {
     let dir = create_project_with_tools(
         agents_md,
         &[
-            "cursor", "claude", "windsurf", "copilot", "codex", "opencode", "zoocode", "gemini",
+            "cursor", "claude", "devin", "copilot", "codex", "opencode", "zoocode", "gemini",
             "zed", "kiro", "amp", "deepseek",
         ],
     );
@@ -509,7 +509,7 @@ fn test_sync_every_tool() {
 
     assert!(dir.path().join("CLAUDE.md").exists());
     assert!(dir.path().join(".cursor/rules/general.mdc").exists());
-    assert!(dir.path().join(".windsurf/rules/general.md").exists());
+    assert!(dir.path().join(".devin/rules/general.md").exists());
     assert!(dir.path().join("GEMINI.md").exists());
     assert!(dir.path().join(".roo/rules/00-general.md").exists());
     assert!(dir.path().join(".rules").exists());
@@ -662,7 +662,7 @@ Review all changes for bugs.
 #[test]
 fn test_remove_deletes_tool_files() {
     let agents_md = "# Instructions\nHello.\n";
-    let dir = create_project_with_tools(agents_md, &["cursor", "windsurf"]);
+    let dir = create_project_with_tools(agents_md, &["cursor", "devin"]);
 
     // Sync first
     conforme()
@@ -671,7 +671,7 @@ fn test_remove_deletes_tool_files() {
         .success();
 
     assert!(dir.path().join(".cursor/rules/general.mdc").exists());
-    assert!(dir.path().join(".windsurf/rules/general.md").exists());
+    assert!(dir.path().join(".devin/rules/general.md").exists());
 
     // Remove cursor only
     conforme()
@@ -682,8 +682,8 @@ fn test_remove_deletes_tool_files() {
 
     // Cursor files should be gone
     assert!(!dir.path().join(".cursor/rules/general.mdc").exists());
-    // Windsurf files should still exist
-    assert!(dir.path().join(".windsurf/rules/general.md").exists());
+    // Devin files should still exist
+    assert!(dir.path().join(".devin/rules/general.md").exists());
 }
 
 #[test]
@@ -706,7 +706,7 @@ fn test_help_ai() {
     conforme().arg("help-ai").assert().success().stdout(
         predicate::str::contains("Claude Code")
             .and(predicate::str::contains("Cursor"))
-            .and(predicate::str::contains("Windsurf"))
+            .and(predicate::str::contains("Devin Desktop"))
             .and(predicate::str::contains("Kiro"))
             .and(predicate::str::contains("Amp"))
             .and(predicate::str::contains("AGENTS.md")),
@@ -1168,10 +1168,10 @@ fn test_sync_from_flag_override() {
         .assert()
         .success();
 
-    // Windsurf should have been synced
-    let windsurf_general = dir.path().join(".windsurf/rules/general.md");
-    assert!(windsurf_general.exists());
-    let content = fs::read_to_string(&windsurf_general).unwrap();
+    // Devin should have been synced
+    let devin_general = dir.path().join(".devin/rules/general.md");
+    assert!(devin_general.exists());
+    let content = fs::read_to_string(&devin_general).unwrap();
     assert!(content.contains("Cursor instructions."));
 }
 
@@ -1361,12 +1361,12 @@ fn test_sync_fails_on_duplicate_rule_names() {
 #[test]
 fn test_conformerc_exclude() {
     let agents_md = "# Instructions\nHello.\n";
-    let dir = create_project_with_tools(agents_md, &["cursor", "windsurf"]);
+    let dir = create_project_with_tools(agents_md, &["cursor", "devin"]);
 
-    // Exclude windsurf
+    // Exclude devin
     fs::write(
         dir.path().join(".conformerc.toml"),
-        "exclude = [\"windsurf\"]\n",
+        "exclude = [\"devin\"]\n",
     )
     .unwrap();
 
@@ -1377,14 +1377,14 @@ fn test_conformerc_exclude() {
 
     // Cursor should have files
     assert!(dir.path().join(".cursor/rules/general.mdc").exists());
-    // Windsurf should NOT (excluded)
-    assert!(!dir.path().join(".windsurf/rules/general.md").exists());
+    // Devin should NOT (excluded)
+    assert!(!dir.path().join(".devin/rules/general.md").exists());
 }
 
 #[test]
 fn test_conformerc_only() {
     let agents_md = "# Instructions\nHello.\n";
-    let dir = create_project_with_tools(agents_md, &["cursor", "windsurf", "claude"]);
+    let dir = create_project_with_tools(agents_md, &["cursor", "devin", "claude"]);
 
     // Only sync to cursor
     fs::write(dir.path().join(".conformerc.toml"), "only = [\"cursor\"]\n").unwrap();
@@ -1395,7 +1395,7 @@ fn test_conformerc_only() {
         .success();
 
     assert!(dir.path().join(".cursor/rules/general.mdc").exists());
-    assert!(!dir.path().join(".windsurf/rules/general.md").exists());
+    assert!(!dir.path().join(".devin/rules/general.md").exists());
     // Claude would be skipped because only=cursor
 }
 
@@ -1438,7 +1438,7 @@ Review all changes for bugs.
     let dir = create_project_with_tools(
         agents_md,
         &[
-            "cursor", "claude", "windsurf", "copilot", "kiro", "zoocode", "gemini", "zed",
+            "cursor", "claude", "devin", "copilot", "kiro", "zoocode", "gemini", "zed",
         ],
     );
 
@@ -1481,9 +1481,9 @@ Review all changes for bugs.
     assert!(dir.path().join(".roo/rules/00-general.md").exists());
     assert!(dir.path().join(".roo/mcp.json").exists());
 
-    // Windsurf: rules only (Cascade has no project-level MCP file)
-    assert!(dir.path().join(".windsurf/rules/general.md").exists());
-    assert!(!dir.path().join(".windsurf/mcp.json").exists());
+    // Devin: rules + project MCP file
+    assert!(dir.path().join(".devin/rules/general.md").exists());
+    assert!(dir.path().join(".devin/mcp_config.json").exists());
 
     // Zed: .rules + settings
     assert!(dir.path().join(".rules").exists());
@@ -1548,8 +1548,8 @@ fn test_end_to_end_claude_source_flow() {
     assert!(cursor_api.contains("Follow REST"));
     assert!(cursor_api.contains("globs"));
 
-    // Windsurf should have rules too
-    let ws_general = fs::read_to_string(dir.path().join(".windsurf/rules/general.md")).unwrap();
+    // Devin should have rules too
+    let ws_general = fs::read_to_string(dir.path().join(".devin/rules/general.md")).unwrap();
     assert!(ws_general.contains("Use TypeScript"));
 
     // AGENTS.md should be generated
@@ -1850,4 +1850,397 @@ fn test_watch_requires_source() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("No source"));
+}
+
+// ===== Settings conforme merges into, never owns =====
+
+const MCP_AGENTS_MD: &str = r#"# Instructions
+Be helpful.
+
+## MCP: fs
+<!-- command: npx -->
+<!-- args: -y, @mcp/fs -->
+"#;
+
+#[test]
+fn test_sync_keeps_kiro_per_server_state_and_remove_keeps_the_file() {
+    let dir = create_project_with_tools(MCP_AGENTS_MD, &["kiro"]);
+    let mcp = dir.path().join(".kiro/settings/mcp.json");
+    fs::create_dir_all(mcp.parent().unwrap()).unwrap();
+    fs::write(
+        &mcp,
+        r#"{"mcpServers": {"fs": {"command": "old", "autoApprove": ["read"], "disabledTools": ["delete"], "disabled": true}}}"#,
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&mcp).unwrap()).unwrap();
+    let fs_server = &value["mcpServers"]["fs"];
+    assert_eq!(fs_server["command"], "npx");
+    assert_eq!(fs_server["autoApprove"], serde_json::json!(["read"]));
+    assert_eq!(fs_server["disabledTools"], serde_json::json!(["delete"]));
+    // A synced server is re-enabled, so `check` never passes while it is hidden.
+    assert!(fs_server.get("disabled").is_none());
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "remove", "kiro"])
+        .assert()
+        .success();
+    assert!(mcp.exists(), "remove deleted the shared Kiro MCP file");
+}
+
+#[test]
+fn test_sync_keeps_claude_and_cursor_per_server_settings() {
+    let dir = create_project_with_tools(MCP_AGENTS_MD, &["claude", "cursor"]);
+    fs::write(
+        dir.path().join(".mcp.json"),
+        r#"{"mcpServers": {"fs": {"command": "old", "timeout": 30000}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".cursor/mcp.json"),
+        r#"{"mcpServers": {"fs": {"command": "old", "envFile": ".env"}}}"#,
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let read = |p: &str| -> serde_json::Value {
+        serde_json::from_str(&fs::read_to_string(dir.path().join(p)).unwrap()).unwrap()
+    };
+    let claude = read(".mcp.json");
+    assert_eq!(claude["mcpServers"]["fs"]["command"], "npx");
+    assert_eq!(claude["mcpServers"]["fs"]["timeout"], 30000);
+    let cursor = read(".cursor/mcp.json");
+    assert_eq!(cursor["mcpServers"]["fs"]["command"], "npx");
+    assert_eq!(cursor["mcpServers"]["fs"]["envFile"], ".env");
+}
+
+#[test]
+fn test_sync_keeps_user_opencode_agents() {
+    let agents_md = r#"# Instructions
+Be helpful.
+
+## Agent: reviewer
+<!-- description: Review -->
+Review.
+"#;
+    let dir = create_project_with_tools(agents_md, &["opencode"]);
+    let config = dir.path().join("opencode.json");
+    fs::write(
+        &config,
+        r#"{"agent": {"build": {"permission": {"bash": "ask"}}, "reviewer": {"description": "old", "mode": "subagent", "temperature": 0.2}}}"#,
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+    assert_eq!(value["agent"]["build"]["permission"]["bash"], "ask");
+    assert_eq!(value["agent"]["reviewer"]["description"], "Review");
+    assert_eq!(value["agent"]["reviewer"]["temperature"], 0.2);
+}
+
+#[test]
+fn test_sync_without_source_servers_keeps_hand_written_mcp() {
+    // A project that syncs only rules with conforme keeps its MCP servers in
+    // each tool by hand: with no server in the source, they must survive.
+    let dir = create_project_with_tools("# Instructions\nBe helpful.\n", &["zed", "cursor"]);
+    let settings = dir.path().join(".zed/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let zed = r#"{"theme": "One Dark", "context_servers": {"fs": {"command": "npx"}}}"#;
+    fs::write(&settings, zed).unwrap();
+    let cursor = dir.path().join(".cursor/mcp.json");
+    let cursor_mcp = r#"{"mcpServers": {"mine": {"command": "node"}}}"#;
+    fs::write(&cursor, cursor_mcp).unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert_eq!(fs::read_to_string(&settings).unwrap(), zed);
+    assert_eq!(fs::read_to_string(&cursor).unwrap(), cursor_mcp);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_migrate_between_tools_sharing_agents_skills_keeps_the_output() {
+    let dir = TempDir::new().unwrap();
+    let skill = dir.path().join(".agents/skills/deploy/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::create_dir_all(dir.path().join(".amp")).unwrap();
+    fs::write(
+        &skill,
+        "---\nname: deploy\ndescription: Deploy\n---\nRun.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "amp",
+            "--output",
+            "codex",
+        ])
+        .assert()
+        .success();
+
+    // Codex reads the same `.agents/skills/` Amp did: migrating must not
+    // delete what it has just written there.
+    let content = fs::read_to_string(&skill).unwrap();
+    assert!(content.contains("name: deploy"), "{content}");
+}
+
+/// Every tool can be the source, and a second sync from it changes nothing.
+/// Tools that read AGENTS.md natively (Codex, OpenCode, Amp, DeepSeek) used to
+/// read back the AGENTS.md the previous sync generated as one block, so their
+/// instructions grew on every sync and `check` never passed.
+#[test]
+fn test_sync_from_every_tool_is_idempotent() {
+    let agents_md = r#"# Instructions
+Be helpful.
+
+## Rule: TS
+<!-- activation: glob src/**/*.{ts,tsx} -->
+Use TS.
+
+## Rule: Docs
+<!-- activation: agent-decision -->
+<!-- description: Writing docs -->
+Docs.
+
+## Skill: Déployer App
+<!-- description: Deploy -->
+<!-- invocation: manual -->
+Run deploy.
+
+## Agent: reviewer
+<!-- description: Review -->
+<!-- model: sonnet -->
+<!-- tools: Read, Grep, Bash, mcp__github__list_issues -->
+Review.
+
+## MCP: fs
+<!-- command: npx -->
+<!-- args: -y, @mcp/fs -->
+<!-- env: TOKEN=${GH_TOKEN} -->
+
+## MCP: api
+<!-- url: https://example.com/mcp -->
+<!-- headers: Authorization=Bearer ${API_KEY} -->
+"#;
+    let tools = [
+        "claude", "cursor", "devin", "copilot", "codex", "opencode", "zoocode", "gemini", "zed",
+        "kiro", "amp", "deepseek",
+    ];
+    for source in conforme::adapters::all_adapters() {
+        let dir = create_project_with_tools(agents_md, &tools);
+        let root = dir.path().to_str().unwrap();
+        conforme().args(["-C", root, "sync"]).assert().success();
+
+        for _ in 0..2 {
+            conforme()
+                .args(["-C", root, "sync", "--from", source.id()])
+                .assert()
+                .success();
+        }
+        conforme()
+            .args(["-C", root, "sync", "--from", source.id()])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("All configs already in sync."));
+        conforme()
+            .args(["-C", root, "check", "--from", source.id()])
+            .assert()
+            .success();
+    }
+}
+
+// ===== Regressions found by the 2026-10-01 review =====
+
+#[test]
+fn test_old_windsurf_id_is_an_error_not_silently_ignored() {
+    let dir = create_project_with_tools("# Instructions\nBe helpful.\n", &["devin"]);
+    let root = dir.path().to_str().unwrap();
+    fs::create_dir_all(dir.path().join(".windsurf/rules")).unwrap();
+    fs::write(dir.path().join(".windsurf/rules/team.md"), "Mine.\n").unwrap();
+
+    // An ignored `exclude` would sync (and clean) the tool the user excluded.
+    fs::write(
+        dir.path().join(".conformerc.toml"),
+        "exclude = [\"windsurf\"]\n",
+    )
+    .unwrap();
+    conforme()
+        .args(["-C", root, "sync"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("renamed `devin`"));
+    assert!(!dir.path().join(".devin/rules/general.md").exists());
+    assert!(dir.path().join(".windsurf/rules/team.md").exists());
+
+    fs::remove_file(dir.path().join(".conformerc.toml")).unwrap();
+    for args in [
+        vec!["sync", "--from", "windsurf"],
+        vec!["sync", "--only", "windsurf"],
+        vec!["remove", "windsurf"],
+        vec!["migrate", "--source", "windsurf", "--output", "cursor"],
+    ] {
+        conforme()
+            .arg("-C")
+            .arg(root)
+            .args(&args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("renamed `devin`"));
+    }
+}
+
+#[test]
+fn test_targets_leave_the_source_skills_root_alone() {
+    // Codex is the source and reads a nested skill from `.agents/skills/`;
+    // Amp and Zed write skills to the same root and must not add a flat copy
+    // there (Codex would load the skill twice).
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("AGENTS.md"), "Be helpful.\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"codex\"\n").unwrap();
+    fs::create_dir_all(root.join(".amp")).unwrap();
+    fs::write(root.join(".rules"), "").unwrap();
+    let nested = root.join(".agents/skills/team/deploy");
+    fs::create_dir_all(nested.join("scripts")).unwrap();
+    fs::write(
+        nested.join("SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy\n---\nRun.\n",
+    )
+    .unwrap();
+    fs::write(nested.join("scripts/run.sh"), "echo").unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert!(!root.join(".agents/skills/deploy").exists());
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+
+    // Removing Amp does not delete what Codex, the source, reads.
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "remove", "amp"])
+        .assert()
+        .success();
+    assert!(nested.join("SKILL.md").exists());
+    assert!(nested.join("scripts/run.sh").exists());
+}
+
+#[test]
+fn test_migrate_between_tools_sharing_agents_skills_keeps_bundled_files() {
+    let dir = TempDir::new().unwrap();
+    let skill = dir.path().join(".agents/skills/deploy");
+    fs::create_dir_all(skill.join("scripts")).unwrap();
+    fs::create_dir_all(dir.path().join(".amp")).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy\n---\nRun.\n",
+    )
+    .unwrap();
+    fs::write(skill.join("scripts/run.sh"), "echo").unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "amp",
+            "--output",
+            "codex",
+        ])
+        .assert()
+        .success();
+    assert!(skill.join("SKILL.md").exists());
+    assert!(skill.join("scripts/run.sh").exists());
+}
+
+#[test]
+fn test_opencode_env_references_reach_other_tools_in_their_syntax() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("AGENTS.md"), "Be helpful.\n").unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    fs::write(
+        root.join("opencode.json"),
+        r#"{"mcp": {"api": {"type": "remote", "url": "https://e.x/mcp", "headers": {"Authorization": "Bearer {env:GH_TOKEN}"}}}}"#,
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync", "--from", "opencode"])
+        .assert()
+        .success();
+    let cursor: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(".cursor/mcp.json")).unwrap()).unwrap();
+    assert_eq!(
+        cursor["mcpServers"]["api"]["headers"]["Authorization"],
+        "Bearer ${env:GH_TOKEN}"
+    );
+}
+
+#[test]
+fn test_orphan_cleanup_keeps_agent_drafts_and_docs() {
+    let agents_md = "# Instructions\nBe helpful.\n\n## Agent: reviewer\n<!-- description: Review -->\nReview.\n";
+    let dir = create_project_with_tools(agents_md, &["claude", "gemini"]);
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/agents")).unwrap();
+    fs::create_dir_all(root.join(".gemini/agents")).unwrap();
+    fs::write(root.join(".claude/agents/README.md"), "# Our agents\n").unwrap();
+    fs::write(
+        root.join(".claude/agents/draft.md"),
+        "---\nname: draft\n---\nNot ready.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".claude/agents/old.md"),
+        "---\nname: old\ndescription: Old\n---\nOld.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".gemini/agents/_draft.md"),
+        "---\nname: draft\ndescription: d\n---\nNot ready.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert!(root.join(".claude/agents/README.md").exists());
+    assert!(root.join(".claude/agents/draft.md").exists());
+    assert!(root.join(".gemini/agents/_draft.md").exists());
+    // A real agent the source no longer has is still cleaned.
+    assert!(!root.join(".claude/agents/old.md").exists());
+    assert!(root.join(".claude/agents/reviewer.md").exists());
 }

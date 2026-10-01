@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{AiToolAdapter, WriteReport};
+use crate::adapters::{AiToolAdapter, ManagedDir, WriteReport};
 use crate::config::NormalizedConfig;
 
 /// OpenAI Codex CLI adapter.
@@ -32,6 +32,18 @@ impl AiToolAdapter for CodexAdapter {
         }
     }
 
+    fn reads_agents_md(&self) -> bool {
+        true
+    }
+
+    /// Skills live in the shared `.agents/skills/` root (also Zed's and
+    /// Amp's); conforme only writes `<name>/SKILL.md` folders there.
+    fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
+        vec![ManagedDir::subdirs(
+            project_root.join(".agents").join("skills"),
+        )]
+    }
+
     fn is_shared_file(&self, path: &Path) -> bool {
         path.ends_with(Path::new(".codex/config.toml"))
     }
@@ -53,17 +65,10 @@ impl AiToolAdapter for CodexAdapter {
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
-        // Codex reads AGENTS.md directly — same as our source of truth
-        let agents_md = project_root.join("AGENTS.md");
-        let instructions = if agents_md.exists() {
-            std::fs::read_to_string(&agents_md)?.trim().to_string()
-        } else {
-            String::new()
-        };
         // Read skills back from the shared `.agents/skills/` location so a Codex
-        // project round-trips as a source.
+        // project round-trips as a source. Codex searches it 6 levels deep.
         let skills =
-            crate::skills::read_skills_from_dir(&project_root.join(".agents").join("skills"))?;
+            crate::skills::read_skills_recursive(&project_root.join(".agents").join("skills"), 6)?;
         let codex_config = project_root.join(".codex").join("config.toml");
         let mcp_servers = if codex_config.exists() {
             let content = std::fs::read_to_string(&codex_config)?;
@@ -72,13 +77,19 @@ impl AiToolAdapter for CodexAdapter {
             Vec::new()
         };
 
-        Ok(NormalizedConfig {
-            instructions,
-            rules: Vec::new(),
-            skills,
-            mcp_servers,
-            ..Default::default()
-        })
+        // Codex reads `AGENTS.md`; a personal `AGENTS.override.md` is
+        // deliberately not used as the source of every other tool.
+        crate::markdown::read_native_agents_md(
+            project_root,
+            &["AGENTS.md"],
+            NormalizedConfig {
+                instructions: String::new(),
+                rules: Vec::new(),
+                skills,
+                mcp_servers,
+                ..Default::default()
+            },
+        )
     }
 
     fn generate(

@@ -4,10 +4,10 @@ pub mod codex;
 pub mod copilot;
 pub mod cursor;
 pub mod deepseek;
+pub mod devin;
 pub mod gemini;
 pub mod kiro;
 pub mod opencode;
-pub mod windsurf;
 pub mod zed;
 pub mod zoocode;
 
@@ -69,6 +69,14 @@ pub trait AiToolAdapter: Send + Sync {
         false
     }
 
+    /// Whether the tool reads `AGENTS.md` itself as its instruction file
+    /// (Codex, OpenCode, Amp, DeepSeek Harness). When such a tool is the
+    /// source, `AGENTS.md` *is* its config: sync never regenerates it, and
+    /// `gitignore install` never ignores it.
+    fn reads_agents_md(&self) -> bool {
+        false
+    }
+
     /// Write normalized config into this tool's format.
     /// Returns a report of what files were written/unchanged.
     /// Default implementation calls generate() then write_if_changed for each file.
@@ -104,6 +112,16 @@ pub struct ManagedDir {
     /// writes sub-directories there (skills), so no top-level file is ever
     /// one of its orphans.
     pub orphan_suffix: Option<&'static str>,
+    /// For a legacy directory the tool still reads next to the current one
+    /// (Devin's `.windsurf/rules/` and `.windsurf/skills/`): the directory
+    /// conforme now writes to. Only a legacy copy of something generated
+    /// there under the same name is removed — the tool would otherwise load
+    /// it twice; anything else in the legacy directory is the user's.
+    pub superseded_by: Option<PathBuf>,
+    /// A file with the orphan suffix that this predicate accepts is the
+    /// user's, not an orphan (a README beside Claude Code agents, a Gemini
+    /// `_draft.md` agent).
+    pub keep: Option<fn(&Path) -> bool>,
 }
 
 impl ManagedDir {
@@ -112,6 +130,17 @@ impl ManagedDir {
         Self {
             path,
             orphan_suffix: Some(suffix),
+            superseded_by: None,
+            keep: None,
+        }
+    }
+
+    /// Like [`ManagedDir::files`], but a file `keep` accepts is never treated
+    /// as an orphan.
+    pub fn files_except(path: PathBuf, suffix: &'static str, keep: fn(&Path) -> bool) -> Self {
+        Self {
+            keep: Some(keep),
+            ..Self::files(path, suffix)
         }
     }
 
@@ -120,13 +149,34 @@ impl ManagedDir {
         Self {
             path,
             orphan_suffix: None,
+            superseded_by: None,
+            keep: None,
+        }
+    }
+
+    /// A legacy directory of `suffix` files whose files conforme now writes
+    /// to `current` (see [`ManagedDir::superseded_by`]).
+    pub fn legacy_files(path: PathBuf, current: PathBuf, suffix: &'static str) -> Self {
+        Self {
+            superseded_by: Some(current),
+            ..Self::files(path, suffix)
+        }
+    }
+
+    /// A legacy skills directory whose skills conforme now writes to
+    /// `current` (see [`ManagedDir::superseded_by`]).
+    pub fn legacy_skills(path: PathBuf, current: PathBuf) -> Self {
+        Self {
+            superseded_by: Some(current),
+            ..Self::subdirs(path)
         }
     }
 }
 
 /// Clean orphan files from managed directories.
 /// Removes top-level files that carry the directory's orphan suffix, exist on
-/// disk, and are not in the expected file list.
+/// disk, and are not in the expected file list, plus legacy duplicates of
+/// generated files and skills (see [`ManagedDir::superseded_by`]).
 pub fn clean_orphans(
     managed_dirs: &[ManagedDir],
     expected_files: &[(PathBuf, String)],
@@ -136,21 +186,118 @@ pub fn clean_orphans(
 
     let mut cleaned = Vec::new();
     for dir in managed_dirs {
-        let Some(suffix) = dir.orphan_suffix else {
-            continue;
-        };
         if !dir.path.is_dir() {
             continue;
         }
-        for entry in std::fs::read_dir(&dir.path)? {
-            let entry = entry?;
-            let path = entry.path();
+        if let Some(current) = &dir.superseded_by {
+            if dir.path == *current {
+                continue;
+            }
+            cleaned.extend(match dir.orphan_suffix {
+                Some(suffix) => clean_superseded_files(&dir.path, current, suffix, &expected_set)?,
+                None => clean_superseded_skills(&dir.path, current, &expected_set)?,
+            });
+            continue;
+        }
+        let Some(suffix) = dir.orphan_suffix else {
+            continue;
+        };
+        let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir.path)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .collect();
+        paths.sort();
+        for path in paths {
             let generated_kind = path
                 .file_name()
                 .is_some_and(|name| name.to_string_lossy().ends_with(suffix));
-            if generated_kind && path.is_file() && !expected_set.contains(&path) {
+            if generated_kind
+                && path.is_file()
+                && !expected_set.contains(&path)
+                && !dir.keep.is_some_and(|keep| keep(&path))
+            {
                 std::fs::remove_file(&path)?;
                 cleaned.push(path);
+            }
+        }
+    }
+    Ok(cleaned)
+}
+
+/// Remove `<legacy>/<file>` for every `<current>/<file>` that is generated.
+fn clean_superseded_files(
+    legacy: &Path,
+    current: &Path,
+    suffix: &str,
+    expected: &std::collections::HashSet<PathBuf>,
+) -> Result<Vec<PathBuf>> {
+    let mut cleaned = Vec::new();
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(legacy)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .collect();
+    paths.sort();
+    for path in paths {
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        if name.to_string_lossy().ends_with(suffix) && expected.contains(&current.join(name)) {
+            std::fs::remove_file(&path)?;
+            cleaned.push(path);
+        }
+    }
+    Ok(cleaned)
+}
+
+/// Remove `<legacy>/<name>/` for every skill generated at
+/// `<current>/<name>/SKILL.md`, when it holds nothing but a `SKILL.md` (and
+/// the Codex policy sidecar conforme writes beside it). A folder that also
+/// bundles scripts or references is left alone, since removing only its
+/// `SKILL.md` would strand them.
+fn clean_superseded_skills(
+    legacy: &Path,
+    current: &Path,
+    expected: &std::collections::HashSet<PathBuf>,
+) -> Result<Vec<PathBuf>> {
+    let mut cleaned = Vec::new();
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(legacy)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    entries.sort();
+    for skill_dir in entries {
+        let Some(name) = skill_dir.file_name() else {
+            continue;
+        };
+        if !expected.contains(&current.join(name).join("SKILL.md")) {
+            continue;
+        }
+        let skill_md = skill_dir.join("SKILL.md");
+        let sidecar = skill_dir.join("agents").join("openai.yaml");
+        let only_skill = std::fs::read_dir(&skill_dir)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .all(|p| {
+                p == skill_md
+                    || (p == skill_dir.join("agents")
+                        && std::fs::read_dir(&p)
+                            .map(|mut it| it.all(|e| e.is_ok_and(|e| e.path() == sidecar)))
+                            .unwrap_or(false))
+            });
+        if !only_skill {
+            continue;
+        }
+        for file in [&skill_md, &sidecar] {
+            if file.is_file() {
+                std::fs::remove_file(file)?;
+                cleaned.push(file.clone());
+            }
+        }
+        for dir in [skill_dir.join("agents"), skill_dir.clone()] {
+            if dir.is_dir() && std::fs::read_dir(&dir)?.next().is_none() {
+                std::fs::remove_dir(&dir)?;
             }
         }
     }
@@ -162,7 +309,7 @@ pub fn all_adapters() -> Vec<Box<dyn AiToolAdapter>> {
     vec![
         Box::new(claude::ClaudeAdapter),
         Box::new(cursor::CursorAdapter),
-        Box::new(windsurf::WindsurfAdapter),
+        Box::new(devin::DevinAdapter),
         Box::new(copilot::CopilotAdapter),
         Box::new(codex::CodexAdapter),
         Box::new(opencode::OpenCodeAdapter),

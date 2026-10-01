@@ -8,7 +8,7 @@ use std::path::PathBuf;
     about = "Universal AI coding agent config synchronization",
     long_about = "Conforme synchronizes configuration across 12 AI coding tools.\n\n\
         It reads config from a source tool (or AGENTS.md) and generates/updates \
-        tool-specific config files for Claude Code, Cursor, Windsurf, \
+        tool-specific config files for Claude Code, Cursor, Devin, \
         GitHub Copilot, Codex CLI, OpenCode, Zoo Code, Gemini CLI, \
         Zed AI, Kiro, Amp, and DeepSeek Harness.",
     after_help = "\x1b[1mExamples:\x1b[0m\n  \
@@ -22,7 +22,7 @@ use std::path::PathBuf;
         conforme check                       Check if configs are in sync (CI)\n  \
         conforme status                      Show detected tools and sync state\n  \
         conforme add rule \"Name\" --activation \"glob **/*.ts\"\n  \
-        conforme remove cursor,windsurf      Remove generated files for tools\n  \
+        conforme remove cursor,devin         Remove generated files for tools\n  \
         conforme hook install                Install git pre-commit hook\n  \
         conforme hook uninstall              Remove git pre-commit hook\n  \
         conforme gitignore install           Add generated configs to .gitignore\n  \
@@ -57,7 +57,7 @@ pub enum Command {
         /// Preview changes without writing files
         #[arg(short = 'n', long)]
         dry_run: bool,
-        /// Only sync to specific tools (comma-separated: claude,cursor,windsurf,copilot)
+        /// Only sync to specific tools (comma-separated: claude,cursor,devin,copilot)
         #[arg(short, long, value_delimiter = ',')]
         only: Option<Vec<String>>,
         /// Read config from this tool instead of configured source
@@ -83,7 +83,7 @@ pub enum Command {
     },
     /// Remove generated config files for specific tools
     Remove {
-        /// Tools to remove (comma-separated: claude,cursor,windsurf)
+        /// Tools to remove (comma-separated: claude,cursor,devin)
         #[arg(value_delimiter = ',')]
         tools: Vec<String>,
     },
