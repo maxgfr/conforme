@@ -20,11 +20,12 @@ cargo install --path .
 
 ## How it works
 
-1. **Write your config** in your preferred tool (Claude Code, Cursor, Windsurf, etc.) or directly in `AGENTS.md`
+1. **Write your config** in your preferred tool (Claude Code, Cursor, Devin, etc.) or directly in `AGENTS.md`
 2. **Run `conforme sync`** — it reads from your chosen source and propagates to all detected tools
 3. **Only changed files are updated** — content is compared using SHA-256 hashes, so unchanged files are never touched
 4. **Orphan files are cleaned** — when you rename or remove a rule, the old generated files are automatically deleted. Only files of the kind conforme writes are touched: files a tool accepts but conforme never generates (Kiro `.json` agents, flat DeepSeek skills, hand-written `.md` Copilot agents) are left alone
-5. **Shared settings are merged, never replaced** — settings files that also hold your own configuration (`opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`, `.codex/config.toml`) only have conforme's key updated. JSONC comments and trailing commas are kept, per-server options a tool added (Zoo Code approvals, Gemini `trust`, …) survive, and a file conforme cannot parse is never overwritten
+5. **Shared settings are merged, never replaced** — settings and MCP files that also hold your own configuration (`.mcp.json`, `.cursor/mcp.json`, `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`, `.codex/config.toml`) only have conforme's key updated. JSONC comments and trailing commas are kept, per-server options a tool added (Kiro `autoApprove`, Zoo Code approvals, Gemini `trust`, …) survive, a file conforme cannot parse is never overwritten, and `remove`/`migrate` never delete one
+6. **Each tool gets values it accepts** — agent tool names are translated into each tool's vocabulary (Claude Code, Gemini CLI and Kiro reject or ignore names they do not know), a model id another tool cannot use is left out, skill and agent names are written as kebab-case ASCII (rules, which only become files, keep other letters), and environment-variable references in MCP configs are rewritten to each tool's syntax (`${VAR}`, `${env:VAR}`, `{env:VAR}`)
 
 You can set your source tool once in `.conformerc.toml` or pass it on the command line with `--from`. If no source is specified, conforme defaults to `AGENTS.md`.
 
@@ -36,7 +37,7 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 |------|--------------|-------------|-----------|
 | Claude Code | `CLAUDE.md` + `.claude/rules/**/*.md` | `paths` (glob list or comma-separated string) | Native when no `CLAUDE.md` exists |
 | Cursor | `.cursor/rules/*.mdc` | `alwaysApply`, `globs`, `description` | Native |
-| Windsurf (now Devin Desktop) | `.devin/rules/*.md` (or legacy `.windsurf/rules/*.md`) | `trigger`, `description`, `globs` | Native |
+| Devin Desktop (formerly Windsurf) | `.devin/rules/*.md` (legacy `.windsurf/rules/*.md` is read too) | `trigger`, `description`, `globs` | Native |
 | GitHub Copilot | `.github/copilot-instructions.md` + `.github/instructions/**/*.instructions.md` | `applyTo`, `excludeAgent` | Native |
 | Kiro (AWS) | `.kiro/steering/*.md` | `inclusion`, `fileMatchPattern`, `name`, `description` | Native |
 | Zoo Code (Roo Code fork) | `.roo/rules/*.md` | None (plain Markdown) | Native |
@@ -45,11 +46,11 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 
 | Tool | Primary file | Notes |
 |------|-------------|-------|
-| OpenAI Codex CLI | `AGENTS.md` | Also supports `AGENTS.override.md` |
+| OpenAI Codex CLI | `AGENTS.md` | Also supports `AGENTS.override.md` (personal; not used as a conforme source) |
 | OpenCode | `AGENTS.md` | Falls back to `CLAUDE.md` |
 | Gemini CLI | `GEMINI.md` | Configurable to read AGENTS.md via settings.json |
 | Zed AI | `.rules` | First match wins: `.rules` → `.cursorrules` → `.windsurfrules` → `.clinerules` → `.github/copilot-instructions.md` → `AGENT.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` |
-| Amp (Sourcegraph) | `AGENTS.md` | Falls back to `AGENT.md` or `CLAUDE.md` |
+| Amp | `AGENTS.md` | Falls back to `AGENT.md` or `CLAUDE.md` |
 | DeepSeek Harness (`dsh`) | `AGENTS.md` | Also loads `CLAUDE.md` when present; skills in `.dsh/skills/` |
 
 ## Quick start
@@ -64,9 +65,10 @@ conforme check                       # CI check (exit 1 if out of sync)
 conforme status                      # Show tools and sync state
 conforme add rule "Name" --activation "glob **/*.ts"
 conforme watch                       # Auto-sync on file changes
-conforme remove cursor,windsurf      # Remove generated files
+conforme remove cursor,devin         # Remove generated files
 conforme migrate --source gemini --output opencode  # Migrate between tools
 conforme hook install                # Git pre-commit hook
+conforme gitignore install           # Ignore generated outputs (merged settings stay tracked)
 conforme help-ai                     # Show tool format details
 ```
 
@@ -79,12 +81,13 @@ Create a `.conformerc.toml` at your project root to customize conforme's behavio
 source = "claude"
 
 # Only sync to these tools (default: all detected)
-only = ["cursor", "copilot", "windsurf"]
+only = ["cursor", "copilot", "devin"]
 
 # Exclude these tools
 exclude = ["zed", "amp"]
 
-# Auto-generate AGENTS.md from source (default: true)
+# Auto-generate AGENTS.md from source (default: true; never applies when the
+# source reads AGENTS.md itself: codex, opencode, amp, deepseek)
 generate_agents_md = true
 
 # Clean orphan files on sync (default: true)
@@ -125,7 +128,7 @@ General instructions that apply everywhere.
 
 conforme normalizes 4 activation modes across all tools that support them:
 
-| Mode | AGENTS.md | Claude | Cursor | Windsurf | Copilot | Kiro |
+| Mode | AGENTS.md | Claude | Cursor | Devin | Copilot | Kiro |
 |------|-----------|--------|--------|----------|---------|------|
 | Always | `<!-- activation: always -->` | no frontmatter (in CLAUDE.md) | `alwaysApply: true` | `trigger: always_on` | in main file | `inclusion: always` |
 | Glob | `<!-- activation: glob **/*.ts -->` | `paths: [**/*.ts]` | `globs: "**/*.ts"` | `trigger: glob` + `globs:` | `applyTo: "**/*.ts"` | `inclusion: fileMatch` + `fileMatchPattern:` |
@@ -155,30 +158,36 @@ Review all changes for correctness and security.
 ## MCP: filesystem
 <!-- command: npx -->
 <!-- args: -y, @modelcontextprotocol/server-filesystem, /workspace -->
+
+## MCP: github
+<!-- url: https://api.githubcopilot.com/mcp/ -->
+<!-- headers: Authorization=Bearer ${GITHUB_TOKEN} -->
 ```
+
+`env` and `headers` take comma-separated `Name=Value` pairs, so a value cannot itself contain a comma.
 
 ### Feature matrix
 
 | Adapter | Rules | Skills | Agents | MCP |
 |---------|-------|--------|--------|-----|
-| Claude Code | `.claude/rules/*.md` | `.claude/skills/` + `.claude/commands/` | `.claude/agents/*.md` | `.mcp.json` |
+| Claude Code | `.claude/rules/*.md` | `.claude/skills/` + `.claude/commands/` | `.claude/agents/*.md` | `.mcp.json` (merged) |
 | GitHub Copilot | `.github/instructions/*.instructions.md` | `.github/skills/` | `.github/agents/*.agent.md` | `.vscode/mcp.json` (merged) |
-| Cursor | `.cursor/rules/*.mdc` | `.cursor/skills/` | `.cursor/agents/*.md` | `.cursor/mcp.json` |
-| Kiro (AWS) | `.kiro/steering/*.md` | `.kiro/skills/` | `.kiro/agents/*.md` | `.kiro/settings/mcp.json` |
-| Windsurf (Devin Desktop) | `.devin/rules/*.md` or `.windsurf/rules/*.md` | `.devin/skills/` or `.windsurf/skills/` | - | - |
+| Cursor | `.cursor/rules/*.mdc` | `.cursor/skills/` | `.cursor/agents/*.md` | `.cursor/mcp.json` (merged) |
+| Kiro (AWS) | `.kiro/steering/*.md` | `.kiro/skills/` | `.kiro/agents/*.md` | `.kiro/settings/mcp.json` (merged) |
+| Devin Desktop | `.devin/rules/*.md` | `.devin/skills/` | - | `.devin/mcp_config.json` (merged) |
 | Zoo Code | `.roo/rules/*.md` | `.roo/skills/` | - | `.roo/mcp.json` (merged) |
-| Gemini CLI | `GEMINI.md` | `.gemini/skills/` | `.gemini/agents/*.md` | `.gemini/settings.json` |
-| OpenCode | native (AGENTS.md) | `.opencode/skills/` | `opencode.json#agent` + `.opencode/agents/*.md` | `opencode.json#mcp` |
-| Zed AI | `.rules` | `.agents/skills/` | - | `.zed/settings.json` |
-| Codex CLI | native (AGENTS.md) | `.agents/skills/` | - | `.codex/config.toml` |
-| Amp | native (AGENTS.md) | `.agents/skills/` | - | `.amp/settings.json` |
+| Gemini CLI | `GEMINI.md` | `.gemini/skills/` | `.gemini/agents/*.md` | `.gemini/settings.json` (merged) |
+| OpenCode | native (AGENTS.md) | `.opencode/skills/` | `opencode.json#agent` (merged) + `.opencode/agents/*.md` | `opencode.json#mcp` (merged) |
+| Zed AI | `.rules` | `.agents/skills/` | - | `.zed/settings.json` (merged) |
+| Codex CLI | native (AGENTS.md) | `.agents/skills/` | - | `.codex/config.toml` (merged) |
+| Amp | native (AGENTS.md) | `.agents/skills/` | - | `.amp/settings.json` or `.amp/settings.jsonc` (merged) |
 | DeepSeek Harness | native (AGENTS.md) | `.dsh/skills/` | - | - (user-level `cordis.patch.yml`) |
 
 ### Skills format equivalence
 
 Skills are reusable prompts with a description and optional tools. conforme uses the [Agent Skills](https://github.com/anthropics/skills) standard (YAML frontmatter + markdown body).
 
-When using Claude Code as source (`source = "claude"`), conforme also reads **custom commands** from `.claude/commands/*.md` and syncs them as skills to all other tools:
+When using Claude Code as source (`source = "claude"`), conforme also reads **custom commands** from `.claude/commands/**/*.md` (a nested `frontend/component.md` becomes `frontend:component`) and syncs them as skills to all other tools:
 
 | Tool | Path | Frontmatter |
 |------|------|-------------|
@@ -186,7 +195,7 @@ When using Claude Code as source (`source = "claude"`), conforme also reads **cu
 | Cursor | `.cursor/skills/<name>/SKILL.md` | `name`, `description` |
 | Copilot | `.github/skills/<name>/SKILL.md` | `name`, `description`, `allowed-tools` |
 | Kiro | `.kiro/skills/<name>/SKILL.md` | `name`, `description` |
-| Windsurf | `.devin/skills/<name>/SKILL.md` (or `.windsurf/skills/` without `.devin/`) | `name`, `description` |
+| Devin Desktop | `.devin/skills/<name>/SKILL.md` | `name`, `description`, `triggers: [user]` for manual skills |
 | Zoo Code | `.roo/skills/<name>/SKILL.md` | `name`, `description` |
 | Gemini CLI | `.gemini/skills/<name>/SKILL.md` | `name`, `description` (no other fields) |
 | OpenCode | `.opencode/skills/<name>/SKILL.md` | `name`, `description` (no `allowed-tools`) |
@@ -202,16 +211,16 @@ Agents (sub-agents) are custom AI assistants with a model, tools, and system pro
 
 | Tool | Path | Format |
 |------|------|--------|
-| Claude Code | `.claude/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
+| Claude Code | `.claude/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model` (Claude ids only), `tools` (Claude tool names) |
 | Copilot | `.github/agents/<name>.agent.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
 | Cursor | `.cursor/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model` (no `tools` — inherited) |
-| Kiro | `.kiro/agents/<name>.md` | YAML frontmatter: `description`, `model`, `tools` (Kiro tags: `read`, `write`, `shell`, …; name from the file) |
-| Gemini CLI | `.gemini/agents/<name>.md` | YAML frontmatter: `name`, `description`, `kind: local`, `model`, `tools` (Gemini tool names) |
+| Kiro | `.kiro/agents/<name>.md` | YAML frontmatter: `description`, `model`, `tools` (Kiro tools and tags: `read`, `grep`, `shell`, `@server/tool`, …; name from the file) |
+| Gemini CLI | `.gemini/agents/<name>.md` | YAML frontmatter: `name`, `description`, `kind: local`, `model` (Gemini ids only), `tools` (Gemini tool names) |
 | OpenCode | `opencode.json` (`agent` key) + `.opencode/agents/<name>.md` | JSON merged into `opencode.json`; markdown for per-project agents; `model` only when written as `provider/model` |
 
-Tools without agents support: Windsurf, Zoo Code, Codex CLI, Zed AI, Amp, DeepSeek Harness.
+Tools without agents support: Devin Desktop, Zoo Code, Codex CLI, Zed AI, Amp, DeepSeek Harness.
 
-Gemini CLI and Kiro only accept their own tool names, so common names are translated (`Read` → `read_file` / `read`, `Bash` → `run_shell_command` / `shell`, `WebFetch` → `web_fetch` / `web`, …) and names with no equivalent are dropped. A skill or agent without a description gets its name as description, since several tools skip one that has none.
+Claude Code, Gemini CLI and Kiro only accept their own tool names, so common names are translated (`Read` / `read_file` / `read`, `Bash` / `run_shell_command` / `shell`, `WebFetch` / `web_fetch`, …), MCP tools are respelled (`mcp__github__list_issues` / `mcp_github_list_issues` / `@github/list_issues`), and names with no equivalent are dropped; a restricted list in which nothing translates becomes read-only access (`Read` / `read_file` / `read`) rather than every tool. A skill or agent without a description gets its name as description, since several tools skip one that has none.
 
 ### MCP format equivalence
 
@@ -219,18 +228,20 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 
 | Tool | Path | Key / table | Format notes |
 |------|------|----------|-------------|
-| Claude Code | `.mcp.json` | `mcpServers` | `type: stdio/http`, with `env`, `headers` |
-| Cursor | `.cursor/mcp.json` | `mcpServers` | `type: stdio/http` |
-| Windsurf | _(none)_ | - | Cascade only reads the user-global `~/.config/devin/mcp_config.json`, so conforme generates nothing (Devin Local's project `.devin/mcp_config.json` is not generated yet) |
-| Copilot | `.vscode/mcp.json` (merged) | `servers` | VS Code format: `servers` key (not `mcpServers`), `env` + `headers`, `inputs`/`sandbox` preserved. The Copilot CLI reads `.mcp.json` instead, which the Claude Code target writes |
-| Kiro | `.kiro/settings/mcp.json` | `mcpServers` | Standard format |
+| Claude Code | `.mcp.json` (merged) | `mcpServers` | `type: stdio/http`; `env` on stdio, `headers` on HTTP; `${VAR}` references |
+| Cursor | `.cursor/mcp.json` (merged) | `mcpServers` | `type: stdio` locally, remote is just `url` + `headers`; `${env:VAR}` references |
+| Devin Desktop | `.devin/mcp_config.json` (merged) | `mcpServers` | No `type`; remote is `url` + `transport: http` + `headers`; `${env:VAR}` references |
+| Copilot | `.vscode/mcp.json` (merged) | `servers` | VS Code format: `servers` key (not `mcpServers`), `env` on stdio, `headers` on HTTP, `inputs`/`sandbox` preserved; `${env:VAR}` references. The Copilot CLI reads `.mcp.json` instead, which the Claude Code target writes |
+| Kiro | `.kiro/settings/mcp.json` (merged) | `mcpServers` | Standard format; `autoApprove`/`disabledTools`/`oauth` preserved |
 | Zoo Code | `.roo/mcp.json` (merged) | `mcpServers` | HTTP uses `type: streamable-http` (not `http`), no `env` on remote servers; Zoo's `alwaysAllow`/`disabledTools` preserved |
 | Gemini CLI | `.gemini/settings.json` (merged) | `mcpServers` | No `type` field, uses `httpUrl` (not `url`) for HTTP |
-| OpenCode | `opencode.json` (merged) | `mcp` | `type: local/remote`; `command` as single array; env key is `environment` |
-| Zed AI | `.zed/settings.json` (merged) | `context_servers` | No `type` field; remote uses `url` + `headers` |
-| Amp | `.amp/settings.json` (merged) | `amp.mcpServers` | Dotted key; no `type` field |
+| OpenCode | `opencode.json` (merged) | `mcp` | `type: local/remote`; `command` as single array; env key is `environment` (local only); `{env:VAR}` references |
+| Zed AI | `.zed/settings.json` (merged) | `context_servers` | No `type` field; remote uses `url` + `headers`; no variable expansion |
+| Amp | `.amp/settings.json` or `.amp/settings.jsonc` (merged) | `amp.mcpServers` | Dotted key; no `type` field |
 | Codex CLI | `.codex/config.toml` (merged) | `[mcp_servers.<name>]` | TOML; atomic merge preserves unrelated settings, comments, target-only servers, and Codex-specific options |
 | DeepSeek Harness | _(not project-scoped)_ | — | MCP servers are `@deepseek-ai/dsh-mcp-client` plugin entries in the user-level `cordis.patch.yml` under `$DSH_HOME`, so conforme generates nothing |
+
+The source decides which servers exist: a server only the target lists is dropped (Codex keeps target-only servers), and a synced server is re-enabled (`disabled` / `enabled: false` are reset) so `check` never passes while a tool hides it. A source with no MCP server at all leaves every MCP file untouched, so servers kept by hand in a tool survive when conforme only syncs rules. conforme writes environment-variable references in each tool's syntax and reads them back to `${VAR}`.
 
 ## Examples
 
@@ -320,7 +331,7 @@ Review all TypeScript changes for correctness, type safety, and test coverage.
 
 ```bash
 brew install maxgfr/tap/conforme
-conforme sync          # Syncs to Cursor, Copilot, Windsurf, Kiro, etc.
+conforme sync          # Syncs to Cursor, Copilot, Devin, Kiro, etc.
 conforme hook install  # Pre-commit hook runs `conforme check`
 ```
 
@@ -329,7 +340,7 @@ This generates:
 - `.cursor/skills/deploy/SKILL.md`
 - `.cursor/agents/reviewer.md`
 - `.cursor/mcp.json`
-- `.windsurf/rules/typescript.md` with `trigger: glob`
+- `.devin/rules/typescript.md` with `trigger: glob`
 - `.github/copilot-instructions.md` + `.github/instructions/typescript.instructions.md`
 - `.github/skills/deploy/SKILL.md`
 - `.github/agents/reviewer.agent.md`
@@ -353,7 +364,7 @@ This generates:
 
 ```toml
 source = "claude"
-only = ["cursor", "copilot", "windsurf", "kiro", "gemini"]
+only = ["cursor", "copilot", "devin", "kiro", "gemini"]
 ```
 
 **`CLAUDE.md`:**

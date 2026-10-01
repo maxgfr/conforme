@@ -116,12 +116,13 @@ jobs:
           test -f /tmp/test-project/CLAUDE.md && echo "CLAUDE.md: PASSED"
           test -f /tmp/test-project/.cursor/rules/general.mdc && echo "Cursor general: PASSED"
           test -f /tmp/test-project/.cursor/rules/typescript.mdc && echo "Cursor rule: PASSED"
-          test -f /tmp/test-project/.windsurf/rules/general.md && echo "Windsurf general: PASSED"
+          test -f /tmp/test-project/.devin/rules/general.md && echo "Devin general (legacy .windsurf project): PASSED"
+          test -f /tmp/test-project/.devin/mcp_config.json && echo "Devin MCP: PASSED"
 
           # Verify content correctness
           grep -q "Use TypeScript" /tmp/test-project/CLAUDE.md && echo "CLAUDE.md content: PASSED"
           grep -q "alwaysApply: true" /tmp/test-project/.cursor/rules/general.mdc && echo "Cursor frontmatter: PASSED"
-          grep -q "trigger: always_on" /tmp/test-project/.windsurf/rules/general.md && echo "Windsurf frontmatter: PASSED"
+          grep -q "trigger: always_on" /tmp/test-project/.devin/rules/general.md && echo "Devin frontmatter: PASSED"
 
           # Verify skills and MCP
           test -f /tmp/test-project/.claude/skills/deploy/SKILL.md && echo "Claude skill: PASSED"

@@ -16,7 +16,7 @@ fn create_project_with_tools(agents_md: &str, tools: &[&str]) -> TempDir {
         match *tool {
             "cursor" => fs::create_dir_all(dir.path().join(".cursor")).unwrap(),
             "claude" => fs::create_dir_all(dir.path().join(".claude")).unwrap(),
-            "windsurf" => fs::create_dir_all(dir.path().join(".windsurf")).unwrap(),
+            "devin" => fs::create_dir_all(dir.path().join(".devin")).unwrap(),
             "copilot" => {
                 fs::create_dir_all(dir.path().join(".github")).unwrap();
                 fs::write(
@@ -123,7 +123,7 @@ Run npm run deploy.
 #[test]
 fn test_sync_empty_config() {
     let agents_md = "# Instructions\n";
-    let dir = create_project_with_tools(agents_md, &["cursor", "windsurf"]);
+    let dir = create_project_with_tools(agents_md, &["cursor", "devin"]);
 
     conforme()
         .args(["-C", dir.path().to_str().unwrap(), "sync"])
@@ -139,31 +139,64 @@ fn test_sync_empty_config() {
         .success();
 }
 
-// ===== MCP sync to Windsurf and Continue =====
+// ===== Devin (formerly Windsurf) =====
 
 #[test]
-fn test_sync_mcp_to_windsurf_is_skipped_with_warning() {
+fn test_sync_migrates_a_legacy_windsurf_project_to_devin() {
     let agents_md = r#"# Instructions
 Be helpful.
+
+## Skill: deploy
+<!-- description: Deploy -->
+Run deploy.
 
 ## MCP: test-server
 <!-- command: npx -->
 <!-- args: -y, @test/server -->
+<!-- env: TOKEN=${GH_TOKEN} -->
 "#;
-    let dir = create_project_with_tools(agents_md, &["windsurf"]);
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("AGENTS.md"), agents_md).unwrap();
+    // What an earlier conforme version wrote for the `windsurf` id, plus a
+    // skill the user authored there by hand.
+    fs::create_dir_all(root.join(".windsurf/rules")).unwrap();
+    fs::write(
+        root.join(".windsurf/rules/general.md"),
+        "---\ntrigger: always_on\n---\nOld.\n",
+    )
+    .unwrap();
+    for skill in ["deploy", "hand-made"] {
+        let skill_dir = root.join(".windsurf/skills").join(skill);
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: x\n---\nOld.\n").unwrap();
+    }
 
-    // Cascade reads MCP servers only from ~/.config/devin/mcp_config.json:
-    // no project file is written, and the user is told the servers were skipped.
     conforme()
-        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .args(["-C", root.to_str().unwrap(), "sync"])
         .assert()
         .success()
-        .stderr(predicate::str::contains(
-            "Windsurf does not support MCP servers",
-        ));
+        .stderr(predicate::str::contains("does not support MCP").not());
 
-    assert!(!dir.path().join(".windsurf/mcp.json").exists());
-    assert!(dir.path().join(".windsurf/rules/general.md").exists());
+    // Devin loads `.windsurf/` *and* `.devin/`: the old copies are gone so
+    // nothing is applied twice, while the user's own skill is kept.
+    let general = fs::read_to_string(root.join(".devin/rules/general.md")).unwrap();
+    assert!(general.contains("Be helpful."));
+    assert!(!root.join(".windsurf/rules/general.md").exists());
+    assert!(root.join(".devin/skills/deploy/SKILL.md").exists());
+    assert!(!root.join(".windsurf/skills/deploy").exists());
+    assert!(root.join(".windsurf/skills/hand-made/SKILL.md").exists());
+
+    // Devin Local reads project MCP servers from `.devin/mcp_config.json`,
+    // with `${env:VAR}` references.
+    let mcp: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(".devin/mcp_config.json")).unwrap())
+            .unwrap();
+    assert_eq!(mcp["mcpServers"]["test-server"]["command"], "npx");
+    assert_eq!(
+        mcp["mcpServers"]["test-server"]["env"]["TOKEN"],
+        "${env:GH_TOKEN}"
+    );
 }
 
 #[test]
@@ -457,7 +490,8 @@ Be helpful.
 
 ## Agent: reviewer
 <!-- description: Code review agent -->
-<!-- tools: Read, Grep, Bash, codebase -->
+<!-- tools: Read, Grep, Bash, codebase, mcp__github__list_issues, NoSuchTool -->
+<!-- model: sonnet -->
 
 Review all changes for bugs.
 "#;
@@ -468,15 +502,25 @@ Review all changes for bugs.
         .assert()
         .success();
 
+    // Gemini rejects `mcp__…` (empty server component) and unknown names, so
+    // the Claude spelling is rewritten to `mcp_<server>_<tool>`.
     let gemini = fs::read_to_string(dir.path().join(".gemini/agents/reviewer.md")).unwrap();
     assert!(
-        gemini.contains("tools:\n- read_file\n- grep_search\n- run_shell_command\n"),
+        gemini.contains(
+            "tools:\n- read_file\n- grep_search\n- run_shell_command\n- mcp_github_list_issues\n"
+        ),
         "{gemini}"
     );
     assert!(!gemini.contains("codebase"));
+    assert!(!gemini.contains("NoSuchTool"));
+    // Gemini would send `sonnet` to its own API.
+    assert!(!gemini.contains("model:"), "{gemini}");
 
     let kiro = fs::read_to_string(dir.path().join(".kiro/agents/reviewer.md")).unwrap();
-    assert!(kiro.contains("tools:\n- read\n- shell\n"), "{kiro}");
+    assert!(
+        kiro.contains("tools:\n- read\n- grep\n- shell\n- '@github/list_issues'\n"),
+        "{kiro}"
+    );
     assert!(!kiro.contains("Bash"));
 }
 

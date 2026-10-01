@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{AiToolAdapter, ManagedDir};
-use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
+use crate::config::{
+    join_flat_globs, rule_file_name, split_globs, ActivationMode, NormalizedConfig, NormalizedRule,
+};
 use crate::frontmatter;
 
 pub struct CopilotAdapter;
@@ -82,20 +84,29 @@ impl AiToolAdapter for CopilotAdapter {
                 .with_context(|| format!("failed to read {}", path.display()))?;
             let (fields, body) = frontmatter::parse(&content)?;
 
-            let activation = if let Some(apply_to) = fields.get("applyTo").and_then(|v| v.as_str())
-            {
-                let patterns: Vec<String> = apply_to
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                if patterns.is_empty() {
-                    ActivationMode::Always
-                } else {
-                    ActivationMode::GlobMatch(patterns)
+            // VS Code loads a file without `applyTo` on demand when its
+            // `description` matches the task, and only when attached by hand
+            // when it has neither.
+            let description = fields
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|d| !d.is_empty());
+            let activation = match fields.get("applyTo").and_then(|v| v.as_str()) {
+                Some(apply_to) => {
+                    let patterns = split_globs(apply_to);
+                    if patterns.is_empty() {
+                        ActivationMode::Always
+                    } else {
+                        ActivationMode::GlobMatch(patterns)
+                    }
                 }
-            } else {
-                ActivationMode::Always
+                None => match description {
+                    Some(description) => ActivationMode::AgentDecision {
+                        description: description.to_string(),
+                    },
+                    None => ActivationMode::Manual,
+                },
             };
 
             rules.push(NormalizedRule {
@@ -121,7 +132,10 @@ impl AiToolAdapter for CopilotAdapter {
         let mcp_path = project_root.join(".vscode").join("mcp.json");
         if mcp_path.exists() {
             let mcp_content = std::fs::read_to_string(&mcp_path)?;
-            mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
+            mcp_servers = crate::mcp::canonicalize_env_refs(
+                crate::mcp::parse_mcp_json(&mcp_content)?,
+                crate::mcp::EnvRefStyle::EnvColon,
+            );
         }
 
         Ok(NormalizedConfig {
@@ -171,11 +185,13 @@ impl AiToolAdapter for CopilotAdapter {
             let instr_dir = github_dir.join("instructions");
             for rule in instruction_rules {
                 if let ActivationMode::GlobMatch(globs) = &rule.activation {
-                    let filename = format!("{}.instructions.md", sanitize_name(&rule.name));
+                    let filename = format!("{}.instructions.md", rule_file_name(&rule.name));
                     let mut fields = BTreeMap::new();
                     fields.insert(
                         "applyTo".to_string(),
-                        serde_yaml_ng::Value::String(globs.join(", ")),
+                        // Copilot splits `applyTo` on every comma, so brace
+                        // groups are expanded first.
+                        serde_yaml_ng::Value::String(join_flat_globs(globs, ",")),
                     );
                     let content = frontmatter::serialize(&fields, &format!("{}\n", rule.content))?;
                     files.push((instr_dir.join(filename), content));
@@ -199,21 +215,13 @@ impl AiToolAdapter for CopilotAdapter {
         // The file also holds VS Code's `inputs` (prompted secrets referenced
         // as `${input:…}`) and `sandbox` settings, and VS Code parses it as
         // JSONC, so only `servers` is replaced.
-        if !config.mcp_servers.is_empty() {
-            let mcp_path = project_root.join(".vscode").join("mcp.json");
-            let existing = crate::json_settings::load(&mcp_path)?;
-            let servers = crate::json_settings::merge_server_entries(
-                existing.as_ref().and_then(|f| f.get("servers")),
-                crate::mcp::build_copilot_servers_object(&config.mcp_servers),
-                crate::mcp::COPILOT_OWNED_SERVER_KEYS,
-            );
-            let json = crate::json_settings::render(
-                existing.as_ref(),
-                &[("servers", serde_json::Value::Object(servers))],
-                &[],
-            )?;
-            files.push((mcp_path, json));
-        }
+        files.extend(crate::json_settings::server_settings_file(
+            &project_root.join(".vscode").join("mcp.json"),
+            "servers",
+            crate::mcp::build_copilot_servers_object(&config.mcp_servers),
+            crate::mcp::COPILOT_OWNED_SERVER_KEYS,
+            &[],
+        )?);
 
         Ok(files)
     }

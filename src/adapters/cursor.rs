@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::{
-    sanitize_name, ActivationMode, NormalizedAgent, NormalizedConfig, NormalizedRule,
+    join_flat_globs, rule_file_name, split_globs, ActivationMode, NormalizedAgent,
+    NormalizedConfig, NormalizedRule,
 };
 use crate::frontmatter;
 
@@ -30,6 +31,11 @@ impl AiToolAdapter for CursorAdapter {
             agents: true,
             mcp: true,
         }
+    }
+
+    /// `.cursor/mcp.json` is merged, not owned (see `generate`).
+    fn is_shared_file(&self, path: &Path) -> bool {
+        path.ends_with(Path::new(".cursor/mcp.json"))
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
@@ -98,16 +104,7 @@ impl AiToolAdapter for CursorAdapter {
                         .get("model")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
-                    let tools = match fields.get("tools") {
-                        Some(serde_yaml_ng::Value::Sequence(seq)) => seq
-                            .iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect(),
-                        Some(serde_yaml_ng::Value::String(s)) => {
-                            s.split_whitespace().map(|t| t.to_string()).collect()
-                        }
-                        _ => Vec::new(),
-                    };
+                    let tools = crate::skills::parse_frontmatter_tool_list(fields.get("tools"));
                     agents.push(NormalizedAgent {
                         name,
                         description,
@@ -125,12 +122,18 @@ impl AiToolAdapter for CursorAdapter {
         let mcp_path = project_root.join(".cursor").join("mcp.json");
         if mcp_path.exists() {
             let mcp_content = std::fs::read_to_string(&mcp_path)?;
-            mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
+            mcp_servers = crate::mcp::canonicalize_env_refs(
+                crate::mcp::parse_mcp_json(&mcp_content)?,
+                crate::mcp::EnvRefStyle::EnvColon,
+            );
         }
 
-        // Read skills from .cursor/skills/<name>/SKILL.md
-        let skills =
-            crate::skills::read_skills_from_dir(&project_root.join(".cursor").join("skills"))?;
+        // Read skills from .cursor/skills/**/SKILL.md (Cursor walks the
+        // skills root recursively).
+        let skills = crate::skills::read_skills_recursive(
+            &project_root.join(".cursor").join("skills"),
+            crate::skills::UNBOUNDED_SKILL_DEPTH,
+        )?;
 
         Ok(NormalizedConfig {
             instructions,
@@ -157,7 +160,7 @@ impl AiToolAdapter for CursorAdapter {
         }
 
         for rule in &config.rules {
-            let filename = format!("{}.mdc", sanitize_name(&rule.name));
+            let filename = format!("{}.mdc", rule_file_name(&rule.name));
             let fields = build_cursor_fields(rule);
             let content = frontmatter::serialize(&fields, &format!("{}\n", rule.content))?;
             files.push((rules_dir.join(filename), content));
@@ -179,14 +182,15 @@ impl AiToolAdapter for CursorAdapter {
             )?);
         }
 
-        // Generate MCP config as .cursor/mcp.json
-        if !config.mcp_servers.is_empty() {
-            let mcp_json = crate::mcp::generate_mcp_json(&config.mcp_servers)?;
-            files.push((
-                project_root.join(".cursor").join("mcp.json"),
-                format!("{}\n", mcp_json),
-            ));
-        }
+        // Merge MCP servers into .cursor/mcp.json. Per-server keys conforme
+        // never writes (`auth`, `envFile`, …) survive a sync.
+        files.extend(crate::json_settings::server_settings_file(
+            &project_root.join(".cursor").join("mcp.json"),
+            "mcpServers",
+            crate::mcp::build_cursor_servers_object(&config.mcp_servers),
+            crate::mcp::CURSOR_OWNED_SERVER_KEYS,
+            &[],
+        )?);
 
         Ok(files)
     }
@@ -203,11 +207,7 @@ fn parse_cursor_activation(fields: &BTreeMap<String, serde_yaml_ng::Value>) -> A
     if always_apply {
         ActivationMode::Always
     } else if let Some(g) = globs {
-        let patterns: Vec<String> = g
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let patterns = split_globs(g);
         if patterns.is_empty() {
             ActivationMode::Always
         } else {
@@ -236,14 +236,20 @@ fn build_cursor_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_ng:
             );
             fields.insert(
                 "globs".to_string(),
-                serde_yaml_ng::Value::String(globs.join(", ")),
+                // "Separate multiple patterns with commas": brace groups are
+                // expanded so that split keeps them whole.
+                serde_yaml_ng::Value::String(join_flat_globs(globs, ", ")),
             );
             fields.insert("alwaysApply".to_string(), serde_yaml_ng::Value::Bool(false));
         }
         ActivationMode::AgentDecision { description } => {
+            // Without a description Cursor would read the rule as Manual.
             fields.insert(
                 "description".to_string(),
-                serde_yaml_ng::Value::String(description.clone()),
+                serde_yaml_ng::Value::String(crate::skills::description_or_name(
+                    description,
+                    &rule.name,
+                )),
             );
             fields.insert("alwaysApply".to_string(), serde_yaml_ng::Value::Bool(false));
         }

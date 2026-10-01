@@ -75,6 +75,49 @@ pub(crate) fn read_skills_from_dir(skills_dir: &Path) -> Result<Vec<NormalizedSk
     Ok(skills)
 }
 
+/// Depth used for tools that walk their skills root without a limit.
+pub(crate) const UNBOUNDED_SKILL_DEPTH: usize = 16;
+
+/// Read skills from every `SKILL.md` folder under `skills_dir`, up to
+/// `max_depth` levels below it, for the tools that search their skills root
+/// recursively (Codex: 6 levels, Amp: 5, Cursor and OpenCode: unbounded). A
+/// folder holding a `SKILL.md` is one skill; its sub-folders are not
+/// searched. A skill nested deeper than one level is written back flat.
+pub(crate) fn read_skills_recursive(
+    skills_dir: &Path,
+    max_depth: usize,
+) -> Result<Vec<NormalizedSkill>> {
+    let mut skills = read_skills_from_dir(skills_dir)?;
+    let mut frontier: Vec<PathBuf> = Vec::new();
+    if skills_dir.is_dir() {
+        frontier.push(skills_dir.to_path_buf());
+    }
+    for _ in 1..max_depth {
+        let mut next = Vec::new();
+        for dir in frontier {
+            let mut children: Vec<PathBuf> = std::fs::read_dir(&dir)?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_dir() && !p.join("SKILL.md").exists())
+                .collect();
+            children.sort();
+            for child in children {
+                for skill in read_skills_from_dir(&child)? {
+                    if !skills.iter().any(|s| s.name == skill.name) {
+                        skills.push(skill);
+                    }
+                }
+                next.push(child);
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        frontier = next;
+    }
+    Ok(skills)
+}
+
 /// Read flat `<dir>/<name>.md` skill files, the single-file layout the
 /// DeepSeek Harness accepts next to `<name>/SKILL.md` bundles.
 pub(crate) fn read_flat_skills_from_dir(skills_dir: &Path) -> Result<Vec<NormalizedSkill>> {
@@ -142,6 +185,10 @@ pub(crate) fn read_manual_invocation(
     if fields.get("disable-model-invocation").and_then(yaml_flag) == Some(true) {
         return Ok(true);
     }
+    // Devin: `triggers` lists who may invoke the skill (`user`, `model`).
+    if let Some(serde_yaml_ng::Value::Sequence(triggers)) = fields.get("triggers") {
+        return Ok(!triggers.iter().any(|t| t.as_str() == Some("model")));
+    }
     if let Some(value) = fields
         .get("metadata")
         .and_then(|v| v.get("opencode/autoinvoke"))
@@ -191,12 +238,17 @@ fn add_invocation_fields(
     fields.insert("metadata".into(), serde_yaml_ng::Value::Mapping(metadata));
 }
 
+/// The Codex `agents/openai.yaml` policy sidecar of a skill. Only Codex reads
+/// it, so it is created (`create`) only in `.agents/skills/`, the root Codex
+/// scans; elsewhere an existing sidecar is kept in step with the skill but
+/// never added, since no tool there would consume it.
 fn invocation_policy(
     skill_dir: &Path,
     skill: &NormalizedSkill,
+    create: bool,
 ) -> Result<Option<(PathBuf, String)>> {
     let path = skill_dir.join("agents/openai.yaml");
-    if !skill.manual_invocation && !path.exists() {
+    if !path.exists() && !(create && skill.manual_invocation) {
         return Ok(None);
     }
     let mut fields: BTreeMap<String, serde_yaml_ng::Value> = if path.exists() {
@@ -225,29 +277,37 @@ pub(crate) fn read_agents_from_dir(
     agents_dir: &Path,
     recursive: bool,
 ) -> Result<Vec<NormalizedAgent>> {
-    let mut agents = Vec::new();
+    read_agent_files(&agent_files(agents_dir, recursive)?)
+}
+
+/// The `*.md` files of an agents directory, sorted (see [`read_agents_from_dir`]).
+pub(crate) fn agent_files(agents_dir: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
     if !agents_dir.is_dir() {
-        return Ok(agents);
+        return Ok(Vec::new());
     }
-    let paths = if recursive {
-        crate::adapters::collect_rule_files(agents_dir, "md")?
-    } else {
-        let mut paths: Vec<PathBuf> = std::fs::read_dir(agents_dir)?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "md"))
-            .collect();
-        paths.sort();
-        paths
-    };
+    if recursive {
+        return crate::adapters::collect_rule_files(agents_dir, "md");
+    }
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(agents_dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "md"))
+        .collect();
+    paths.sort();
+    Ok(paths)
+}
+
+/// Read agent markdown files (see [`read_agents_from_dir`]).
+pub(crate) fn read_agent_files(paths: &[PathBuf]) -> Result<Vec<NormalizedAgent>> {
+    let mut agents = Vec::new();
     for path in paths {
-        let content = std::fs::read_to_string(&path)?;
+        let content = std::fs::read_to_string(path)?;
         let (fields, body) = frontmatter::parse(&content)?;
         let name = fields
             .get("name")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| agent_name_from_path(&path));
+            .unwrap_or_else(|| agent_name_from_path(path));
         let description = fields
             .get("description")
             .and_then(|v| v.as_str())
@@ -310,7 +370,7 @@ pub fn generate_claude_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
-        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
     }
@@ -342,7 +402,7 @@ pub fn generate_cursor_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
-        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
     }
@@ -373,7 +433,7 @@ pub fn generate_codex_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
-        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+        if let Some(policy) = invocation_policy(&skill_dir, skill, true)? {
             files.push(policy);
         }
     }
@@ -416,7 +476,7 @@ pub fn generate_copilot_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
-        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
     }
@@ -487,16 +547,20 @@ pub fn generate_claude_agents(
             "description".to_string(),
             serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
         );
-        if let Some(model) = &agent.model {
+        if let Some(model) = claude_model(agent.model.as_deref()) {
             fields.insert(
                 "model".to_string(),
-                serde_yaml_ng::Value::String(model.clone()),
+                serde_yaml_ng::Value::String(model.to_string()),
             );
         }
-        if !agent.tools.is_empty() {
+        // Names from other hosts are translated; a list in which nothing
+        // resolves would make Claude Code refuse to launch the subagent, so an
+        // untranslatable list becomes read-only access (never every tool).
+        let tools = claude_tools(&agent.tools);
+        if !tools.is_empty() {
             fields.insert(
                 "tools".to_string(),
-                serde_yaml_ng::Value::String(agent.tools.join(", ")),
+                serde_yaml_ng::Value::String(tools.join(", ")),
             );
         }
         if let Some(color) = &agent.color {
@@ -588,30 +652,66 @@ pub fn generate_kiro_agents(
     Ok(files)
 }
 
-/// Common tool names other hosts use (Claude Code, Copilot) and their
-/// equivalent in Gemini CLI and Kiro, which each accept only their own
-/// vocabulary. Matching is case-insensitive.
-const TOOL_EQUIVALENTS: &[(&str, &str, &str)] = &[
-    // (source name, Gemini tool, Kiro tag)
-    ("read", "read_file", "read"),
-    ("glob", "glob", "read"),
-    ("grep", "grep_search", "read"),
-    ("search", "grep_search", "read"),
-    ("ls", "list_directory", "read"),
-    ("write", "write_file", "write"),
-    ("edit", "replace", "write"),
-    ("multiedit", "replace", "write"),
-    ("bash", "run_shell_command", "shell"),
-    ("execute", "run_shell_command", "shell"),
-    ("shell", "run_shell_command", "shell"),
-    ("terminal", "run_shell_command", "shell"),
-    ("webfetch", "web_fetch", "web"),
-    ("websearch", "google_web_search", "web"),
-    ("web", "web_fetch", "web"),
-    ("todowrite", "write_todos", "todo_list"),
-    ("todo", "write_todos", "todo_list"),
-    ("task", "invoke_agent", "subagent"),
-    ("agent", "invoke_agent", "subagent"),
+/// Common tool names across hosts (Claude Code, Copilot, Gemini CLI, Kiro,
+/// Codex) and their equivalent in each tool that validates `tools` against
+/// its own vocabulary. Matching is case-insensitive.
+const TOOL_EQUIVALENTS: &[(&str, &str, &str, &str)] = &[
+    // (source name, Gemini tool, Kiro tool, Claude Code tool)
+    ("read", "read_file", "read", "Read"),
+    ("read_file", "read_file", "read", "Read"),
+    ("read_many_files", "read_many_files", "read", "Read"),
+    ("fs_read", "read_file", "read", "Read"),
+    ("glob", "glob", "glob", "Glob"),
+    ("grep", "grep_search", "grep", "Grep"),
+    ("grep_search", "grep_search", "grep", "Grep"),
+    ("search_file_content", "grep_search", "grep", "Grep"),
+    ("search", "grep_search", "grep", "Grep"),
+    ("codebase", "grep_search", "grep", "Grep"),
+    ("ls", "list_directory", "read", "Glob"),
+    ("list_directory", "list_directory", "read", "Glob"),
+    ("write", "write_file", "write", "Write"),
+    ("write_file", "write_file", "write", "Write"),
+    ("fs_write", "write_file", "write", "Write"),
+    ("edit", "replace", "write", "Edit"),
+    ("replace", "replace", "write", "Edit"),
+    ("multiedit", "replace", "write", "Edit"),
+    ("editfiles", "replace", "write", "Edit"),
+    ("notebookedit", "replace", "write", "NotebookEdit"),
+    ("bash", "run_shell_command", "shell", "Bash"),
+    ("run_shell_command", "run_shell_command", "shell", "Bash"),
+    ("execute", "run_shell_command", "shell", "Bash"),
+    ("execute_bash", "run_shell_command", "shell", "Bash"),
+    ("execute_cmd", "run_shell_command", "shell", "Bash"),
+    ("exec", "run_shell_command", "shell", "Bash"),
+    ("shell", "run_shell_command", "shell", "Bash"),
+    ("terminal", "run_shell_command", "shell", "Bash"),
+    ("runcommands", "run_shell_command", "shell", "Bash"),
+    ("powershell", "run_shell_command", "shell", "PowerShell"),
+    ("webfetch", "web_fetch", "web_fetch", "WebFetch"),
+    ("web_fetch", "web_fetch", "web_fetch", "WebFetch"),
+    ("fetch", "web_fetch", "web_fetch", "WebFetch"),
+    ("websearch", "google_web_search", "web_search", "WebSearch"),
+    ("web_search", "google_web_search", "web_search", "WebSearch"),
+    (
+        "google_web_search",
+        "google_web_search",
+        "web_search",
+        "WebSearch",
+    ),
+    ("web", "web_fetch", "web", "WebFetch"),
+    ("todowrite", "write_todos", "todo_list", "TodoWrite"),
+    ("write_todos", "write_todos", "todo_list", "TodoWrite"),
+    ("todo", "write_todos", "todo_list", "TodoWrite"),
+    ("todo_list", "write_todos", "todo_list", "TodoWrite"),
+    ("task", "invoke_agent", "subagent", "Agent"),
+    ("agent", "invoke_agent", "subagent", "Agent"),
+    ("invoke_agent", "invoke_agent", "subagent", "Agent"),
+    ("subagent", "invoke_agent", "subagent", "Agent"),
+    ("use_subagent", "invoke_agent", "subagent", "Agent"),
+    ("askuserquestion", "ask_user", "", "AskUserQuestion"),
+    ("ask_user", "ask_user", "", "AskUserQuestion"),
+    ("skill", "activate_skill", "", "Skill"),
+    ("activate_skill", "activate_skill", "", "Skill"),
 ];
 
 /// Gemini CLI built-in tool names (`ALL_BUILTIN_TOOL_NAMES` plus the legacy
@@ -632,6 +732,12 @@ const GEMINI_TOOLS: &[&str] = &[
     "list_directory",
     "activate_skill",
     "ask_user",
+    "tracker_create_task",
+    "tracker_update_task",
+    "tracker_get_task",
+    "tracker_list_tasks",
+    "tracker_add_dependency",
+    "tracker_visualize",
     "get_internal_docs",
     "enter_plan_mode",
     "exit_plan_mode",
@@ -640,10 +746,13 @@ const GEMINI_TOOLS: &[&str] = &[
     "invoke_agent",
     "read_mcp_resource",
     "list_mcp_resources",
+    "*",
 ];
 
-/// Kiro agent `tools` tags (besides `@server[/tool]` references).
+/// Kiro agent `tools` values: the category tags, the individual built-in
+/// tools, and their documented legacy aliases (besides `@server[/tool]`).
 const KIRO_TOOLS: &[&str] = &[
+    // tags
     "read",
     "write",
     "shell",
@@ -654,49 +763,218 @@ const KIRO_TOOLS: &[&str] = &[
     "@builtin",
     "@mcp",
     "*",
+    // built-in tools
+    "glob",
+    "grep",
+    "aws",
+    "web_search",
+    "web_fetch",
+    "introspect",
+    "code",
+    "tool_search",
+    "delegate",
+    "report",
+    "thinking",
+    "todo",
+    "goal",
+    "session",
+    // aliases
+    "fs_read",
+    "fsRead",
+    "fs_write",
+    "fsWrite",
+    "execute_bash",
+    "execute_cmd",
+    "use_aws",
+    "use_subagent",
 ];
 
+/// Claude Code built-in tool names a subagent's `tools` may list. A list in
+/// which nothing resolves makes Claude Code refuse to launch the subagent.
+const CLAUDE_TOOLS: &[&str] = &[
+    "Agent",
+    "AskUserQuestion",
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "Edit",
+    "EnterPlanMode",
+    "EnterWorktree",
+    "ExitPlanMode",
+    "ExitWorktree",
+    "Glob",
+    "Grep",
+    "ListMcpResourcesTool",
+    "LSP",
+    "Monitor",
+    "NotebookEdit",
+    "PowerShell",
+    "PushNotification",
+    "Read",
+    "ReadMcpResourceTool",
+    "SendMessage",
+    "Skill",
+    "Task",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "TodoWrite",
+    "ToolSearch",
+    "WebFetch",
+    "WebSearch",
+    "Write",
+];
+
+/// An MCP tool reference in any host's spelling, as `(server, tool)`, where
+/// `tool` is `None` for "every tool of the server":
+/// Claude Code / Devin `mcp__srv__tool` and `mcp__srv`, Gemini
+/// `mcp_srv_tool` and `mcp_srv_*`, Kiro `@srv/tool` and `@srv`.
+fn parse_mcp_tool(name: &str) -> Option<(&str, Option<&str>)> {
+    if let Some(rest) = name.strip_prefix("mcp__") {
+        return match rest.split_once("__") {
+            Some((server, "*")) => Some((server, None)),
+            Some((server, tool)) => Some((server, Some(tool))),
+            None => Some((rest, None)),
+        }
+        .filter(|(server, _)| !server.is_empty());
+    }
+    if let Some(rest) = name.strip_prefix("mcp_") {
+        let (server, tool) = rest.split_once('_')?;
+        let tool = if tool == "*" { None } else { Some(tool) };
+        return (!server.is_empty() && tool != Some("")).then_some((server, tool));
+    }
+    if let Some(rest) = name.strip_prefix('@') {
+        if rest == "builtin" || rest == "mcp" {
+            return None;
+        }
+        return match rest.split_once('/') {
+            Some((server, tool)) => Some((server, Some(tool))),
+            None => Some((rest, None)),
+        }
+        .filter(|(server, _)| !server.is_empty());
+    }
+    None
+}
+
+/// Whether `name` is an MCP tool name Gemini's agent validator accepts
+/// (`mcp_<server>_<tool>` or `mcp_<server>_*`, slug characters only).
+fn is_gemini_mcp_tool(name: &str) -> bool {
+    let slug = |s: &str| {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '-'))
+    };
+    name.strip_prefix("mcp_")
+        .filter(|rest| !rest.starts_with('_'))
+        .and_then(|rest| rest.split_once('_'))
+        .is_some_and(|(server, tool)| {
+            slug(server) && (tool == "*" || (slug(tool) && !tool.chars().all(|c| c == '_')))
+        })
+}
+
 /// Translate a tool list into Gemini CLI tool names. Names Gemini already
-/// knows (built-ins, `mcp_<server>_<tool>`, `discovered_tool_*`) pass
-/// through, known equivalents are mapped, and anything else is dropped so the
-/// agent is not rejected.
+/// knows (built-ins, `*`, `mcp_<server>_<tool>`, `discovered_tool_*`) pass
+/// through, MCP tools in another host's spelling are rewritten, known
+/// equivalents are mapped, and anything else is dropped so the agent is not
+/// rejected.
 fn gemini_tools(tools: &[String]) -> Vec<String> {
     translate_tools(
         tools,
-        |t| GEMINI_TOOLS.contains(&t) || t.starts_with("mcp_") || t.starts_with("discovered_tool_"),
+        |t| {
+            if GEMINI_TOOLS.contains(&t)
+                || is_gemini_mcp_tool(t)
+                || t.starts_with("discovered_tool_")
+            {
+                return Some(t.to_string());
+            }
+            let (server, tool) = parse_mcp_tool(t)?;
+            let fqn = format!("mcp_{server}_{}", tool.unwrap_or("*"));
+            is_gemini_mcp_tool(&fqn).then_some(fqn)
+        },
         |row| row.1,
+        "read_file",
     )
 }
 
-/// Translate a tool list into Kiro tags, the same way as [`gemini_tools`].
+/// Translate a tool list into Kiro tools and tags, the same way as
+/// [`gemini_tools`]; MCP tools become `@server[/tool]`.
 fn kiro_tools(tools: &[String]) -> Vec<String> {
     translate_tools(
         tools,
-        |t| KIRO_TOOLS.contains(&t) || t.starts_with('@'),
+        |t| {
+            if KIRO_TOOLS.contains(&t) || t.starts_with('@') {
+                return Some(t.to_string());
+            }
+            let (server, tool) = parse_mcp_tool(t)?;
+            Some(match tool {
+                Some(tool) => format!("@{server}/{tool}"),
+                None => format!("@{server}"),
+            })
+        },
         |row| row.2,
+        "read",
     )
 }
 
+/// Translate a tool list into Claude Code tool names, the same way as
+/// [`gemini_tools`]; MCP tools become `mcp__server[__tool]`, and
+/// `Agent(type)`-style restrictions of a known tool pass through.
+fn claude_tools(tools: &[String]) -> Vec<String> {
+    // Kiro's `*` / `@builtin` mean every tool; Claude Code has no wildcard,
+    // and an absent `tools` means the same.
+    if tools.iter().any(|t| t == "*" || t == "@builtin") {
+        return Vec::new();
+    }
+    translate_tools(
+        tools,
+        |t| {
+            let base = t.split_once('(').map_or(t, |(base, _)| base);
+            if CLAUDE_TOOLS.contains(&base) {
+                return Some(t.to_string());
+            }
+            let (server, tool) = parse_mcp_tool(t)?;
+            Some(match tool {
+                Some(tool) => format!("mcp__{server}__{tool}"),
+                None => format!("mcp__{server}"),
+            })
+        },
+        |row| row.3,
+        "Read",
+    )
+}
+
+/// Translate `tools` into a target vocabulary. A restricted source list in
+/// which nothing translates becomes `[read_only]` rather than an empty list:
+/// leaving `tools` out would hand the agent every tool, including shell and
+/// write access the source never granted.
 fn translate_tools(
     tools: &[String],
-    native: impl Fn(&str) -> bool,
-    target: fn(&(&str, &'static str, &'static str)) -> &'static str,
+    native: impl Fn(&str) -> Option<String>,
+    target: fn(&(&str, &'static str, &'static str, &'static str)) -> &'static str,
+    read_only: &str,
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for tool in tools {
-        let mapped = if native(tool) {
-            Some(tool.as_str())
-        } else {
+        let mapped = native(tool).or_else(|| {
             TOOL_EQUIVALENTS
                 .iter()
                 .find(|row| row.0.eq_ignore_ascii_case(tool))
                 .map(target)
-        };
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+        });
         if let Some(name) = mapped {
-            if !out.iter().any(|t| t == name) {
-                out.push(name.to_string());
+            if !out.contains(&name) {
+                out.push(name);
             }
         }
+    }
+    if out.is_empty() && !tools.is_empty() {
+        out.push(read_only.to_string());
     }
     out
 }
@@ -741,10 +1019,10 @@ pub fn generate_gemini_agents(
             serde_yaml_ng::Value::String("local".to_string()),
         );
         insert_tool_list(&mut fields, &gemini_tools(&agent.tools));
-        if let Some(model) = &agent.model {
+        if let Some(model) = gemini_model(agent.model.as_deref()) {
             fields.insert(
                 "model".to_string(),
-                serde_yaml_ng::Value::String(model.clone()),
+                serde_yaml_ng::Value::String(model.to_string()),
             );
         }
 
@@ -778,7 +1056,7 @@ pub fn generate_kiro_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
-        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
     }
@@ -786,10 +1064,12 @@ pub fn generate_kiro_skills(
     Ok(files)
 }
 
-/// Generate Windsurf skill files in `<skills_dir>/<name>/SKILL.md`, where the
-/// adapter picks `.devin/skills/` or the legacy `.windsurf/skills/`.
-/// Windsurf skills use only `name` and `description` in frontmatter.
-pub fn generate_windsurf_skills(
+/// Generate Devin skill files in `<skills_dir>/<name>/SKILL.md`
+/// (`.devin/skills/`). Devin documents no `disable-model-invocation`; a
+/// manual-only skill is `triggers: [user]` instead (the default is
+/// `[user, model]`). `allowed-tools` only pre-approves Devin's own tool names
+/// (`read`, `edit`, `exec`, …) and restricts nothing, so it is not copied.
+pub fn generate_devin_skills(
     skills_dir: &Path,
     skills: &[NormalizedSkill],
 ) -> Result<Vec<(PathBuf, String)>> {
@@ -807,10 +1087,15 @@ pub fn generate_windsurf_skills(
             serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
         );
 
-        add_invocation_fields(&mut fields, skill);
+        if skill.manual_invocation {
+            fields.insert(
+                "triggers".to_string(),
+                serde_yaml_ng::Value::Sequence(vec!["user".into()]),
+            );
+        }
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
-        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
     }
@@ -842,7 +1127,7 @@ pub fn generate_zoocode_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
-        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
     }
@@ -875,7 +1160,7 @@ pub fn generate_opencode_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
-        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
     }
@@ -928,6 +1213,27 @@ pub(crate) fn opencode_model(model: Option<&str>) -> Option<&str> {
     })
 }
 
+/// The `model` to write for a Claude Code subagent: an alias (`sonnet`,
+/// `opus`, `haiku`, `fable`), `inherit`, or a full `claude-*` id. Another
+/// vendor's id (`gpt-4o`, `gemini-2.5-pro`) is left out, and the subagent
+/// uses Claude Code's default model order.
+pub(crate) fn claude_model(model: Option<&str>) -> Option<&str> {
+    model.filter(|m| {
+        matches!(*m, "sonnet" | "opus" | "haiku" | "fable" | "inherit") || m.starts_with("claude-")
+    })
+}
+
+/// The `model` to write for a Gemini CLI subagent. Gemini passes any other
+/// value to its API unchanged, so a Claude alias such as `sonnet` would load
+/// and then fail on every call; only `inherit`, Gemini's aliases (`auto`,
+/// `pro`, `flash`, `flash-lite`) and `gemini-*` ids are written.
+pub(crate) fn gemini_model(model: Option<&str>) -> Option<&str> {
+    model.filter(|m| {
+        matches!(*m, "inherit" | "auto" | "pro" | "flash" | "flash-lite")
+            || m.starts_with("gemini-")
+    })
+}
+
 /// Generate DeepSeek Harness skill files in `.dsh/skills/<name>/SKILL.md`.
 /// The harness filesystem skill provider scans `<projectRoot>/.dsh/skills` first
 /// and interprets required `name` and `description`, plus optional `whenToUse`,
@@ -955,7 +1261,7 @@ pub fn generate_deepseek_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
-        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
     }
@@ -988,7 +1294,7 @@ pub fn generate_gemini_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
-        if let Some(policy) = invocation_policy(&skill_dir, skill)? {
+        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
     }
@@ -1021,7 +1327,7 @@ mod tests {
             generate_codex_skills(root, &skills).unwrap(),
             generate_copilot_skills(root, &skills).unwrap(),
             generate_kiro_skills(root, &skills).unwrap(),
-            generate_windsurf_skills(&root.join(".windsurf/skills"), &skills).unwrap(),
+            generate_devin_skills(&root.join(".devin/skills"), &skills).unwrap(),
             generate_zoocode_skills(root, &skills).unwrap(),
             generate_opencode_skills(root, &skills).unwrap(),
             generate_deepseek_skills(root, &skills).unwrap(),

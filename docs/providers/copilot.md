@@ -9,13 +9,18 @@
 - CLI skills: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills
 - Cloud agent skills: https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/customize-cloud-agent/add-skills
 - MCP tutorial: https://docs.github.com/en/copilot/tutorials/enhance-agent-mode-with-mcp
-- MCP config (VS Code): https://code.visualstudio.com/docs/copilot/reference/mcp-configuration
+- MCP config (VS Code): https://code.visualstudio.com/docs/agents/reference/mcp-configuration
+- Custom instructions (VS Code): https://code.visualstudio.com/docs/agent-customization/custom-instructions
+- Custom agents (VS Code): https://code.visualstudio.com/docs/agent-customization/custom-agents
+- Agent skills (VS Code): https://code.visualstudio.com/docs/agent-customization/agent-skills
+- MCP servers (VS Code): https://code.visualstudio.com/docs/agent-customization/mcp-servers
+- CLI custom instructions: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions
 - MCP servers (Copilot CLI): https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers
 - CLI changelog: https://github.com/github/copilot-cli/blob/main/changelog.md
 - Hooks config: https://docs.github.com/en/copilot/reference/hooks-reference
 - CLI hooks: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-hooks
 - CLI overview: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/overview
-- Features: https://docs.github.com/en/copilot/get-started/features
+- About Copilot: https://docs.github.com/en/copilot/get-started/about-github-copilot
 
 ## Config files
 
@@ -35,8 +40,8 @@
 |------|---------------|
 | Always | Content in `.github/copilot-instructions.md` (main file) |
 | GlobMatch | `.github/instructions/<name>.instructions.md` with `applyTo: "**/*.ts"` |
-| AgentDecision | Content in main file (no native agent-decision mode) |
-| Manual | Content in main file (no native manual mode) |
+| AgentDecision | Content in main file (VS Code alone loads a `description`-only file on demand) |
+| Manual | Content in main file (VS Code alone lets a file with neither field be attached by hand) |
 
 ## conforme adapter
 
@@ -51,7 +56,11 @@
 ## Notes
 
 - MCP uses `"servers"` key (NOT `"mcpServers"`) -- unique among all tools
-- MCP supports `env` on stdio and `headers` on HTTP transports (conforme emits both when set)
+- MCP: `env` on stdio servers and `headers` on HTTP ones (VS Code's remote fields are `type`, `url`, `headers`, `oauth`), which is what conforme writes. Environment references are written `${env:VAR}` (VS Code's predefined-variable syntax) and read back as `${VAR}`; `${input:…}` references are kept as they are
+- Agent-decision and manual rules are inlined into `copilot-instructions.md` (deliberate): VS Code can load a `description`-only instructions file on demand, but GitHub.com and Copilot CLI only apply files with `applyTo`. On read, a hand-written file with a `description` and no `applyTo` becomes an agent-decision rule, and one with neither a manual rule
+- `applyTo` is written comma-separated without spaces (the documented form), with brace groups expanded, and read back brace-aware
+- Agent `model` is copied as is; VS Code expects names such as `GPT-5.2 (copilot)` and its docs do not say what an unknown value does (unverified)
+- VS Code 1.140 (2026-09-30) lists `.vscode/mcp.json` as deprecated in favour of the portable workspace `.mcp.json` (`mcpServers`). VS Code still reads it; conforme keeps writing it until the move can be coordinated with the Claude Code target, which owns `.mcp.json`
 - `.vscode/mcp.json` also holds VS Code's `inputs` (prompted secrets referenced as `${input:…}`) and `sandbox` settings, and VS Code parses it as JSONC. conforme **merges** only the `servers` key: comments, `inputs`, `sandbox`, and per-server keys it never emits (`envFile`, …) survive, a file it cannot parse is left untouched (sync fails), and `remove copilot` / `migrate --source copilot` keep the file
 - Copilot CLI reads MCP servers from `.mcp.json` or `.github/mcp.json` (`mcpServers` key, added 1.0.61), not `.vscode/mcp.json`. conforme does not write a Copilot-specific CLI file; when Claude Code is also a target, its `.mcp.json` covers the CLI
 - `.github/instructions/` may be organised in sub-directories; conforme reads nested `*.instructions.md` too (written back flat)

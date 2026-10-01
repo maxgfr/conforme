@@ -8,59 +8,44 @@ use crate::project_config;
 const BLOCK_START: &str = "# ── conforme: generated tool configs ──";
 const BLOCK_END: &str = "# ── end conforme ──";
 
-/// Patterns that each adapter's generated output produces.
-/// Returns (adapter_id, vec of gitignore patterns).
+/// Patterns for the files each adapter generates and owns outright.
+///
+/// - Root files are anchored (`/CLAUDE.md`), so a hand-written `CLAUDE.md`
+///   or `AGENTS.md` in a sub-directory stays tracked.
+/// - Rules and agents directories list only the file kind conforme writes at
+///   their top level (`.cursor/rules/*.mdc`): nested rules, Kiro `.json`
+///   agents or Copilot plain `.md` agents are the user's.
+/// - Files conforme only merges into (`.mcp.json`, `.vscode/mcp.json`,
+///   `opencode.json`, `.zed/settings.json`, …) also hold the user's own
+///   settings and are never ignored.
 fn adapter_gitignore_patterns(id: &str) -> Vec<&'static str> {
     match id {
         "claude" => vec![
-            "CLAUDE.md",
-            ".claude/rules/",
+            "/CLAUDE.md",
+            "/.claude/CLAUDE.md",
+            ".claude/rules/*.md",
             ".claude/skills/",
-            ".claude/agents/",
+            ".claude/agents/*.md",
         ],
         "cursor" => vec![
-            ".cursor/rules/",
+            ".cursor/rules/*.mdc",
             ".cursor/skills/",
-            ".cursor/agents/",
-            ".cursor/mcp.json",
+            ".cursor/agents/*.md",
         ],
-        "windsurf" => vec![
-            ".devin/rules/",
-            ".windsurf/rules/",
-            ".windsurf/skills/",
-            ".windsurf/mcp.json",
-        ],
+        "devin" => vec![".devin/rules/*.md", ".devin/skills/"],
         "copilot" => vec![
-            ".github/copilot-instructions.md",
-            ".github/instructions/",
+            "/.github/copilot-instructions.md",
+            ".github/instructions/*.instructions.md",
             ".github/skills/",
-            // Legacy path: conforme emitted skills here before Copilot documented
-            // `.github/skills/`. Listed so migrating projects stay ignored.
-            ".github/prompts/",
-            ".github/agents/",
-            ".vscode/mcp.json",
+            ".github/agents/*.agent.md",
         ],
         "codex" => vec![".agents/skills/"],
-        "opencode" => vec![
-            ".opencode/skills/",
-            ".opencode/mcp.json",
-            ".opencode/agents.json",
-        ],
-        "zoocode" => vec![".roo/rules/", ".roo/skills/", ".roo/mcp.json"],
-        "gemini" => vec![
-            "GEMINI.md",
-            ".gemini/skills/",
-            ".gemini/agents/",
-            ".gemini/settings.json",
-        ],
-        "zed" => vec![".rules", ".zed/settings.json"],
-        "kiro" => vec![
-            ".kiro/steering/",
-            ".kiro/skills/",
-            ".kiro/agents/",
-            ".kiro/settings/",
-        ],
-        "amp" => vec![".agents/skills/", ".amp/settings.json"],
+        "opencode" => vec![".opencode/skills/", ".opencode/agents/*.md"],
+        "zoocode" => vec![".roo/rules/*.md", ".roo/skills/"],
+        "gemini" => vec!["/GEMINI.md", ".gemini/skills/", ".gemini/agents/*.md"],
+        "zed" => vec!["/.rules", ".agents/skills/"],
+        "kiro" => vec![".kiro/steering/*.md", ".kiro/skills/", ".kiro/agents/*.md"],
+        "amp" => vec![".agents/skills/"],
         "deepseek" => vec![".dsh/skills/"],
         _ => vec![],
     }
@@ -78,13 +63,19 @@ fn build_gitignore_block(project_root: &Path) -> String {
         "# Managed by `conforme gitignore install`. Do not edit this block.".to_string(),
     ];
 
-    // Collect patterns for non-source adapters
+    // Collect patterns for non-source adapters. A location the source also
+    // uses stays tracked (`.agents/skills/` is Codex's, Zed's and Amp's), and
+    // a pattern another adapter already listed is not repeated.
+    let mut listed = adapter_gitignore_patterns(source_id);
     for adapter in &all {
         if adapter.id() == source_id {
             continue;
         }
 
-        let patterns = adapter_gitignore_patterns(adapter.id());
+        let patterns: Vec<&str> = adapter_gitignore_patterns(adapter.id())
+            .into_iter()
+            .filter(|p| !listed.contains(p))
+            .collect();
         if patterns.is_empty() {
             continue;
         }
@@ -92,13 +83,18 @@ fn build_gitignore_block(project_root: &Path) -> String {
         lines.push(format!("# {}", adapter.name()));
         for pat in patterns {
             lines.push(pat.to_string());
+            listed.push(pat);
         }
     }
 
     // AGENTS.md is generated when using a tool source (not agents.md)
-    if source_id != "agents.md" && config.generate_agents_md {
+    // — but not when the source tool reads AGENTS.md itself: it is the source.
+    let source_reads_agents_md = all
+        .iter()
+        .any(|a| a.id() == source_id && a.reads_agents_md());
+    if source_id != "agents.md" && !source_reads_agents_md && config.generate_agents_md {
         lines.push("# Generated AGENTS.md".to_string());
-        lines.push("AGENTS.md".to_string());
+        lines.push("/AGENTS.md".to_string());
     }
 
     lines.push(BLOCK_END.to_string());
@@ -271,16 +267,113 @@ mod tests {
         assert!(result.is_empty());
     }
 
-    #[test]
-    fn test_adapter_patterns_coverage() {
-        let all = adapters::all_adapters();
-        for adapter in &all {
-            let patterns = adapter_gitignore_patterns(adapter.id());
-            assert!(
-                !patterns.is_empty(),
-                "adapter {} has no gitignore patterns",
-                adapter.id()
-            );
+    /// Whether a pattern of [`adapter_gitignore_patterns`] matches a path
+    /// relative to the project root, with gitignore semantics for the three
+    /// forms used there: `/file`, `dir/`, and `dir/*suffix`.
+    fn pattern_matches(pattern: &str, rel: &str) -> bool {
+        if let Some(file) = pattern.strip_prefix('/') {
+            rel == file
+        } else if pattern.ends_with('/') {
+            rel.starts_with(pattern)
+        } else if let Some((dir, suffix)) = pattern.split_once("/*") {
+            rel.strip_prefix(dir)
+                .and_then(|r| r.strip_prefix('/'))
+                .is_some_and(|name| !name.contains('/') && name.ends_with(suffix))
+        } else {
+            rel == pattern
         }
+    }
+
+    fn full_config() -> crate::config::NormalizedConfig {
+        use crate::config::*;
+        NormalizedConfig {
+            instructions: "Be helpful.".to_string(),
+            rules: vec![NormalizedRule {
+                name: "ts".to_string(),
+                content: "Use TS.".to_string(),
+                activation: ActivationMode::GlobMatch(vec!["**/*.ts".to_string()]),
+            }],
+            skills: vec![NormalizedSkill {
+                name: "deploy".to_string(),
+                description: "Deploy".to_string(),
+                content: "Run.".to_string(),
+                ..Default::default()
+            }],
+            agents: vec![NormalizedAgent {
+                name: "reviewer".to_string(),
+                description: "Review".to_string(),
+                content: "Review.".to_string(),
+                ..Default::default()
+            }],
+            mcp_servers: vec![NormalizedMcpServer {
+                name: "fs".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec![],
+                },
+                env: Default::default(),
+            }],
+        }
+    }
+
+    /// Every file an adapter owns is ignored, no file it merges into (and
+    /// that therefore holds user settings) is, and no pattern is stale.
+    #[test]
+    fn test_patterns_match_generated_files_exactly() {
+        for adapter in adapters::all_adapters() {
+            let patterns = adapter_gitignore_patterns(adapter.id());
+            assert!(!patterns.is_empty(), "{} has no patterns", adapter.id());
+            let mut all_rels = Vec::new();
+            // The default layout, and one where Claude Code's instructions
+            // live in `.claude/CLAUDE.md`.
+            for nested_claude_md in [false, true] {
+                let dir = tempfile::TempDir::new().unwrap();
+                if nested_claude_md {
+                    std::fs::create_dir_all(dir.path().join(".claude")).unwrap();
+                    std::fs::write(dir.path().join(".claude/CLAUDE.md"), "x").unwrap();
+                }
+                let files = adapter.generate(dir.path(), &full_config()).unwrap();
+                for (path, _) in &files {
+                    let rel = path
+                        .strip_prefix(dir.path())
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string();
+                    let ignored = patterns.iter().any(|p| pattern_matches(p, &rel));
+                    if adapter.is_shared_file(path) {
+                        assert!(!ignored, "{}: shared {rel} is ignored", adapter.id());
+                    } else {
+                        assert!(ignored, "{}: {rel} is not ignored", adapter.id());
+                    }
+                    all_rels.push(rel);
+                }
+            }
+            for pattern in &patterns {
+                assert!(
+                    all_rels.iter().any(|rel| pattern_matches(pattern, rel)),
+                    "{}: pattern {pattern} matches nothing conforme writes",
+                    adapter.id()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_block_keeps_the_source_locations_tracked() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join(".conformerc.toml"), "source = \"codex\"\n").unwrap();
+        let block = build_gitignore_block(dir.path());
+        // Zed and Amp also write `.agents/skills/`, which is Codex's source.
+        assert!(!block.contains(".agents/skills/"), "{block}");
+        // Codex reads AGENTS.md itself: it is the source, not an output.
+        assert!(!block.contains("AGENTS.md\n"), "{block}");
+        assert!(!block.contains(".github/prompts"), "{block}");
+        assert!(!block.contains("settings.json"), "{block}");
+
+        std::fs::write(dir.path().join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+        let block = build_gitignore_block(dir.path());
+        assert_eq!(block.matches(".agents/skills/").count(), 1, "{block}");
+        assert!(!block.contains("CLAUDE.md"), "{block}");
+        assert!(block.contains("\n/AGENTS.md\n"), "{block}");
     }
 }

@@ -4,13 +4,27 @@ use std::path::{Path, PathBuf};
 use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::NormalizedConfig;
 
-/// Amp (Sourcegraph) adapter.
+/// Amp adapter.
 /// Reads AGENTS.md natively as primary, falls back to AGENT.md or CLAUDE.md.
 /// Global config at ~/.config/amp/AGENTS.md.
-/// Settings at .amp/settings.json.
+/// Settings at .amp/settings.json (or .amp/settings.jsonc).
 /// Skills in .agents/skills/ (shared format with Codex).
-/// MCP in .amp/settings.json.
+/// MCP in the workspace settings file, under `amp.mcpServers`.
 pub struct AmpAdapter;
+
+/// Amp's workspace settings file: `.amp/settings.json`, or the JSONC spelling
+/// `.amp/settings.jsonc` when only that one exists, so conforme merges into
+/// the file Amp actually reads instead of creating a second one beside it.
+fn settings_path(project_root: &Path) -> PathBuf {
+    let dir = project_root.join(".amp");
+    let json = dir.join("settings.json");
+    let jsonc = dir.join("settings.jsonc");
+    if !json.exists() && jsonc.exists() {
+        jsonc
+    } else {
+        json
+    }
+}
 
 impl AiToolAdapter for AmpAdapter {
     fn name(&self) -> &str {
@@ -37,8 +51,13 @@ impl AiToolAdapter for AmpAdapter {
     /// `.amp/settings.json` is Amp's whole workspace settings blob; conforme
     /// only merges `amp.mcpServers` into it, so `remove`/`migrate` must
     /// never delete the file wholesale.
+    fn reads_agents_md(&self) -> bool {
+        true
+    }
+
     fn is_shared_file(&self, path: &Path) -> bool {
         path.ends_with(Path::new(".amp/settings.json"))
+            || path.ends_with(Path::new(".amp/settings.jsonc"))
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
@@ -48,35 +67,29 @@ impl AiToolAdapter for AmpAdapter {
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
-        // Amp reads AGENTS.md natively, falling back to AGENT.md (singular) then
-        // CLAUDE.md when AGENTS.md is absent — matching Amp's documented lookup order.
-        let instructions = ["AGENTS.md", "AGENT.md", "CLAUDE.md"]
-            .iter()
-            .map(|name| project_root.join(name))
-            .find(|path| path.exists())
-            .map(std::fs::read_to_string)
-            .transpose()?
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-
         // Read skills (.agents/skills/) and MCP (.amp/settings.json, keyed under
         // `amp.mcpServers`) back so an Amp project round-trips as a source.
+        // Amp searches each skills root up to five directories deep.
         let skills =
-            crate::skills::read_skills_from_dir(&project_root.join(".agents").join("skills"))?;
+            crate::skills::read_skills_recursive(&project_root.join(".agents").join("skills"), 5)?;
         let mut mcp_servers = Vec::new();
-        let settings_path = project_root.join(".amp").join("settings.json");
+        let settings_path = settings_path(project_root);
         if settings_path.exists() {
             let settings = std::fs::read_to_string(&settings_path)?;
             mcp_servers = crate::mcp::parse_mcp_json(&settings)?;
         }
 
-        Ok(NormalizedConfig {
-            instructions,
-            rules: Vec::new(),
-            skills,
-            mcp_servers,
-            ..Default::default()
-        })
+        crate::markdown::read_native_agents_md(
+            project_root,
+            &["AGENTS.md", "AGENT.md", "CLAUDE.md"],
+            NormalizedConfig {
+                instructions: String::new(),
+                rules: Vec::new(),
+                skills,
+                mcp_servers,
+                ..Default::default()
+            },
+        )
     }
 
     fn generate(
@@ -100,21 +113,13 @@ impl AiToolAdapter for AmpAdapter {
         // That file is Amp's whole workspace settings blob, so we read any
         // existing file and replace only the managed key rather than clobbering
         // user-authored settings.
-        if !config.mcp_servers.is_empty() {
-            let settings_path = project_root.join(".amp").join("settings.json");
-            let existing = crate::json_settings::load(&settings_path)?;
-            let mcp_obj = crate::json_settings::merge_server_entries(
-                existing.as_ref().and_then(|f| f.get("amp.mcpServers")),
-                crate::mcp::build_amp_mcp_object(&config.mcp_servers),
-                crate::mcp::AMP_OWNED_SERVER_KEYS,
-            );
-            let json = crate::json_settings::render(
-                existing.as_ref(),
-                &[("amp.mcpServers", serde_json::Value::Object(mcp_obj))],
-                &[],
-            )?;
-            files.push((settings_path, json));
-        }
+        files.extend(crate::json_settings::server_settings_file(
+            &settings_path(project_root),
+            "amp.mcpServers",
+            crate::mcp::build_amp_mcp_object(&config.mcp_servers),
+            crate::mcp::AMP_OWNED_SERVER_KEYS,
+            &[],
+        )?);
 
         Ok(files)
     }

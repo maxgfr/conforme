@@ -59,13 +59,7 @@ pub fn run_watch(project_root: &Path, only: Option<&[String]>, verbose: bool) ->
     loop {
         match rx.recv() {
             Ok(Ok(events)) => {
-                let relevant = events.iter().any(|e| {
-                    let path = &e.path;
-                    // Skip hidden files like .DS_Store
-                    !path
-                        .file_name()
-                        .is_some_and(|n| n.to_string_lossy().starts_with('.'))
-                });
+                let relevant = events.iter().any(|e| !is_noise(&e.path));
 
                 if relevant {
                     println!("\n{} Change detected, syncing...", ">".cyan());
@@ -94,6 +88,21 @@ pub fn run_watch(project_root: &Path, only: Option<&[String]>, verbose: bool) ->
     Ok(())
 }
 
+/// Files that change without the configuration changing: Finder metadata and
+/// editor swap or backup files. Other dot-files (`.mcp.json`, `.rules`,
+/// `.windsurfrules`) are real sources and must trigger a sync.
+fn is_noise(path: &Path) -> bool {
+    let Some(name) = path.file_name().map(|n| n.to_string_lossy()) else {
+        return false;
+    };
+    name == ".DS_Store"
+        || name.starts_with(".#")
+        || name.ends_with('~')
+        || name.ends_with(".swp")
+        || name.ends_with(".swx")
+        || name.ends_with(".tmp")
+}
+
 /// Get the paths to watch based on the configured source.
 fn get_watch_paths(
     project_root: &Path,
@@ -107,6 +116,29 @@ fn get_watch_paths(
             // Watch the managed directories of the source adapter
             let managed = adapter.managed_directories(project_root);
             paths.extend(managed.into_iter().map(|dir| dir.path));
+
+            // ...and every file it reads back: what it would generate from its
+            // own config (CLAUDE.md, GEMINI.md, settings files, …). A skills
+            // root is watched as a whole so a new skill is seen too.
+            if let Ok(files) = adapter
+                .read(project_root)
+                .and_then(|config| adapter.generate(project_root, &config))
+            {
+                for (path, _) in files {
+                    let skills_root = path
+                        .strip_prefix(project_root)
+                        .ok()
+                        .and_then(|rel| {
+                            rel.ancestors()
+                                .find(|a| a.file_name().is_some_and(|n| n == "skills"))
+                        })
+                        .map(|rel| project_root.join(rel));
+                    let watched = skills_root.unwrap_or(path);
+                    if watched.exists() && !paths.contains(&watched) {
+                        paths.push(watched);
+                    }
+                }
+            }
 
             // Also watch tool-specific main files
             match source_id.as_str() {
@@ -132,6 +164,7 @@ fn get_watch_paths(
                     // also be created after watch starts.
                     let codex_dir = project_root.join(".codex");
                     if codex_dir.is_dir() {
+                        paths.retain(|p| !p.starts_with(&codex_dir));
                         paths.push(codex_dir);
                     }
                 }
@@ -142,7 +175,7 @@ fn get_watch_paths(
 
     // Always watch AGENTS.md if it exists
     let agents_md = project_root.join("AGENTS.md");
-    if agents_md.exists() {
+    if agents_md.exists() && !paths.contains(&agents_md) {
         paths.push(agents_md);
     }
 
@@ -166,6 +199,45 @@ mod tests {
 
         let paths = get_watch_paths(dir.path(), &project_config).unwrap();
 
-        assert_eq!(paths, vec![codex_dir]);
+        // The config directory, and the shared skills root Codex reads.
+        assert_eq!(
+            paths,
+            vec![dir.path().join(".agents").join("skills"), codex_dir]
+        );
+    }
+
+    #[test]
+    fn test_source_files_and_skill_roots_are_watched() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("opencode.json"),
+            r#"{"mcp": {"fs": {"type": "local", "command": ["npx"]}}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join(".opencode/skills/deploy")).unwrap();
+        std::fs::write(
+            root.join(".opencode/skills/deploy/SKILL.md"),
+            "---\nname: deploy\ndescription: Deploy\n---\nRun.\n",
+        )
+        .unwrap();
+        let project_config = ProjectConfig {
+            source: Some("opencode".to_string()),
+            ..Default::default()
+        };
+
+        let paths = get_watch_paths(root, &project_config).unwrap();
+
+        assert!(paths.contains(&root.join("opencode.json")), "{paths:?}");
+        assert!(paths.contains(&root.join(".opencode/skills")), "{paths:?}");
+    }
+
+    #[test]
+    fn test_dot_files_are_not_noise() {
+        assert!(!is_noise(Path::new("/p/.mcp.json")));
+        assert!(!is_noise(Path::new("/p/.rules")));
+        assert!(is_noise(Path::new("/p/.DS_Store")));
+        assert!(is_noise(Path::new("/p/.CLAUDE.md.swp")));
+        assert!(is_noise(Path::new("/p/CLAUDE.md~")));
     }
 }

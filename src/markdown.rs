@@ -50,6 +50,53 @@ pub fn parse_agents_md(content: &str) -> Result<NormalizedConfig> {
     Ok(config)
 }
 
+/// The source config of a tool that reads `AGENTS.md` (or a fallback)
+/// natively: Codex, OpenCode, Amp, DeepSeek Harness.
+///
+/// The first existing file among `candidates` is parsed with the AGENTS.md
+/// convention, so its `## Rule:` sections become rules and do not land in the
+/// instructions. Its `## Skill:`, `## Agent:` and `## MCP:` sections are added
+/// to what the tool's own files hold (`tool`), which win on a name clash.
+/// Sync never regenerates this `AGENTS.md` (see
+/// [`crate::adapters::AiToolAdapter::reads_agents_md`]): it is the source.
+pub fn read_native_agents_md(
+    project_root: &std::path::Path,
+    candidates: &[&str],
+    tool: NormalizedConfig,
+) -> Result<NormalizedConfig> {
+    let Some(path) = candidates
+        .iter()
+        .map(|name| project_root.join(name))
+        .find(|path| path.exists())
+    else {
+        return Ok(tool);
+    };
+    let md = parse_agents_md(&std::fs::read_to_string(&path)?)?;
+    let mut config = tool;
+    config.instructions = md.instructions;
+    config.rules = md.rules;
+    // Names are compared as written to disk: `## Skill: Deploy App` is the
+    // tool's `deploy-app` folder.
+    let same =
+        |a: &str, b: &str| crate::config::sanitize_name(a) == crate::config::sanitize_name(b);
+    for skill in md.skills {
+        if !config.skills.iter().any(|s| same(&s.name, &skill.name)) {
+            config.skills.push(skill);
+        }
+    }
+    for agent in md.agents {
+        if !config.agents.iter().any(|a| same(&a.name, &agent.name)) {
+            config.agents.push(agent);
+        }
+    }
+    for server in md.mcp_servers {
+        if !config.mcp_servers.iter().any(|s| s.name == server.name) {
+            config.mcp_servers.push(server);
+        }
+    }
+    Ok(config)
+}
+
 enum Section {
     Rule(String, Vec<String>),
     Skill(String, Vec<String>),
@@ -215,6 +262,7 @@ fn build_mcp(name: &str, lines: &[String]) -> Option<NormalizedMcpServer> {
     let mut args = Vec::new();
     let mut url = None;
     let mut env = std::collections::BTreeMap::new();
+    let mut headers = std::collections::BTreeMap::new();
 
     for line in lines {
         let trimmed = line.trim();
@@ -247,16 +295,23 @@ fn build_mcp(name: &str, lines: &[String]) -> Option<NormalizedMcpServer> {
                     env.insert(k.trim().to_string(), v.trim().to_string());
                 }
             }
+        } else if let Some(inner) = trimmed
+            .strip_prefix("<!-- headers:")
+            .and_then(|s| s.strip_suffix("-->"))
+        {
+            // Format: Name=Value, for remote servers
+            for pair in inner.split(',') {
+                if let Some((k, v)) = pair.trim().split_once('=') {
+                    headers.insert(k.trim().to_string(), v.trim().to_string());
+                }
+            }
         }
     }
 
     // A `## MCP:` section without either a `url:` or a `command:` comment does
     // not describe a usable server, so it is skipped rather than emitted empty.
     let transport = if let Some(u) = url {
-        McpTransport::Http {
-            url: u,
-            headers: std::collections::BTreeMap::new(),
-        }
+        McpTransport::Http { url: u, headers }
     } else {
         McpTransport::Stdio {
             command: command?,
@@ -281,7 +336,7 @@ fn parse_activation(s: &str) -> Result<ActivationMode> {
             description: String::new(),
         })
     } else if let Some(globs) = s.strip_prefix("glob ") {
-        let patterns: Vec<String> = globs.split(',').map(|g| g.trim().to_string()).collect();
+        let patterns = crate::config::split_globs(globs);
         if patterns.is_empty() {
             bail!("glob activation requires at least one pattern");
         }
@@ -311,7 +366,11 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
     let mut out = String::new();
 
     if !config.instructions.is_empty() {
-        out.push_str("# Project Instructions\n\n");
+        // Instructions read back from an exported file already start with
+        // their title; adding another on every export would stack them.
+        if !config.instructions.starts_with("# ") {
+            out.push_str("# Project Instructions\n\n");
+        }
         out.push_str(&config.instructions);
         out.push('\n');
     }
@@ -390,8 +449,13 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
                     out.push_str(&format!("<!-- args: {} -->\n", args.join(", ")));
                 }
             }
-            McpTransport::Http { url, .. } => {
+            McpTransport::Http { url, headers } => {
                 out.push_str(&format!("<!-- url: {} -->\n", url));
+                if !headers.is_empty() {
+                    let pairs: Vec<String> =
+                        headers.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                    out.push_str(&format!("<!-- headers: {} -->\n", pairs.join(", ")));
+                }
             }
         }
         if !mcp.env.is_empty() {
@@ -531,13 +595,40 @@ Review code for correctness.
 
     #[test]
     fn test_parse_mcp_http() {
-        let content = "## MCP: github\n<!-- url: https://api.github.com/mcp -->\n\n";
+        let content = "## MCP: github\n<!-- url: https://api.github.com/mcp -->\n<!-- headers: Authorization=Bearer ${GH_TOKEN}, X-Org=acme -->\n\n";
         let config = parse_agents_md(content).unwrap();
         assert_eq!(config.mcp_servers.len(), 1);
         assert!(matches!(
             &config.mcp_servers[0].transport,
-            McpTransport::Http { url, .. } if url == "https://api.github.com/mcp"
+            McpTransport::Http { url, headers }
+                if url == "https://api.github.com/mcp"
+                    && headers["Authorization"] == "Bearer ${GH_TOKEN}"
+                    && headers["X-Org"] == "acme"
         ));
+        // Headers survive the AGENTS.md export (they were dropped before).
+        let exported = export_as_agents_md(&config);
+        assert!(
+            exported.contains("<!-- headers: Authorization=Bearer ${GH_TOKEN}, X-Org=acme -->"),
+            "{exported}"
+        );
+    }
+
+    #[test]
+    fn test_export_parse_export_is_stable() {
+        // A tool that reads AGENTS.md natively re-reads the exported file on
+        // the next sync; a second export must not add a second title.
+        let config = NormalizedConfig {
+            instructions: "Be helpful.".to_string(),
+            rules: vec![crate::config::NormalizedRule {
+                name: "TS".to_string(),
+                content: "Use TS.".to_string(),
+                activation: ActivationMode::GlobMatch(vec!["src/*.{ts,tsx}".to_string()]),
+            }],
+            ..Default::default()
+        };
+        let once = export_as_agents_md(&config);
+        let twice = export_as_agents_md(&parse_agents_md(&once).unwrap());
+        assert_eq!(once, twice);
     }
 
     #[test]

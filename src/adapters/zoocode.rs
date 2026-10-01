@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{AiToolAdapter, ManagedDir};
-use crate::config::{sanitize_name, ActivationMode, NormalizedConfig, NormalizedRule};
+use crate::config::{rule_file_name, ActivationMode, NormalizedConfig, NormalizedRule};
 
 /// Zoo Code (community fork of Roo Code) adapter.
 /// Rules in .roo/rules/*.md — plain Markdown, NO YAML frontmatter.
@@ -80,7 +80,10 @@ impl AiToolAdapter for ZooCodeAdapter {
         let mcp_path = project_root.join(".roo").join("mcp.json");
         if mcp_path.exists() {
             let mcp_content = std::fs::read_to_string(&mcp_path)?;
-            mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
+            mcp_servers = crate::mcp::canonicalize_env_refs(
+                crate::mcp::parse_mcp_json(&mcp_content)?,
+                crate::mcp::EnvRefStyle::EnvColon,
+            );
         }
 
         Ok(NormalizedConfig {
@@ -113,7 +116,7 @@ impl AiToolAdapter for ZooCodeAdapter {
         }
 
         for rule in &config.rules {
-            let filename = format!("{:02}-{}.md", idx, sanitize_name(&rule.name));
+            let filename = format!("{:02}-{}.md", idx, rule_file_name(&rule.name));
             // Zoo Code doesn't support activation modes — all rules are always-on.
             // For glob/agent-decision rules, we include a comment noting the intended scope.
             let mut content = String::new();
@@ -147,21 +150,13 @@ impl AiToolAdapter for ZooCodeAdapter {
         // writes its own per-server state (`alwaysAllow`, `disabledTools`)
         // into this file, so existing entries keep the keys conforme does
         // not own.
-        if !config.mcp_servers.is_empty() {
-            let mcp_path = project_root.join(".roo").join("mcp.json");
-            let existing = crate::json_settings::load(&mcp_path)?;
-            let servers = crate::json_settings::merge_server_entries(
-                existing.as_ref().and_then(|f| f.get("mcpServers")),
-                crate::mcp::build_zoocode_servers_object(&config.mcp_servers),
-                crate::mcp::ZOOCODE_OWNED_SERVER_KEYS,
-            );
-            let json = crate::json_settings::render(
-                existing.as_ref(),
-                &[("mcpServers", serde_json::Value::Object(servers))],
-                &[],
-            )?;
-            files.push((mcp_path, json));
-        }
+        files.extend(crate::json_settings::server_settings_file(
+            &project_root.join(".roo").join("mcp.json"),
+            "mcpServers",
+            crate::mcp::build_zoocode_servers_object(&config.mcp_servers),
+            crate::mcp::ZOOCODE_OWNED_SERVER_KEYS,
+            &[],
+        )?);
 
         Ok(files)
     }

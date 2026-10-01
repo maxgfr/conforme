@@ -94,7 +94,7 @@ fn setup_tool(dir: &TempDir, tool: &str) {
     match tool {
         "cursor" => fs::create_dir_all(dir.path().join(".cursor")).unwrap(),
         "claude" => fs::create_dir_all(dir.path().join(".claude")).unwrap(),
-        "windsurf" => fs::create_dir_all(dir.path().join(".windsurf")).unwrap(),
+        "devin" => fs::create_dir_all(dir.path().join(".devin")).unwrap(),
         "copilot" => {
             fs::create_dir_all(dir.path().join(".github")).unwrap();
             fs::write(
@@ -153,10 +153,10 @@ fn test_roundtrip_claude() {
 }
 
 #[test]
-fn test_roundtrip_windsurf() {
-    let adapter = conforme::adapters::windsurf::WindsurfAdapter;
+fn test_roundtrip_devin() {
+    let adapter = conforme::adapters::devin::DevinAdapter;
     let dir = TempDir::new().unwrap();
-    setup_tool(&dir, "windsurf");
+    setup_tool(&dir, "devin");
 
     let config = roundtrip_config();
     adapter.write(dir.path(), &config).unwrap();
@@ -348,19 +348,23 @@ fn test_roundtrip_zed_skills_mcp() {
 }
 
 #[test]
-fn test_roundtrip_windsurf_skills() {
-    let adapter = conforme::adapters::windsurf::WindsurfAdapter;
+fn test_roundtrip_devin_skills() {
+    let adapter = conforme::adapters::devin::DevinAdapter;
     let dir = TempDir::new().unwrap();
-    setup_tool(&dir, "windsurf");
+    setup_tool(&dir, "devin");
 
     adapter.write(dir.path(), &rich_config()).unwrap();
     let read_config = adapter.read(dir.path()).unwrap();
 
     assert_eq!(read_config.skills.len(), 1);
     assert_eq!(read_config.skills[0].name, "deploy");
-    // Cascade has no project-level MCP file, so nothing is written or read back.
-    assert!(!dir.path().join(".windsurf/mcp.json").exists());
-    assert!(read_config.mcp_servers.is_empty());
+    // Devin Local reads project MCP servers from `.devin/mcp_config.json`.
+    assert!(dir.path().join(".devin/mcp_config.json").exists());
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+    assert_eq!(
+        find_http_url(&read_config, "api").as_deref(),
+        Some("https://example.com/mcp")
+    );
 }
 
 #[test]
@@ -776,15 +780,21 @@ fn manual_skill_invocation_survives_every_skill_adapter() {
         assert_eq!(read.skills.len(), 1, "{}", adapter.id());
         assert!(read.skills[0].manual_invocation, "{}", adapter.id());
         let files = adapter.generate(dir.path(), &config).unwrap();
+        // The Codex policy sidecar is only written where Codex reads skills.
         let policy = files
             .iter()
-            .find(|(p, _)| p.ends_with("agents/openai.yaml"))
-            .unwrap();
-        let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(&policy.1).unwrap();
-        assert_eq!(
-            value["policy"]["allow_implicit_invocation"].as_bool(),
-            Some(false)
-        );
+            .find(|(p, _)| p.ends_with("agents/openai.yaml"));
+        let in_codex_root = files
+            .iter()
+            .any(|(p, _)| p.starts_with(dir.path().join(".agents/skills")));
+        assert_eq!(policy.is_some(), in_codex_root, "{}", adapter.id());
+        if let Some(policy) = policy {
+            let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(&policy.1).unwrap();
+            assert_eq!(
+                value["policy"]["allow_implicit_invocation"].as_bool(),
+                Some(false)
+            );
+        }
         // Synchronizing twice must not re-enable the skill or change the bundle.
         assert!(
             adapter
@@ -864,5 +874,251 @@ fn test_no_adapter_writes_blank_files() {
                 path.display()
             );
         }
+    }
+}
+
+// ===== Layouts the tools read that conforme does not write =====
+
+fn write_skill(dir: &std::path::Path, name: &str) {
+    fs::create_dir_all(dir).unwrap();
+    fs::write(
+        dir.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: {name} skill\n---\nDo it.\n"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn test_nested_skills_are_read_where_the_tool_searches_recursively() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    write_skill(&root.join(".agents/skills/team/release"), "release");
+    write_skill(&root.join(".cursor/skills/group/lint"), "lint");
+    write_skill(&root.join(".opencode/skills/a/b/fmt"), "fmt");
+    write_skill(&root.join(".opencode/skill/legacy"), "legacy");
+    fs::create_dir_all(root.join(".amp")).unwrap();
+
+    let names = |config: NormalizedConfig| -> Vec<String> {
+        config.skills.into_iter().map(|s| s.name).collect()
+    };
+    assert_eq!(
+        names(conforme::adapters::codex::CodexAdapter.read(root).unwrap()),
+        ["release"]
+    );
+    assert_eq!(
+        names(conforme::adapters::amp::AmpAdapter.read(root).unwrap()),
+        ["release"]
+    );
+    assert_eq!(
+        names(
+            conforme::adapters::cursor::CursorAdapter
+                .read(root)
+                .unwrap()
+        ),
+        ["lint"]
+    );
+    assert_eq!(
+        names(
+            conforme::adapters::opencode::OpenCodeAdapter
+                .read(root)
+                .unwrap()
+        ),
+        ["fmt", "legacy"]
+    );
+}
+
+#[test]
+fn test_codex_source_is_the_shared_agents_md_not_the_personal_override() {
+    // `AGENTS.override.md` is a local override: it must not become the
+    // config of every other tool.
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("AGENTS.md"), "Shared.\n").unwrap();
+    fs::write(dir.path().join("AGENTS.override.md"), "Local override.\n").unwrap();
+    let config = conforme::adapters::codex::CodexAdapter
+        .read(dir.path())
+        .unwrap();
+    assert_eq!(config.instructions, "Shared.");
+}
+
+#[test]
+fn test_native_agents_md_source_keeps_its_sections_and_is_never_rewritten() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    let agents_md = "# Team\nShared.\n\n## Rule: TS\n<!-- activation: glob **/*.ts -->\nUse TS.\n\n## Agent: reviewer\n<!-- description: Review -->\nReview.\n\n## MCP: fs\n<!-- command: npx -->\n";
+    fs::write(root.join("AGENTS.md"), agents_md).unwrap();
+
+    let config = conforme::adapters::codex::CodexAdapter.read(root).unwrap();
+    assert_eq!(config.instructions, "# Team\nShared.");
+    assert_eq!(config.rules.len(), 1);
+    assert_eq!(config.agents[0].name, "reviewer");
+    assert_eq!(mcp_names(&config), vec!["fs"]);
+
+    assert_cmd::Command::cargo_bin("conforme")
+        .unwrap()
+        .args(["-C", root.to_str().unwrap(), "sync", "--from", "codex"])
+        .assert()
+        .success();
+    // AGENTS.md is Codex's own config: sync leaves it exactly as written.
+    assert_eq!(
+        fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+        agents_md
+    );
+    assert!(root.join(".cursor/agents/reviewer.md").exists());
+}
+
+#[test]
+fn test_amp_uses_settings_jsonc_when_only_that_exists() {
+    let adapter = conforme::adapters::amp::AmpAdapter;
+    let dir = TempDir::new().unwrap();
+    let jsonc = dir.path().join(".amp/settings.jsonc");
+    fs::create_dir_all(jsonc.parent().unwrap()).unwrap();
+    fs::write(
+        &jsonc,
+        "{\n  // workspace\n  \"amp.mcpServers\": {\"old\": {\"command\": \"x\"}},\n}\n",
+    )
+    .unwrap();
+
+    assert_eq!(mcp_names(&adapter.read(dir.path()).unwrap()), vec!["old"]);
+
+    let files = adapter.generate(dir.path(), &rich_config()).unwrap();
+    let settings: Vec<_> = files
+        .iter()
+        .filter(|(p, _)| p.starts_with(dir.path().join(".amp")))
+        .collect();
+    assert_eq!(settings.len(), 1);
+    assert_eq!(settings[0].0, jsonc);
+    assert!(settings[0].1.contains("// workspace"));
+    assert!(adapter.is_shared_file(&jsonc));
+    assert!(!dir.path().join(".amp/settings.json").exists());
+}
+
+#[test]
+fn test_gemini_skips_underscore_agent_drafts() {
+    let dir = TempDir::new().unwrap();
+    let agents = dir.path().join(".gemini/agents");
+    fs::create_dir_all(&agents).unwrap();
+    for name in ["reviewer", "_draft"] {
+        fs::write(
+            agents.join(format!("{name}.md")),
+            format!("---\nname: {name}\ndescription: d\n---\nBody.\n"),
+        )
+        .unwrap();
+    }
+    let config = conforme::adapters::gemini::GeminiAdapter
+        .read(dir.path())
+        .unwrap();
+    let names: Vec<_> = config.agents.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(names, ["reviewer"]);
+}
+
+#[test]
+fn test_copilot_instructions_without_apply_to() {
+    let dir = TempDir::new().unwrap();
+    let instructions = dir.path().join(".github/instructions");
+    fs::create_dir_all(&instructions).unwrap();
+    fs::write(
+        instructions.join("docs.instructions.md"),
+        "---\ndescription: Writing docs\n---\nDocs.\n",
+    )
+    .unwrap();
+    fs::write(instructions.join("manual.instructions.md"), "Manual.\n").unwrap();
+    fs::write(
+        instructions.join("ts.instructions.md"),
+        "---\napplyTo: \"src/*.{ts,tsx},lib/**\"\n---\nTS.\n",
+    )
+    .unwrap();
+
+    let config = conforme::adapters::copilot::CopilotAdapter
+        .read(dir.path())
+        .unwrap();
+    let activation = |name: &str| {
+        config
+            .rules
+            .iter()
+            .find(|r| r.name == name)
+            .unwrap()
+            .activation
+            .clone()
+    };
+    assert_eq!(
+        activation("docs"),
+        ActivationMode::AgentDecision {
+            description: "Writing docs".to_string()
+        }
+    );
+    assert_eq!(activation("manual"), ActivationMode::Manual);
+    assert_eq!(
+        activation("ts"),
+        ActivationMode::GlobMatch(vec!["src/*.{ts,tsx}".into(), "lib/**".into()])
+    );
+}
+
+#[test]
+fn test_comma_joined_globs_expand_brace_groups() {
+    let config = NormalizedConfig {
+        rules: vec![NormalizedRule {
+            name: "ts".to_string(),
+            content: "TS.".to_string(),
+            activation: ActivationMode::GlobMatch(vec!["src/*.{ts,tsx}".to_string()]),
+        }],
+        ..Default::default()
+    };
+    let root = std::path::Path::new("/r");
+    let copilot = conforme::adapters::copilot::CopilotAdapter
+        .generate(root, &config)
+        .unwrap();
+    assert!(
+        copilot[0].1.contains("applyTo: src/*.ts,src/*.tsx\n"),
+        "{}",
+        copilot[0].1
+    );
+    let cursor = conforme::adapters::cursor::CursorAdapter
+        .generate(root, &config)
+        .unwrap();
+    assert!(
+        cursor[0].1.contains("globs: src/*.ts, src/*.tsx\n"),
+        "{}",
+        cursor[0].1
+    );
+    // Claude Code keeps the brace form it recommends.
+    let claude = conforme::adapters::claude::ClaudeAdapter
+        .generate(root, &config)
+        .unwrap();
+    assert!(claude[0].1.contains("src/*.{ts,tsx}"), "{}", claude[0].1);
+}
+
+#[test]
+fn test_agent_decision_rules_always_carry_a_description() {
+    let config = NormalizedConfig {
+        rules: vec![NormalizedRule {
+            name: "smart".to_string(),
+            content: "Decide.".to_string(),
+            activation: ActivationMode::AgentDecision {
+                description: String::new(),
+            },
+        }],
+        ..Default::default()
+    };
+    let root = std::path::Path::new("/r");
+    // Kiro requires a description on `auto` steering; without one Cursor and
+    // Devin would treat the rule as manual.
+    for files in [
+        conforme::adapters::kiro::KiroAdapter
+            .generate(root, &config)
+            .unwrap(),
+        conforme::adapters::cursor::CursorAdapter
+            .generate(root, &config)
+            .unwrap(),
+        conforme::adapters::devin::DevinAdapter
+            .generate(root, &config)
+            .unwrap(),
+    ] {
+        assert!(
+            files[0].1.contains("description: smart\n"),
+            "{}",
+            files[0].1
+        );
     }
 }

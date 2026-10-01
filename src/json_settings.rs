@@ -1,8 +1,9 @@
 //! Merging conforme-managed keys into JSON settings files the user also owns.
 //!
-//! `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json`,
-//! `opencode.json`, `.vscode/mcp.json` and `.roo/mcp.json` all hold settings
-//! conforme does not generate. Most of those tools parse them as JSONC, so a
+//! `.mcp.json`, `.cursor/mcp.json`, `.kiro/settings/mcp.json`,
+//! `.devin/mcp_config.json`, `.zed/settings.json`, `.gemini/settings.json`,
+//! `.amp/settings.json`, `opencode.json`, `.vscode/mcp.json` and
+//! `.roo/mcp.json` all hold settings conforme does not generate. Most of those tools parse them as JSONC, so a
 //! file may carry comments and trailing commas that `serde_json` rejects.
 //!
 //! The merge therefore:
@@ -68,6 +69,34 @@ pub fn load(path: &Path) -> Result<Option<SettingsFile>> {
         );
     }
     Ok(Some(SettingsFile { text, value }))
+}
+
+/// The generated file for a server map conforme manages under `key` inside a
+/// settings file the user also owns, or `None` when there is nothing to write.
+///
+/// The servers are merged into the existing entries (see
+/// [`merge_server_entries`]) and every other top-level key is kept. When the
+/// source has no server at all, the file is not touched: conforme cannot tell
+/// a source that dropped its last server from one that does not manage MCP,
+/// and servers kept by hand in the target must survive the latter.
+pub fn server_settings_file(
+    path: &Path,
+    key: &str,
+    generated: Map<String, Value>,
+    owned_keys: &[&str],
+    defaults: &[(&str, Value)],
+) -> Result<Option<(std::path::PathBuf, String)>> {
+    if generated.is_empty() {
+        return Ok(None);
+    }
+    let existing = load(path)?;
+    let merged = merge_server_entries(
+        existing.as_ref().and_then(|f| f.get(key)),
+        generated,
+        owned_keys,
+    );
+    let json = render(existing.as_ref(), &[(key, Value::Object(merged))], defaults)?;
+    Ok(Some((path.to_path_buf(), json)))
 }
 
 /// Render the settings file with each `(key, value)` in `set` replaced or
@@ -251,6 +280,25 @@ mod tests {
         std::fs::write(&array, "[1, 2]").unwrap();
         assert!(load(&array).is_err());
         assert!(load(&dir.path().join("missing.json")).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_server_settings_file_leaves_the_file_alone_without_servers() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("settings.json");
+        assert!(
+            server_settings_file(&path, "mcpServers", Map::new(), &[], &[])
+                .unwrap()
+                .is_none()
+        );
+        // Servers kept by hand in a target that conforme does not manage MCP
+        // for (the source has none) survive.
+        std::fs::write(&path, "{\"mcpServers\": {\"mine\": {}}}").unwrap();
+        assert!(
+            server_settings_file(&path, "mcpServers", Map::new(), &[], &[])
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

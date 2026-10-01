@@ -37,6 +37,10 @@ impl AiToolAdapter for OpenCodeAdapter {
     /// `opencode.json` is the user's whole OpenCode configuration; conforme
     /// only merges the `mcp` and `agent` keys into it, so `remove`/`migrate`
     /// must never delete the file wholesale.
+    fn reads_agents_md(&self) -> bool {
+        true
+    }
+
     fn is_shared_file(&self, path: &Path) -> bool {
         path.file_name().is_some_and(|name| name == "opencode.json")
     }
@@ -52,19 +56,22 @@ impl AiToolAdapter for OpenCodeAdapter {
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
-        // OpenCode reads AGENTS.md natively, falling back to CLAUDE.md.
-        let instructions = ["AGENTS.md", "CLAUDE.md"]
-            .iter()
-            .map(|name| project_root.join(name))
-            .find(|path| path.exists())
-            .map(std::fs::read_to_string)
-            .transpose()?
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-
-        // Read skills back from `.opencode/skills/`.
-        let skills =
-            crate::skills::read_skills_from_dir(&project_root.join(".opencode").join("skills"))?;
+        // Read skills back from `.opencode/skills/**/SKILL.md`, then the
+        // singular `.opencode/skill/` OpenCode also accepts.
+        let mut skills = Vec::new();
+        for dir in ["skills", "skill"] {
+            for skill in crate::skills::read_skills_recursive(
+                &project_root.join(".opencode").join(dir),
+                crate::skills::UNBOUNDED_SKILL_DEPTH,
+            )? {
+                if !skills
+                    .iter()
+                    .any(|s: &crate::config::NormalizedSkill| s.name == skill.name)
+                {
+                    skills.push(skill);
+                }
+            }
+        }
 
         // Read agents back from `.opencode/agents/*.md`, falling back to the
         // `agent` key in `opencode.json` when no markdown agents exist.
@@ -81,7 +88,10 @@ impl AiToolAdapter for OpenCodeAdapter {
         let config_path = project_root.join("opencode.json");
         if let Some(root) = crate::json_settings::load(&config_path)? {
             if let Some(mcp) = root.get("mcp") {
-                mcp_servers = crate::mcp::parse_opencode_mcp_object(mcp);
+                mcp_servers = crate::mcp::canonicalize_env_refs(
+                    crate::mcp::parse_opencode_mcp_object(mcp),
+                    crate::mcp::EnvRefStyle::OpenCode,
+                );
             }
             if agents.is_empty() {
                 if let Some(agent) = root.get("agent") {
@@ -90,13 +100,17 @@ impl AiToolAdapter for OpenCodeAdapter {
             }
         }
 
-        Ok(NormalizedConfig {
-            instructions,
-            rules: Vec::new(),
-            skills,
-            agents,
-            mcp_servers,
-        })
+        crate::markdown::read_native_agents_md(
+            project_root,
+            &["AGENTS.md", "CLAUDE.md"],
+            NormalizedConfig {
+                instructions: String::new(),
+                rules: Vec::new(),
+                skills,
+                agents,
+                mcp_servers,
+            },
+        )
     }
 
     fn generate(
@@ -128,6 +142,8 @@ impl AiToolAdapter for OpenCodeAdapter {
         // standalone .opencode/mcp.json). We read any existing opencode.json
         // to preserve user-authored keys (and JSONC comments), then replace
         // only our managed keys.
+        // A key the source has nothing for is left alone, like every other
+        // MCP target: it may hold what the user keeps there by hand.
         if !config.mcp_servers.is_empty() || !config.agents.is_empty() {
             let config_path = project_root.join("opencode.json");
             let existing = crate::json_settings::load(&config_path)?;
@@ -142,7 +158,13 @@ impl AiToolAdapter for OpenCodeAdapter {
                 set.push(("mcp", serde_json::Value::Object(mcp_obj)));
             }
             if !config.agents.is_empty() {
-                let agent_obj = crate::mcp::build_opencode_agent_object(&config.agents);
+                // `agent` also holds the user's own entries (overrides of the
+                // built-in `build`/`plan` agents, per-agent `permission`, …),
+                // which survive.
+                let agent_obj = crate::mcp::merge_opencode_agents(
+                    existing.as_ref().and_then(|f| f.get("agent")),
+                    crate::mcp::build_opencode_agent_object(&config.agents),
+                );
                 set.push(("agent", serde_json::Value::Object(agent_obj)));
             }
 

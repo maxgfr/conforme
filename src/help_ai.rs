@@ -21,7 +21,9 @@ pub fn print_help_ai() {
             "Frontmatter: paths (glob array; a comma-separated string is also read)",
             "Always rules → embedded in CLAUDE.md",
             "Glob rules → .claude/rules/{name}.md with paths: frontmatter",
-            "Commands (.claude/commands/*.md) → synced as skills to other tools",
+            "Commands (.claude/commands/**/*.md) → synced as skills to other tools",
+            "Skills synced to .claude/skills/<name>/SKILL.md, agents to .claude/agents/<name>.md (Claude tool names and models only)",
+            "MCP merged into .mcp.json (`mcpServers`, ${VAR} references; per-server options kept)",
             "Reads AGENTS.md natively only when no CLAUDE.md exists (conforme writes CLAUDE.md)",
         ],
     );
@@ -34,19 +36,20 @@ pub fn print_help_ai() {
             "4 rule types: Always, Auto Attached (globs), Agent Requested (description), Manual",
             "Skills synced to .cursor/skills/<name>/SKILL.md",
             "Subagents synced to .cursor/agents/<name>.md (plain .md, no tools field, lowercase-hyphen name)",
+            "MCP merged into .cursor/mcp.json (no `type` on remote servers, ${env:VAR} references)",
             "Reads AGENTS.md natively",
         ],
     );
     print_tool(
-        "Windsurf (now Devin Desktop)",
-        "windsurf",
-        ".devin/rules/*.md (preferred) or .windsurf/rules/*.md (legacy)",
+        "Devin Desktop (formerly Windsurf)",
+        "devin",
+        ".devin/rules/*.md",
         &[
-            "Frontmatter: trigger (always_on|glob|model_decision|manual), description, globs",
-            "Rules written to .devin/rules/ when a .devin/ directory exists, else .windsurf/rules/",
-            "Skills synced to .devin/skills/<name>/SKILL.md when .devin/ exists, else .windsurf/skills/",
+            "Frontmatter: trigger (always_on|glob|model_decision|manual; `agent` is read as model_decision), description, globs",
+            "Legacy .windsurf/rules/ and .windsurf/skills/ are read too, and conforme's old copies there are cleaned",
+            "Skills synced to .devin/skills/<name>/SKILL.md (`triggers: [user]` for manual skills)",
+            "MCP merged into .devin/mcp_config.json (no `type`, ${env:VAR} references)",
             "Reads AGENTS.md natively",
-            "No project-level MCP: Cascade only reads ~/.config/devin/mcp_config.json",
         ],
     );
     print_tool(
@@ -58,7 +61,7 @@ pub fn print_help_ai() {
             "Glob rules → .github/instructions/{name}.instructions.md",
             "Skills synced to .github/skills/<name>/SKILL.md",
             "Agents synced to .github/agents/<name>.agent.md",
-            "MCP merged into .vscode/mcp.json (`servers` key; VS Code `inputs`/`sandbox` kept)",
+            "MCP merged into .vscode/mcp.json (`servers` key, ${env:VAR} references; VS Code `inputs`/`sandbox` kept)",
             "Reads AGENTS.md, CLAUDE.md, and GEMINI.md natively",
         ],
     );
@@ -69,7 +72,9 @@ pub fn print_help_ai() {
         &[
             "Frontmatter: inclusion (always|fileMatch|auto|manual), fileMatchPattern, name, description",
             "Successor to Amazon Q CLI",
-            "Agents synced to .kiro/agents/<name>.md with tools translated to Kiro tags (read, write, shell, web, …)",
+            "Skills synced to .kiro/skills/<name>/SKILL.md",
+            "Agents synced to .kiro/agents/<name>.md with tools translated to Kiro tools and tags (read, grep, shell, @server/tool, …)",
+            "MCP merged into .kiro/settings/mcp.json (autoApprove/disabledTools kept)",
             "Reads AGENTS.md natively",
         ],
     );
@@ -122,7 +127,7 @@ pub fn print_help_ai() {
             "Hierarchical: ~/.gemini/GEMINI.md → project → subdirs",
             "Skills synced to .gemini/skills/<name>/SKILL.md (name, description, and manual invocation metadata)",
             "Agents synced to .gemini/agents/<name>.md (kind:local frontmatter, tools translated to Gemini names)",
-            "MCP synced to .gemini/settings.json (Gemini format: no type field, httpUrl for HTTP)",
+            "MCP merged into .gemini/settings.json (Gemini format: no type field, httpUrl for HTTP)",
             "Supports @file.md imports",
         ],
     );
@@ -150,12 +155,12 @@ pub fn print_help_ai() {
         ],
     );
     print_tool(
-        "Amp (Sourcegraph)",
+        "Amp",
         "amp",
         "AGENTS.md (native), falls back to AGENT.md or CLAUDE.md",
         &[
             "Skills synced to .agents/skills/<name>/SKILL.md (shared format)",
-            "MCP merged into .amp/settings.json under `amp.mcpServers` (preserves existing settings)",
+            "MCP merged into .amp/settings.json (or .amp/settings.jsonc) under `amp.mcpServers` (preserves existing settings)",
             "Supports @doc/file.md references in AGENTS.md",
         ],
     );
@@ -166,7 +171,7 @@ pub fn print_help_ai() {
         "  {:<16} {:<20} {:<22} {:<20} {:<18}",
         "Mode".underline(),
         "Cursor".underline(),
-        "Windsurf".underline(),
+        "Devin".underline(),
         "Copilot".underline(),
         "Kiro".underline()
     );

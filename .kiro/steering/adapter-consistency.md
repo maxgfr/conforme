@@ -12,18 +12,21 @@ inclusion: fileMatch
 - When adding a new adapter, update ALL of: README.md tables, src/help_ai.rs, src/cli.rs tool count, CLAUDE.md architecture section
 - Provider docs must list all official documentation URLs for the tool
 - Test round-trips: `read()` output fed into `generate()` should produce identical files
-- MCP JSON keys per tool: Claude/Kiro/Zoo Code/Gemini/Cursor = `mcpServers`, Copilot = `servers`, OpenCode = `mcp` (inside `opencode.json`), Zed = `context_servers`, Amp = `amp.mcpServers`
+- MCP JSON keys per tool: Claude/Kiro/Zoo Code/Gemini/Cursor/Devin = `mcpServers`, Copilot = `servers`, OpenCode = `mcp` (inside `opencode.json`), Zed = `context_servers`, Amp = `amp.mcpServers`
+- A JSON MCP entry shape is a `ServerShape` in `src/mcp.rs` (type values, URL key, `env` on remote, env-var syntax); add or change a tool there rather than writing another builder
 - OpenCode MCP specifics: `command` is a single array `[cmd, ...args]`, env key is `environment` (not `env`), servers live inside `opencode.json` at project root (conforme merges — never clobber user-authored keys)
-- Windsurf has NO project-level MCP file (Cascade only reads `~/.config/devin/mcp_config.json`); never generate `.windsurf/mcp.json`
+- Devin (formerly Windsurf): write `.devin/` only; `.windsurf/` is read as a legacy location (Devin loads both) and conforme's old copies there are cleaned. Project MCP is `.devin/mcp_config.json`; never generate `.windsurf/mcp.json`
 - Never add a user-authored directory (e.g. `.github/prompts/`) to `managed_directories()`: orphan cleanup deletes every file there that carries the directory's suffix and that conforme did not generate
 - Give each `ManagedDir` the exact suffix conforme writes there (`ManagedDir::files(dir, ".agent.md")`), and use `ManagedDir::subdirs` for skills directories, so files the tool accepts but conforme never writes (Kiro `.json` agents, dsh flat skills) survive a sync
 - An adapter must generate no files for an empty config and never a blank file (guarded by `test_no_adapter_writes_blank_files`)
 - When an upstream tool is retired (as Amazon Q was), delete its adapter outright rather than keeping it behind a deprecation flag; the removal checklist is the mirror of the "adding a new adapter" one above
-- Any adapter that merges into a user-owned settings file (`opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`, `.codex/config.toml`) MUST implement `is_shared_file()` so `remove` and `migrate` never delete it wholesale
-- Merge JSON settings through `json_settings::{load, merge_server_entries, render}`, never `serde_json::from_str(..).unwrap_or_default()`: those files are JSONC, and a parse failure must refuse the write instead of replacing the user's file
+- Every MCP file is merged, never owned: any adapter that merges into a user-owned settings file (`.mcp.json`, `.cursor/mcp.json`, `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`, `.codex/config.toml`) MUST implement `is_shared_file()` so `remove` and `migrate` never delete it wholesale, and its gitignore patterns must not match it
+- Merge JSON settings through `json_settings::server_settings_file` (or `load`/`merge_server_entries`/`render_with_removals`), never `serde_json::from_str(..).unwrap_or_default()`: those files are JSONC, a parse failure must refuse the write instead of replacing the user's file, and a source with no server leaves the file untouched
 - Amp MCP specifics: dotted `amp.mcpServers` key, no `type` field, merged into `.amp/settings.json` (never clobber user settings)
 - Cursor subagents: `.md` extension (not `.mdc`); no `tools` frontmatter field — tool access is inherited from the parent agent
 - Copilot skills: `.github/skills/<name>/SKILL.md` (NOT `.github/prompts/*.prompt.md` — prompt files are a separate VS Code feature)
 - Any adapter whose `generate()` writes skills, agents, or MCP MUST read them back in `read()`, or `--from <tool>` silently drops them
 - Skills and agents always carry a `description` (`description_or_name`): Codex, Copilot, Gemini, OpenCode and Zoo Code skip one without it
-- Tools with their own tool vocabulary (Gemini CLI, Kiro) get translated `tools` lists, never names copied verbatim from another host
+- Tools with their own tool vocabulary (Claude Code, Gemini CLI, Kiro) get translated `tools` lists (`TOOL_EQUIVALENTS`, MCP names respelled), never names copied verbatim from another host; a `model` another tool cannot use is left out (`claude_model`, `gemini_model`, `opencode_model`)
+- Skill and agent names go through `sanitize_name` (kebab-case ASCII, at most 64 characters), rule file names through `rule_file_name`, and MCP strings through `EnvRefStyle` so `${VAR}` becomes each tool's own reference syntax
+- A tool that reads `AGENTS.md` itself returns `true` from `reads_agents_md()` and reads it with `markdown::read_native_agents_md`; renaming a tool id adds it to `sync::RENAMED_IDS`

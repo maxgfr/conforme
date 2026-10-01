@@ -1,10 +1,10 @@
 # DeepSeek Harness (dsh)
 
-> DeepSeek's open-source agent harness (`dsh`), in developer preview. Source: `--from deepseek`
+> DeepSeek's open-source agent harness (`dsh`), in preview. Source: `--from deepseek`
 
 ## Official docs
 
-- Product page: https://deepseek.com/harness/en/
+- Product page: https://www.deepseek.com/en/harness/
 - Repository: https://github.com/deepseek-ai/deepseek-harness
 - Developer docs: https://deepseek-harness.github.io/deepseek-harness/en/guide/quickstart
 - Config catalog: https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/config-catalog.md
@@ -59,8 +59,10 @@ Both `<name>/SKILL.md` bundles and flat `<name>.md` files are accepted;
 nested discovery is deliberately excluded. Frontmatter is an open YAML object;
 the provider interprets required `name` and `description`, plus optional
 `whenToUse`, `metadata`, `disable-model-invocation`, and `user-invocable`.
-Names must be kebab-case. A camel-case spelling of the two invocation keys or a
-non-boolean invocation value drops the whole skill with a warning.
+Names must be kebab-case ASCII (`^[a-z0-9]+(?:-[a-z0-9]+)*$`). The invocation
+flags accept booleans and `yes`/`no`, `on`/`off`, `1`/`0`; a camel-case key
+(`disableModelInvocation`, `modelInvocable`, `userInvocable`) or any other
+value drops the whole skill with a warning.
 
 ## MCP
 
@@ -91,19 +93,29 @@ Because this configuration is user-level and not project-scoped, conforme does
 - Capabilities: skills only
 - No activation modes, no agents, no project-scoped MCP
 - `generate()` writes `.dsh/skills/<name>/SKILL.md` (AGENTS.md is read natively)
-- `read()` round-trips AGENTS.md (falling back to CLAUDE.md) plus skills from
+- `read()` round-trips AGENTS.md (falling back to CLAUDE.md), parsed with
+  conforme's AGENTS.md convention (instructions plus `## Rule:` sections;
+  its skill, agent and MCP sections are added to the harness's own), plus
+  skills from
   `.dsh/skills/` — both `<name>/SKILL.md` bundles and flat `<name>.md` files,
   a bundle winning over a flat file of the same name — falling back to the
   shared `.agents/skills/` root
 - Managed directory: `.dsh/skills`. conforme only writes bundles there, so
   orphan cleanup never deletes a top-level file (flat skills are safe)
+- Names are sanitized to kebab-case ASCII (accents folded); a name with no
+  ASCII letter or digit fails validation instead of producing a skill dsh
+  would drop. Only the hyphenated `disable-model-invocation` is written
+- No Codex `agents/openai.yaml` policy sidecar is created here (dsh does not
+  read it); one that already exists is kept in step
+- With dsh as the source, `AGENTS.md` is its config: sync never regenerates
+  it, and `gitignore install` keeps it tracked
 - The harness loads *every* existing file among `AGENTS.md` and `CLAUDE.md`;
   `read()` takes only the first one found. This is a deliberate
   simplification: conforme writes neither file for this target
 
 ## Notes
 
-- Developer preview — the harness README warns that APIs will change
+- Preview — the harness README ("developer preview") warns that APIs will change; the product page now says "public preview"
 - Everything is a Cordis plugin: models, tools, skills, sessions, sandboxes,
   storage, loops, scheduling, and the UI
 - Run locally with `npx @deepseek-ai/dsh web` (Node.js `^22.19` or `>=24`),

@@ -11,6 +11,60 @@ use crate::markdown;
 use crate::project_config::ProjectConfig;
 use crate::validate;
 
+/// Tool ids conforme renamed, as `(old, new, version)`. An old id in
+/// `.conformerc.toml` or on the command line is an error rather than an
+/// unknown name to skip: an ignored `exclude = ["windsurf"]` would sync, and
+/// clean, the very tool the user meant to leave alone.
+const RENAMED_IDS: &[(&str, &str, &str)] = &[("windsurf", "devin", "4.0.0")];
+
+fn check_renamed_ids<'a>(ids: impl IntoIterator<Item = &'a str>) -> Result<()> {
+    for id in ids {
+        if let Some((old, new, version)) = RENAMED_IDS.iter().find(|(old, ..)| *old == id) {
+            bail!(
+                "the `{old}` tool id was renamed `{new}` in conforme {version}; \
+                 replace it in .conformerc.toml (source, only, exclude) and on the command line"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn find_adapter(id: &str) -> Option<Box<dyn AiToolAdapter>> {
+    adapters::all_adapters().into_iter().find(|a| a.id() == id)
+}
+
+/// The config a target tool is generated from. When the target writes skills
+/// into a directory the source tool reads its own skills from
+/// (`.agents/skills/` is shared by Codex, Zed and Amp), that directory is
+/// left to the source: the target would add flat copies of the source's
+/// nested skills there, which the source would then load twice.
+fn target_config<'a>(
+    project_root: &Path,
+    source_id: &str,
+    target: &dyn AiToolAdapter,
+    config: &'a NormalizedConfig,
+) -> std::borrow::Cow<'a, NormalizedConfig> {
+    let skills_dirs = |adapter: &dyn AiToolAdapter| -> Vec<std::path::PathBuf> {
+        adapter
+            .managed_directories(project_root)
+            .into_iter()
+            .filter(|d| d.orphan_suffix.is_none() && d.superseded_by.is_none())
+            .map(|d| d.path)
+            .collect()
+    };
+    let Some(source) = find_adapter(source_id) else {
+        return std::borrow::Cow::Borrowed(config);
+    };
+    let source_dirs = skills_dirs(source.as_ref());
+    if skills_dirs(target).iter().any(|d| source_dirs.contains(d)) {
+        let mut stripped = config.clone();
+        stripped.skills.clear();
+        std::borrow::Cow::Owned(stripped)
+    } else {
+        std::borrow::Cow::Borrowed(config)
+    }
+}
+
 /// Resolve the source config: reads from the configured source tool or AGENTS.md.
 fn resolve_config(
     project_root: &Path,
@@ -26,6 +80,7 @@ fn resolve_config(
         .or_else(|| project_cfg.source.clone());
 
     if let Some(ref id) = source_id {
+        check_renamed_ids([id.as_str()])?;
         // Read from a specific tool adapter
         let adapter = adapters
             .iter()
@@ -77,7 +132,7 @@ pub fn run_init(project_root: &Path, force: bool, verbose: bool) -> Result<()> {
 # source = "claude"
 
 # Only sync to these tools (default: all detected)
-# only = ["cursor", "copilot", "windsurf"]
+# only = ["cursor", "copilot", "devin"]
 
 # Exclude these tools from sync
 # exclude = ["zed", "amp"]
@@ -177,6 +232,13 @@ pub fn run_sync(
     let effective_only: Option<Vec<String>> = only
         .map(|o| o.to_vec())
         .or_else(|| project_cfg.only.clone());
+    check_renamed_ids(
+        effective_only
+            .iter()
+            .chain(project_cfg.exclude.iter())
+            .flatten()
+            .map(String::as_str),
+    )?;
 
     // Warn about unknown tool names
     if let Some(ref only_list) = effective_only {
@@ -229,6 +291,7 @@ pub fn run_sync(
 
         // Warn about capability loss
         warn_capability_loss(adapter.as_ref(), &config);
+        let config = target_config(project_root, &source_id, adapter.as_ref(), &config);
 
         if dry_run {
             let generated = adapter.generate(project_root, &config)?;
@@ -308,8 +371,14 @@ pub fn run_sync(
         }
     }
 
-    // Optionally generate AGENTS.md as output
-    if !dry_run && source_id != "agents.md" && project_cfg.generate_agents_md {
+    // Optionally generate AGENTS.md as output — unless the source tool reads
+    // AGENTS.md itself, in which case that file is the source.
+    let source_reads_agents_md = find_adapter(&source_id).is_some_and(|a| a.reads_agents_md());
+    if !dry_run
+        && source_id != "agents.md"
+        && !source_reads_agents_md
+        && project_cfg.generate_agents_md
+    {
         let agents_content = markdown::export_as_agents_md(&config);
         let agents_path = project_root.join("AGENTS.md");
         let should_write = if agents_path.exists() {
@@ -386,10 +455,28 @@ fn warn_capability_loss(adapter: &dyn AiToolAdapter, config: &NormalizedConfig) 
 /// Run the `remove` command.
 pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Result<()> {
     let project_cfg = ProjectConfig::load(project_root);
-    let (config, _) = resolve_config(project_root, None, &project_cfg, verbose)?;
+    check_renamed_ids(tools.iter().map(String::as_str))?;
+    let (config, source_id) = resolve_config(project_root, None, &project_cfg, verbose)?;
 
     let adapters = adapters::all_adapters();
     let known_ids: Vec<&str> = adapters.iter().map(|a| a.id()).collect();
+
+    // A file the source or another tool that stays also generates is never
+    // removed: `.agents/skills/` belongs to Codex, Zed and Amp at once.
+    let mut kept = std::collections::HashSet::new();
+    for adapter in &adapters {
+        let is_source = adapter.id() == source_id;
+        if !is_source && (tools.iter().any(|t| t == adapter.id()) || !adapter.detect(project_root))
+        {
+            continue;
+        }
+        kept.extend(
+            adapter
+                .generate(project_root, &config)?
+                .into_iter()
+                .map(|(path, _)| path),
+        );
+    }
 
     for tool in tools {
         if !known_ids.contains(&tool.as_str()) {
@@ -413,7 +500,7 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
         let mut removed_files = Vec::new();
 
         for (path, _) in &generated {
-            if adapter.is_shared_file(path) {
+            if adapter.is_shared_file(path) || kept.contains(path) {
                 if verbose && path.exists() {
                     println!(
                         "  {} preserved shared config {}",
@@ -472,6 +559,7 @@ pub fn run_check(project_root: &Path, from: Option<&str>, verbose: bool) -> Resu
             continue;
         }
 
+        let config = target_config(project_root, &source_id, adapter.as_ref(), &config);
         let generated = adapter.generate(project_root, &config)?;
         let mut tool_diffs = Vec::new();
 
@@ -573,7 +661,8 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
             if adapter.id() == source_id.as_str() {
                 "Source".cyan().to_string()
             } else {
-                match check_sync_status(project_root, adapter.as_ref(), cfg) {
+                let cfg = target_config(project_root, source_id, adapter.as_ref(), cfg);
+                match check_sync_status(project_root, adapter.as_ref(), &cfg) {
                     Ok(true) => "In sync".green().to_string(),
                     Ok(false) => "Out of sync".yellow().to_string(),
                     Err(_) => "Error".red().to_string(),
@@ -618,6 +707,7 @@ pub fn run_diff(
 ) -> Result<()> {
     let project_cfg = ProjectConfig::load(project_root);
     let (config, source_id) = resolve_config(project_root, from, &project_cfg, verbose)?;
+    check_renamed_ids(only.into_iter().flatten().map(String::as_str))?;
 
     let adapters = adapters::all_adapters();
     let mut any_diff = false;
@@ -637,6 +727,7 @@ pub fn run_diff(
             continue;
         }
 
+        let config = target_config(project_root, &source_id, adapter.as_ref(), &config);
         let generated = adapter.generate(project_root, &config)?;
         let mut tool_has_diff = false;
 
@@ -687,6 +778,7 @@ pub fn run_migrate(
     dry_run: bool,
     verbose: bool,
 ) -> Result<()> {
+    check_renamed_ids([source, output])?;
     if source == output {
         bail!("Source and output tools cannot be the same.");
     }
@@ -738,11 +830,28 @@ pub fn run_migrate(
 
     // Collect source files to delete (generated files for the source adapter)
     let source_files = source_adapter.generate(project_root, &config)?;
-    // Migrating away from a tool clears its managed directories wholesale.
+    // Files the output tool owns are never deleted, even when they sit in a
+    // directory both tools use (`.agents/skills/` is shared by Codex, Amp and
+    // Zed): migrating from Amp to Codex would otherwise remove the skills it
+    // has just written.
+    let output_paths: std::collections::HashSet<std::path::PathBuf> = output_adapter
+        .generate(project_root, &config)?
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    // Migrating away from a tool clears its managed directories wholesale,
+    // except a directory the output tool manages too: everything in it
+    // (bundled skill scripts included) now belongs to the output.
+    let output_managed_dirs: Vec<std::path::PathBuf> = output_adapter
+        .managed_directories(project_root)
+        .into_iter()
+        .map(|dir| dir.path)
+        .collect();
     let source_managed_dirs: Vec<std::path::PathBuf> = source_adapter
         .managed_directories(project_root)
         .into_iter()
         .map(|dir| dir.path)
+        .filter(|dir| !output_managed_dirs.contains(dir))
         .collect();
 
     if dry_run {
@@ -769,7 +878,7 @@ pub fn run_migrate(
             source_adapter.name().bold()
         );
         for (path, _) in &source_files {
-            if path.exists() {
+            if path.exists() && !output_paths.contains(path) {
                 let rel = path.strip_prefix(project_root).unwrap_or(path);
                 if source_adapter.is_shared_file(path) {
                     println!(
@@ -786,6 +895,9 @@ pub fn run_migrate(
         for dir in &source_managed_dirs {
             if dir.is_dir() {
                 for path in collect_files_recursive(dir)? {
+                    if output_paths.contains(&path) {
+                        continue;
+                    }
                     let rel = path.strip_prefix(project_root).unwrap_or(&path);
                     println!("    {} {}", "would remove".red(), rel.display());
                 }
@@ -810,7 +922,7 @@ pub fn run_migrate(
         let mut removed_paths = Vec::new();
 
         for (path, _) in &source_files {
-            if source_adapter.is_shared_file(path) {
+            if source_adapter.is_shared_file(path) || output_paths.contains(path) {
                 continue;
             }
             if path.exists() {
@@ -823,6 +935,9 @@ pub fn run_migrate(
         for dir in &source_managed_dirs {
             if dir.is_dir() {
                 for path in collect_files_recursive(dir)? {
+                    if output_paths.contains(&path) {
+                        continue;
+                    }
                     std::fs::remove_file(&path)?;
                     removed_paths.push(path);
                 }
