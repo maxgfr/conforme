@@ -47,9 +47,9 @@ Verdict per adapter, with the URL that proves it:
 
 - **alive**;
 - **renamed**: the product ships under a new name and still reads the paths
-  conforme writes (Windsurf became Devin Desktop). Update the docs and any
-  paths the new name prefers; keeping or renaming the tool id is the user's
-  call in step 6;
+  conforme writes (Windsurf became Devin Desktop, and the `windsurf` id
+  became `devin`). Update the docs and any paths the new name prefers;
+  keeping or renaming the tool id is the user's call in step 6;
 - **forked**: the original is retired but a maintained fork reads the same
   files (Roo Code, continued by Zoo Code). Rename the adapter to the fork in
   step 7 rather than deleting working output;
@@ -107,20 +107,31 @@ Add these checks, which the fact sheet alone does not cover:
   same file kind (`.github/prompts/`, the top-level `.opencode/`) must not be
   listed; a shared skills root (`.agents/skills`) is only safe as
   `ManagedDir::subdirs`.
-- **Merged settings**: every file `generate()` merges into rather than owns
-  (`opencode.json`, `.zed/settings.json`, `.gemini/settings.json`,
-  `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`,
-  `.codex/config.toml`) is covered by `is_shared_file()`, so `remove` and
-  `migrate` preserve it, and JSON ones go through `json_settings` so a JSONC
-  comment or an unparsable file never wipes the user's settings.
+- **Merged settings**: every MCP or settings file `generate()` writes is
+  merged, not owned (`.mcp.json`, `.cursor/mcp.json`,
+  `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`,
+  `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json`,
+  `.vscode/mcp.json`, `.roo/mcp.json`, `.codex/config.toml`). Each is covered
+  by `is_shared_file()`, so `remove` and `migrate` preserve it, is matched by
+  no `gitignore` pattern, and, when JSON, goes through `json_settings` so a
+  JSONC comment, an unparsable file or a per-server key the tool writes
+  itself (Kiro `autoApprove`, OpenCode `agent.build`) never wipes the user's
+  settings. Check which keys the tool writes into the file on its own, and
+  that a source with no server leaves the file untouched.
+- **Shared locations**: a directory two adapters write (`.agents/skills/` for
+  Codex, Zed and Amp) must survive `migrate` between them and stay tracked by
+  `gitignore install` when one of them is the source.
 - **Orphan suffixes**: every `ManagedDir` names the suffix conforme writes
   there; list the file kinds the tool accepts in that directory and confirm
   none that conforme does not write shares it.
 - **Required fields and vocabularies**: for each skill and agent format,
   which keys the tool requires (a missing `description` makes several tools
-  skip the entry) and which values it accepts (Gemini and Kiro tool names,
-  OpenCode `provider/model`, name character sets). Anything copied verbatim
-  from another host must be valid in this one.
+  skip the entry) and which values it accepts (Claude Code, Gemini and Kiro
+  tool names and MCP tool spellings, model ids, OpenCode `provider/model`,
+  name character sets and length). In MCP configs, check the
+  environment-variable syntax (`${VAR}`, `${env:VAR}`, `{env:VAR}`) and
+  which keys remote servers accept (`env` is often stdio-only). Anything
+  copied verbatim from another host must be valid in this one.
 - **Round-trip**: every feature `generate()` writes, `read()` parses back,
   otherwise `--from <tool>` silently drops it. Also check the layouts the tool
   reads that conforme does not write (nested directories, flat files,
@@ -140,7 +151,9 @@ while read -r u; do printf '%s %s\n' "$(curl -sS -o /dev/null -w '%{http_code}' 
 
 GitHub answers `429` under a burst; retry those alone with a pause. Any other
 non-200 is a broken link: find the replacement on the vendor domain and fix it
-in step 7. Done when: the loop prints nothing.
+in step 7. A `200` can still be a stub ("Page moved" with a meta refresh, as
+`deepseek.com/harness/en/` became): the step 3 fetch catches those. Done when:
+the loop prints nothing and no fetched page is a stub.
 
 ## 6. Classify every finding
 

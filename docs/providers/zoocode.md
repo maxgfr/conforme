@@ -16,7 +16,8 @@ under the `zoocode` id. The former `roocode` id no longer exists.
 - MCP transports: https://docs.zoocode.dev/features/mcp/server-transports
 - Custom modes: https://docs.zoocode.dev/features/custom-modes
 - FAQ: https://docs.zoocode.dev/faq
-- Release notes: https://docs.zoocode.dev/update-notes
+- Release notes (Roo-era, stops at 3.50.0): https://docs.zoocode.dev/update-notes
+- Releases: https://github.com/Zoo-Code-Org/Zoo-Code/releases
 - Source: https://github.com/Zoo-Code-Org/Zoo-Code
 - Roo Code shutdown notice: https://roocodeinc.github.io/Roo-Code/
 
@@ -26,7 +27,7 @@ under the `zoocode` id. The former `roocode` id no longer exists.
 |---------|------|--------|
 | Rules | `.roo/rules/*.md` | Plain markdown (NO frontmatter) |
 | Skills | `.roo/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` (both required) |
-| MCP | `.roo/mcp.json` | JSON: `{ "mcpServers": { ... } }`; HTTP servers use `type: "streamable-http"` (a bare `"http"` is not accepted; legacy alias is `"sse"`) |
+| MCP | `.roo/mcp.json` | JSON: `{ "mcpServers": { ... } }`; HTTP servers use `type: "streamable-http"` (a bare `"http"` is not accepted; `"sse"` is the separate, older SSE transport) |
 
 ## Activation modes
 
@@ -54,7 +55,11 @@ Mode-specific rules go in `.roo/rules-{modeSlug}/` directories (e.g., `.roo/rule
 - MCP: conforme emits `type: "streamable-http"` for HTTP servers (via `build_zoocode_servers_object`); stdio servers use `command`/`args`/`env`
 - Remote (`sse`/`streamable-http`) entries carry no `env`: Zoo's schema requires it to be absent there and rejects the server otherwise
 - Zoo writes its own per-server state (`alwaysAllow`, `disabledTools`) into `.roo/mcp.json`, so conforme **merges** the `mcpServers` key: those keys (and any other key conforme does not emit, such as `timeout`, `cwd`, `watchPaths`) survive a sync, `disabled` is reset so a synced server is re-enabled, a file conforme cannot parse (JSONC is accepted) is left untouched, and `remove zoocode` / `migrate --source zoocode` keep the file
-- Skills require `name` (equal to the folder name) and `description`; conforme always writes a description, falling back to the name
+- Skills require `name` (equal to the folder name, `^[a-z0-9]+(?:-[a-z0-9]+)*$`, at most 64 characters) and `description` (1–1024 characters); conforme always writes a description, falling back to the name, sanitizes names to that form, and `validate` warns about a longer description
+- Zoo's skill loader also reads `modeSlugs` (restrict a skill to some modes); conforme does not carry it, so a Zoo skill synced back is available in every mode (known gap)
+- Zoo loads a root `AGENTS.md` next to `.roo/rules/` unless `useAgentRules` is off, so in a project that keeps an `AGENTS.md` the instructions reach the model twice
+- conforme maps every remote server to its normalized HTTP transport and writes `streamable-http`; an SSE-only server read from another tool is therefore written with the wrong transport (known gap)
+- Environment references are written `${env:VAR}` (Zoo's syntax) and read back as `${VAR}`
 - Skill manual-invocation keys conforme writes (`disable-model-invocation`, `metadata`, `agents/openai.yaml`) are ignored by Zoo, which has no manual-only mechanism
 - Reads AGENTS.md natively
 - Also detects `.roorules` and `.clinerules` files (and the legacy `.roorules-{modeSlug}` mode-specific files)
