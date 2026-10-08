@@ -965,6 +965,17 @@ pub fn run_migrate(
         );
     }
 
+    // What sync would refuse, migrate refuses too: it deletes the source.
+    if !validate::validate(&config, verbose) {
+        bail!("Validation failed. Fix the errors above before migrating.");
+    }
+    if config.is_empty() {
+        bail!(
+            "{} has no instructions, rules, skills, agents or MCP servers: nothing to migrate.",
+            source_adapter.name()
+        );
+    }
+
     // Warn about capability loss on the output adapter
     warn_capability_loss(output_adapter.as_ref(), &config);
 
@@ -973,6 +984,16 @@ pub fn run_migrate(
     // skills there are already the output's, and regenerating them would drop
     // frontmatter conforme does not model and flatten nested skills.
     let output_config = target_config(project_root, source, output_adapter.as_ref(), &config);
+
+    // Codex, OpenCode, Amp and DeepSeek (and Gemini CLI when it only loads
+    // AGENTS.md) keep their instructions in AGENTS.md: generating nothing
+    // for them would delete the source's instructions and rules into nothing.
+    let agents_md = migrated_agents_md(
+        project_root,
+        source_adapter.as_ref(),
+        output_adapter.as_ref(),
+        &config,
+    )?;
 
     // Collect source files to delete (generated files for the source adapter)
     let source_files = source_adapter.generate(project_root, &config)?;
@@ -1001,6 +1022,30 @@ pub fn run_migrate(
                 .map(|dir| dir.path),
         );
     }
+    // What the output cannot hold stays where it is: skills or agents for a
+    // tool without them (`sync` warned about it above).
+    let caps = output_adapter.capabilities();
+    let lost = NormalizedConfig {
+        skills: if caps.skills {
+            Vec::new()
+        } else {
+            config.skills.clone()
+        },
+        agents: if caps.agents {
+            Vec::new()
+        } else {
+            config.agents.clone()
+        },
+        ..Default::default()
+    };
+    if !lost.skills.is_empty() || !lost.agents.is_empty() {
+        kept_paths.extend(
+            source_adapter
+                .generate(project_root, &lost)?
+                .into_iter()
+                .map(|(path, _)| path),
+        );
+    }
     // Migrating away from a tool clears what conforme manages in its
     // directories, except a directory a staying tool manages too: everything
     // in it (bundled skill scripts included) belongs to that tool.
@@ -1009,13 +1054,23 @@ pub fn run_migrate(
         .into_iter()
         .filter(|dir| !staying_dirs.contains(&dir.path))
         .collect();
+    // A skill folder that bundles other files (scripts, references) keeps
+    // them, and its SKILL.md with them: only SKILL.md reaches the output.
+    let bundled_skill_dirs: Vec<std::path::PathBuf> = source_adapter
+        .managed_directories(project_root)
+        .iter()
+        .filter(|dir| dir.orphan_suffix.is_none())
+        .flat_map(|dir| bundled_skill_folders(&dir.path))
+        .collect();
     let is_kept = |path: &std::path::PathBuf| {
-        kept_paths.contains(path) || staying_dirs.iter().any(|dir| path.starts_with(dir))
+        kept_paths.contains(path)
+            || staying_dirs.iter().any(|dir| path.starts_with(dir))
+            || bundled_skill_dirs.iter().any(|dir| path.starts_with(dir))
     };
     let managed_files = |dir: &adapters::ManagedDir| -> Result<Vec<std::path::PathBuf>> {
         Ok(migrated_files(dir)?
             .into_iter()
-            .filter(|path| !kept_paths.contains(path))
+            .filter(|path| !is_kept(path))
             .collect())
     };
 
@@ -1027,12 +1082,14 @@ pub fn run_migrate(
             ">".cyan(),
             output_adapter.name().bold()
         );
-        for (path, _) in &generated {
+        for (path, content) in generated.iter().chain(agents_md.iter()) {
             let rel = path.strip_prefix(project_root).unwrap_or(path);
-            if path.exists() {
-                println!("    {} {}", "would update".yellow(), rel.display());
-            } else {
+            if !path.exists() {
                 println!("    {} {}", "would create".green(), rel.display());
+            } else if crate::hash::contents_match(&std::fs::read_to_string(path)?, content) {
+                println!("    {} {}", "unchanged".dimmed(), rel.display());
+            } else {
+                println!("    {} {}", "would update".yellow(), rel.display());
             }
         }
 
@@ -1068,7 +1125,10 @@ pub fn run_migrate(
         }
     } else {
         // 1. Write output files
-        let report = output_adapter.write(project_root, &output_config)?;
+        let mut report = output_adapter.write(project_root, &output_config)?;
+        if let Some((path, content)) = &agents_md {
+            adapters::write_if_changed(path, content, &mut report)?;
+        }
         if !report.files_written.is_empty() {
             println!("{} {}:", ">".green(), output_adapter.name().bold());
             for path in &report.files_written {
@@ -1236,6 +1296,67 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
 }
 
 /// Recursively collect all files under a directory.
+/// The AGENTS.md `migrate` writes when the output keeps its instructions
+/// there (it reads AGENTS.md and generates nothing for instructions or
+/// rules), or `None`. An existing AGENTS.md that differs, and that the source
+/// does not read itself, is refused rather than overwritten.
+fn migrated_agents_md(
+    project_root: &Path,
+    source: &dyn AiToolAdapter,
+    output: &dyn AiToolAdapter,
+    config: &NormalizedConfig,
+) -> Result<Option<(std::path::PathBuf, String)>> {
+    if config.instructions.trim().is_empty() && config.rules.is_empty() {
+        return Ok(None);
+    }
+    let instructions_only = NormalizedConfig {
+        instructions: config.instructions.clone(),
+        rules: config.rules.clone(),
+        ..Default::default()
+    };
+    let output_holds_instructions = !output
+        .generate(project_root, &instructions_only)?
+        .is_empty();
+    if !output.reads_agents_md(project_root) || output_holds_instructions {
+        return Ok(None);
+    }
+    let path = project_root.join("AGENTS.md");
+    if source.source_files(project_root).contains(&path) {
+        // The source already keeps its instructions there.
+        return Ok(None);
+    }
+    let content = markdown::export_as_agents_md(config);
+    if path.exists() && !crate::hash::contents_match(&std::fs::read_to_string(&path)?, &content) {
+        bail!(
+            "{} keeps its instructions in AGENTS.md, which already exists and differs from what {} holds. \
+             Merge the two by hand (or remove AGENTS.md), then migrate again; nothing was changed.",
+            output.name(),
+            source.name()
+        );
+    }
+    Ok(Some((path, content)))
+}
+
+/// Skill folders of a skills directory that hold files besides `SKILL.md`
+/// and conforme's `agents/openai.yaml`.
+fn bundled_skill_folders(skills_dir: &Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(skills_dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|folder| folder.is_dir())
+        .filter(|folder| {
+            collect_files_recursive(folder).is_ok_and(|files| {
+                files.iter().any(|file| {
+                    let rel = file.strip_prefix(folder).unwrap_or(file);
+                    rel != Path::new("SKILL.md") && rel != Path::new("agents/openai.yaml")
+                })
+            })
+        })
+        .collect()
+}
+
 /// The files `migrate` removes from a managed directory of the source tool:
 /// in a rules or agents directory, the files (nested ones included) with the
 /// suffix conforme reads there and that `keep` does not protect; in a skills

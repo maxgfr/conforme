@@ -2543,6 +2543,97 @@ fn test_migrate_is_not_blocked_by_another_tools_unreadable_settings() {
 }
 
 #[test]
+fn test_migrate_to_a_tool_reading_agents_md_writes_it() {
+    // Codex keeps its instructions in AGENTS.md: migrating there must write
+    // it, not delete CLAUDE.md and the rules into nothing.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Precious.\n").unwrap();
+    fs::write(root.join(".claude/rules/style.md"), "Tabs.\n").unwrap();
+
+    migrate(root, "claude", "codex");
+
+    let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+    assert!(agents.contains("Precious."), "{agents}");
+    assert!(agents.contains("## Rule: style"), "{agents}");
+    assert!(agents.contains("Tabs."), "{agents}");
+    assert!(!root.join("CLAUDE.md").exists());
+}
+
+#[test]
+fn test_migrate_refuses_to_overwrite_a_different_agents_md() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Precious.\n").unwrap();
+    fs::write(root.join("AGENTS.md"), "Something else.\n").unwrap();
+
+    run(
+        root,
+        &["migrate", "--source", "claude", "--output", "codex"],
+    )
+    .failure()
+    .stderr(predicate::str::contains("AGENTS.md"));
+
+    assert_eq!(
+        fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+        "Something else.\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("CLAUDE.md")).unwrap(),
+        "Precious.\n"
+    );
+}
+
+#[test]
+fn test_migrate_keeps_what_the_output_cannot_hold() {
+    // Bundled skill files are not copied (only SKILL.md is), and Zed has no
+    // agents: neither may be deleted with the source.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("GEMINI.md"), "Instr.\n").unwrap();
+    let skill = root.join(".gemini/skills/deploy");
+    fs::create_dir_all(skill.join("scripts")).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy\n---\nRun scripts/run.sh.\n",
+    )
+    .unwrap();
+    fs::write(skill.join("scripts/run.sh"), "echo deploy\n").unwrap();
+    fs::create_dir_all(root.join(".gemini/agents")).unwrap();
+    let agent = "---\nname: rev\ndescription: Review\nkind: local\n---\nReview.\n";
+    fs::write(root.join(".gemini/agents/rev.md"), agent).unwrap();
+
+    migrate(root, "gemini", "zed");
+
+    assert_eq!(
+        fs::read_to_string(skill.join("scripts/run.sh")).unwrap(),
+        "echo deploy\n"
+    );
+    assert!(skill.join("SKILL.md").exists());
+    assert_eq!(
+        fs::read_to_string(root.join(".gemini/agents/rev.md")).unwrap(),
+        agent
+    );
+    assert!(!root.join("GEMINI.md").exists());
+}
+
+#[test]
+fn test_migrate_refuses_an_empty_source() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".roo")).unwrap();
+
+    run(
+        root,
+        &["migrate", "--source", "zoocode", "--output", "claude"],
+    )
+    .failure()
+    .stderr(predicate::str::contains("nothing to migrate"));
+}
+
+#[test]
 fn test_migrate_keeps_files_conforme_never_reads() {
     // Kiro `.json` agents and Zoo Code `.txt` rules are not read by conforme:
     // migrating away must not delete them along with the generated files.
