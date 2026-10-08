@@ -6,7 +6,8 @@ use crate::config::NormalizedConfig;
 
 /// An agent file in `.gemini/agents/` that is the user's, not a local agent
 /// conforme reads and writes: a `_`-prefixed draft (Gemini skips those), a
-/// `kind: remote` (A2A) agent, or a file whose frontmatter is a YAML list of
+/// remote (A2A) agent (`kind: remote`, or an agent card without `kind`), or a
+/// file whose frontmatter is a YAML list of
 /// remote agents. Such files are neither read nor cleaned as orphans.
 fn is_gemini_user_agent(path: &Path) -> bool {
     if path
@@ -19,10 +20,14 @@ fn is_gemini_user_agent(path: &Path) -> bool {
         return false;
     };
     match crate::frontmatter::parse(&content) {
-        Ok((fields, _)) => fields
-            .get("kind")
-            .and_then(|v| v.as_str())
-            .is_some_and(|kind| kind != "local"),
+        // `kind` defaults to `remote` on a remote agent, so one that only
+        // carries an agent card is remote too.
+        Ok((fields, _)) => match fields.get("kind").and_then(|v| v.as_str()) {
+            Some(kind) => kind != "local",
+            None => ["agent_card_url", "agent_card_json"]
+                .iter()
+                .any(|key| fields.contains_key(*key)),
+        },
         // Not a map: a list of remote agents (or a file Gemini rejects).
         Err(_) => true,
     }

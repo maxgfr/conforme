@@ -2497,12 +2497,20 @@ fn test_gemini_remote_agents_survive_a_sync() {
         GEMINI_REMOTE_AGENTS_LIST,
     )
     .unwrap();
+    // `kind` defaults to `remote` on a remote agent: one carrying only an
+    // agent card is remote too.
+    let implicit = "---\nname: card-only\nagent_card_url: https://c.example.com/card.json\n---\n";
+    fs::write(root.join(".gemini/agents/card-only.md"), implicit).unwrap();
 
     conforme()
         .args(["-C", root.to_str().unwrap(), "sync"])
         .assert()
         .success();
 
+    assert_eq!(
+        fs::read_to_string(root.join(".gemini/agents/card-only.md")).unwrap(),
+        implicit
+    );
     assert_eq!(
         fs::read_to_string(root.join(".gemini/agents/remote-helper.md")).unwrap(),
         GEMINI_REMOTE_AGENT
