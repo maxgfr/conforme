@@ -72,7 +72,13 @@ impl AiToolAdapter for ZooCodeAdapter {
     }
 
     fn source_files(&self, project_root: &Path) -> Vec<PathBuf> {
-        crate::adapters::first_existing_file(project_root, &[".roorules"])
+        // `.roorules` is only read when `.roo/rules/` holds no rule.
+        let rules_dir = project_root.join(".roo").join("rules");
+        if crate::adapters::collect_rule_files(&rules_dir, "md").is_ok_and(|f| f.is_empty()) {
+            crate::adapters::first_existing_file(project_root, &[".roorules"])
+        } else {
+            Vec::new()
+        }
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
