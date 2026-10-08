@@ -862,6 +862,28 @@ fn test_deepseek_reads_flat_skills() {
     assert_eq!(config.skills[0].description, "Deploy (bundle)");
 }
 
+/// dsh ignores a flat file without both `name` and `description`, or with a
+/// name that is not kebab-case: a README there is not a skill.
+#[test]
+fn test_deepseek_ignores_flat_files_that_are_not_skills() {
+    let adapter = conforme::adapters::deepseek::DeepSeekAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".dsh/skills")).unwrap();
+    fs::write(dir.path().join(".dsh/skills/README.md"), "# Our skills\n").unwrap();
+    fs::write(
+        dir.path().join(".dsh/skills/notes.md"),
+        "---\nname: notes\n---\nNo description.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".dsh/skills/bad.md"),
+        "---\nname: Bad Name\ndescription: d\n---\nBad.\n",
+    )
+    .unwrap();
+
+    assert!(adapter.read(dir.path()).unwrap().skills.is_empty());
+}
+
 #[test]
 fn manual_skill_invocation_survives_every_skill_adapter() {
     for adapter in conforme::adapters::all_adapters() {

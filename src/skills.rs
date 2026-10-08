@@ -133,19 +133,27 @@ pub(crate) fn read_flat_skills_from_dir(skills_dir: &Path) -> Result<Vec<Normali
     paths.sort();
     for path in paths {
         let content = std::fs::read_to_string(&path)?;
-        let (fields, body) = frontmatter::parse(&content)?;
-        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+        let Ok((fields, body)) = frontmatter::parse(&content) else {
+            continue;
+        };
+        // A flat file is a skill only with a kebab-case `name` and a
+        // `description` (a README beside the skills is not one).
+        let text = |key: &str| {
+            fields
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        };
+        let (Some(name), Some(description)) = (text("name"), text("description")) else {
+            continue;
+        };
+        if sanitize_name(name) != name {
+            continue;
+        }
         skills.push(NormalizedSkill {
-            name: fields
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&stem)
-                .to_string(),
-            description: fields
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
+            name: name.to_string(),
+            description: description.to_string(),
             content: body.trim().to_string(),
             allowed_tools: parse_frontmatter_tool_list(fields.get("allowed-tools")),
             manual_invocation: fields
