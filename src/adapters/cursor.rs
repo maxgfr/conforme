@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::{
-    join_flat_globs, rule_file_name, split_globs, ActivationMode, NormalizedAgent,
-    NormalizedConfig, NormalizedRule,
+    join_flat_globs, rule_file_name, ActivationMode, NormalizedAgent, NormalizedConfig,
+    NormalizedRule,
 };
 use crate::frontmatter;
 
@@ -201,18 +201,15 @@ fn parse_cursor_activation(fields: &BTreeMap<String, serde_yaml_ng::Value>) -> A
         .get("alwaysApply")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let globs = fields.get("globs").and_then(|v| v.as_str());
+    // A string or a list; an empty `globs:` scopes nothing, so the rule falls
+    // through to its description (agent-decision) or to manual.
+    let globs = crate::config::yaml_globs(fields.get("globs"));
     let description = fields.get("description").and_then(|v| v.as_str());
 
     if always_apply {
         ActivationMode::Always
-    } else if let Some(g) = globs {
-        let patterns = split_globs(g);
-        if patterns.is_empty() {
-            ActivationMode::Always
-        } else {
-            ActivationMode::GlobMatch(patterns)
-        }
+    } else if !globs.is_empty() {
+        ActivationMode::GlobMatch(globs)
     } else if let Some(desc) = description {
         ActivationMode::AgentDecision {
             description: desc.to_string(),
@@ -502,5 +499,35 @@ mod tests {
         let files = adapter.generate(root, &config).unwrap();
 
         assert!(files.is_empty());
+    }
+
+    fn fields(yaml: &str) -> BTreeMap<String, serde_yaml_ng::Value> {
+        serde_yaml_ng::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn test_empty_globs_fall_through_to_description() {
+        let f = fields("description: API stuff\nglobs: \"\"\nalwaysApply: false\n");
+        assert_eq!(
+            parse_cursor_activation(&f),
+            ActivationMode::AgentDecision {
+                description: "API stuff".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_empty_globs_without_description_is_manual() {
+        let f = fields("globs:\nalwaysApply: false\n");
+        assert_eq!(parse_cursor_activation(&f), ActivationMode::Manual);
+    }
+
+    #[test]
+    fn test_globs_as_yaml_list() {
+        let f = fields("globs: [\"**/*.ts\", \"**/*.tsx\"]\nalwaysApply: false\n");
+        assert_eq!(
+            parse_cursor_activation(&f),
+            ActivationMode::GlobMatch(vec!["**/*.ts".to_string(), "**/*.tsx".to_string()])
+        );
     }
 }

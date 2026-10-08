@@ -216,6 +216,20 @@ pub fn split_globs(globs: &str) -> Vec<String> {
         .collect()
 }
 
+/// Read a glob frontmatter field written either as a YAML list or as a
+/// comma-separated string (`split_globs`); blank entries are dropped.
+pub fn yaml_globs(value: Option<&serde_yaml_ng::Value>) -> Vec<String> {
+    match value {
+        Some(serde_yaml_ng::Value::Sequence(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty())
+            .collect(),
+        Some(serde_yaml_ng::Value::String(s)) => split_globs(s),
+        _ => Vec::new(),
+    }
+}
+
 /// Expand `{a,b}` alternatives in a glob (`*.{ts,tsx}` → `*.ts`, `*.tsx`).
 /// Tools that store several globs in one comma-separated string (Cursor
 /// `globs`, Copilot `applyTo`, Devin `globs`) split it on every comma, so a

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::{
-    rule_file_name, split_globs, ActivationMode, NormalizedAgent, NormalizedConfig, NormalizedRule,
+    rule_file_name, ActivationMode, NormalizedAgent, NormalizedConfig, NormalizedRule,
     NormalizedSkill,
 };
 use crate::frontmatter;
@@ -136,17 +136,9 @@ impl AiToolAdapter for ClaudeAdapter {
 
             // `paths` is a YAML list or a comma-separated string; a rule
             // without it always loads.
-            let globs: Vec<String> = match fields.get("paths") {
-                Some(serde_yaml_ng::Value::Sequence(paths)) => paths
-                    .iter()
-                    .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
-                    .filter(|s| !s.is_empty())
-                    .collect(),
-                // Brace groups (`src/**/*.{ts,tsx}`, the form Claude Code
-                // recommends) keep their inner commas.
-                Some(serde_yaml_ng::Value::String(paths)) => split_globs(paths),
-                _ => Vec::new(),
-            };
+            // Brace groups (`src/**/*.{ts,tsx}`, the form Claude Code
+            // recommends) keep their inner commas.
+            let globs = crate::config::yaml_globs(fields.get("paths"));
             let activation = if globs.is_empty() {
                 ActivationMode::Always
             } else {
