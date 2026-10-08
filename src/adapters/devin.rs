@@ -118,6 +118,25 @@ impl AiToolAdapter for DevinAdapter {
             }
         }
 
+        // `global_rules.md` is a single always-on file; the `.windsurf/` copy
+        // is only loaded when `.devin/` has none.
+        let global_rules = [devin_dir(project_root), legacy_dir(project_root)]
+            .map(|dir| dir.join("global_rules.md"))
+            .into_iter()
+            .find(|path| path.is_file());
+        if let Some(path) = global_rules {
+            let global = std::fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?
+                .trim()
+                .to_string();
+            if !global.is_empty() {
+                instructions = Some(match instructions.take() {
+                    Some(general) if !general.is_empty() => format!("{general}\n\n{global}"),
+                    _ => global,
+                });
+            }
+        }
+
         // The legacy root `.windsurfrules` is still read as workspace rules.
         if instructions.is_none() {
             let windsurfrules = project_root.join(".windsurfrules");
@@ -413,6 +432,36 @@ mod tests {
         assert_eq!(
             DevinAdapter.read(tmp.path()).unwrap().instructions,
             "Old rules."
+        );
+    }
+
+    #[test]
+    fn test_read_global_rules_md_prefers_devin_over_windsurf() {
+        // "If both `.devin/global_rules.md` and `.windsurf/global_rules.md`
+        // exist, Devin CLI loads only `.devin/global_rules.md`."
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".windsurf")).unwrap();
+        std::fs::write(tmp.path().join(".windsurf/global_rules.md"), "Old.\n").unwrap();
+        assert_eq!(DevinAdapter.read(tmp.path()).unwrap().instructions, "Old.");
+
+        std::fs::create_dir_all(tmp.path().join(".devin")).unwrap();
+        std::fs::write(tmp.path().join(".devin/global_rules.md"), "New.\n").unwrap();
+        assert_eq!(DevinAdapter.read(tmp.path()).unwrap().instructions, "New.");
+    }
+
+    #[test]
+    fn test_read_global_rules_md_adds_to_general_rule() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".devin/rules")).unwrap();
+        std::fs::write(
+            tmp.path().join(".devin/rules/general.md"),
+            "---\ntrigger: always_on\n---\nGeneral.\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join(".devin/global_rules.md"), "Global.\n").unwrap();
+        assert_eq!(
+            DevinAdapter.read(tmp.path()).unwrap().instructions,
+            "General.\n\nGlobal."
         );
     }
 
