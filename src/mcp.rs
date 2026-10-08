@@ -969,6 +969,13 @@ const OPENCODE_BUILTIN_AGENTS: &[&str] = &[
     "summary",
 ];
 
+/// Whether an agent of this name would be one of OpenCode's built-in agents
+/// (in `opencode.json` or as `.opencode/agents/<name>.md`): written there it
+/// would override, and demote to a subagent, OpenCode's own Build or Plan.
+pub fn is_opencode_builtin_agent(name: &str) -> bool {
+    OPENCODE_BUILTIN_AGENTS.contains(&crate::config::sanitize_name(name).as_str())
+}
+
 /// Parse the OpenCode `agent` object from an `opencode.json` value back into
 /// normalized agents (the inverse of [`build_opencode_agent_object`]).
 pub fn parse_opencode_agent_object(

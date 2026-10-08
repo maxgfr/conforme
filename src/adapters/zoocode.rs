@@ -9,10 +9,12 @@ use crate::config::{rule_file_name, ActivationMode, NormalizedConfig, Normalized
 const SCOPE_COMMENT: &str = "<!-- Intended scope: ";
 
 /// `01-security` → `security`: the numeric prefix only orders the files.
+/// Only the two- or three-digit prefixes conforme writes (`{:02}`) are
+/// stripped: `2024-plan` is a name, not an order.
 fn strip_order_prefix(stem: &str) -> &str {
     match stem.split_once('-') {
         Some((digits, rest))
-            if !digits.is_empty()
+            if (2..=3).contains(&digits.len())
                 && digits.bytes().all(|b| b.is_ascii_digit())
                 && !rest.is_empty() =>
         {
@@ -338,5 +340,14 @@ mod tests {
         };
         let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_only_order_prefixes_are_stripped() {
+        assert_eq!(strip_order_prefix("01-security"), "security");
+        assert_eq!(strip_order_prefix("100-late"), "late");
+        assert_eq!(strip_order_prefix("2024-plan"), "2024-plan");
+        assert_eq!(strip_order_prefix("1-intro"), "1-intro");
+        assert_eq!(strip_order_prefix("general"), "general");
     }
 }

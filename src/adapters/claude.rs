@@ -248,6 +248,10 @@ impl AiToolAdapter for ClaudeAdapter {
                 .map(|c| c.as_os_str().to_string_lossy().to_string())
                 .collect::<Vec<_>>()
                 .join(":");
+            // A skill and a command of the same name: Claude Code runs the skill.
+            if skills.iter().any(|s| s.name == name) {
+                continue;
+            }
             let description = fields
                 .get("description")
                 .and_then(|v| v.as_str())

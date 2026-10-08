@@ -82,7 +82,11 @@ pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
     // Cursor, Devin and Kiro write the instructions as a `general` rule file:
     // a rule of that name would overwrite them on every sync.
     if !config.instructions.trim().is_empty() {
-        for rule in config.rules.iter().filter(|r| rule_file_name(&r.name) == "general") {
+        for rule in config
+            .rules
+            .iter()
+            .filter(|r| rule_file_name(&r.name) == "general")
+        {
             errors.push(format!(
                 "Rule '{}' becomes 'general', the file the instructions are written to; rename it",
                 rule.name

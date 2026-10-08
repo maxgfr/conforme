@@ -89,9 +89,12 @@ impl AiToolAdapter for OpenCodeAdapter {
                 &project_root.join(".opencode").join(dir),
                 true,
             )? {
-                if !agents
-                    .iter()
-                    .any(|a: &crate::config::NormalizedAgent| a.name == agent.name)
+                // `.opencode/agents/build.md` overrides OpenCode's Build agent:
+                // not an agent another tool could load.
+                if !crate::mcp::is_opencode_builtin_agent(&agent.name)
+                    && !agents
+                        .iter()
+                        .any(|a: &crate::config::NormalizedAgent| a.name == agent.name)
                 {
                     agents.push(agent);
                 }
@@ -140,6 +143,19 @@ impl AiToolAdapter for OpenCodeAdapter {
     ) -> Result<Vec<(PathBuf, String)>> {
         // OpenCode reads AGENTS.md natively — no need to re-generate it.
         let mut files = Vec::new();
+
+        // An agent named like a built-in one (`build`, `plan`, …) would
+        // override OpenCode's own agent and demote it to a subagent.
+        let agents: Vec<_> = config
+            .agents
+            .iter()
+            .filter(|a| !crate::mcp::is_opencode_builtin_agent(&a.name))
+            .cloned()
+            .collect();
+        let config = &NormalizedConfig {
+            agents,
+            ..config.clone()
+        };
 
         // Generate skills as .opencode/skills/<name>/SKILL.md
         if !config.skills.is_empty() {

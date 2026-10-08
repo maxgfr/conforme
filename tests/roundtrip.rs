@@ -714,6 +714,33 @@ fn test_claude_reads_both_agents_md_files_without_claude_md() {
 }
 
 #[test]
+fn test_opencode_builtin_agent_names_are_neither_read_nor_written() {
+    // `build` / `plan` are OpenCode's own primary agents: a markdown file of
+    // that name overrides them, and writing one would demote them.
+    let adapter = conforme::adapters::opencode::OpenCodeAdapter;
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".opencode/agents")).unwrap();
+    fs::write(
+        root.join(".opencode/agents/build.md"),
+        "---\ndescription: Tuned build\n---\nBuild carefully.\n",
+    )
+    .unwrap();
+    assert!(adapter.read(root).unwrap().agents.is_empty());
+
+    let config = NormalizedConfig {
+        agents: vec![NormalizedAgent {
+            name: "plan".to_string(),
+            description: "Plan".to_string(),
+            content: "Plan.".to_string(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    assert!(adapter.generate(root, &config).unwrap().is_empty());
+}
+
+#[test]
 fn test_opencode_reads_every_agent_location() {
     // OpenCode loads `.opencode/agents/`, the singular `.opencode/agent/` and
     // the `agent` key of opencode.json together; built-in overrides
@@ -778,6 +805,32 @@ fn test_zoocode_is_not_detected_from_clinerules() {
 
 /// Claude Code accepts `paths` as a comma-separated string, scans
 /// `.claude/agents/` recursively, and reads `yes`/`on`/`1` as booleans.
+#[test]
+fn test_claude_skill_wins_over_a_command_of_the_same_name() {
+    // Claude Code accepts both and runs the skill; reading both made sync
+    // abort with "Duplicate skill name".
+    let adapter = conforme::adapters::claude::ClaudeAdapter;
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/skills/deploy")).unwrap();
+    fs::create_dir_all(root.join(".claude/commands")).unwrap();
+    fs::write(
+        root.join(".claude/skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: Skill\n---\nSkill body.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".claude/commands/deploy.md"),
+        "---\ndescription: Command\n---\nCommand body.\n",
+    )
+    .unwrap();
+
+    let config = adapter.read(root).unwrap();
+
+    assert_eq!(config.skills.len(), 1);
+    assert_eq!(config.skills[0].description, "Skill");
+}
+
 #[test]
 fn test_claude_reads_documented_frontmatter_variants() {
     let adapter = conforme::adapters::claude::ClaudeAdapter;
