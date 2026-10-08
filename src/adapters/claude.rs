@@ -75,9 +75,11 @@ fn claude_md_path(project_root: &Path) -> PathBuf {
 const AGENTS_MD_FALLBACKS: &[&str] = &["AGENTS.md", ".claude/AGENTS.md"];
 
 /// Whether Claude Code reads `AGENTS.md` in this project: no `CLAUDE.md`
-/// exists, and an `AGENTS.md` does.
+/// exists, and an `AGENTS.md` does. A personal `CLAUDE.local.md` also turns
+/// Claude Code's fallback off, but conforme never reads that file: the shared
+/// `AGENTS.md` stays the source rather than being regenerated over.
 fn reads_agents_md_fallback(project_root: &Path) -> bool {
-    let no_claude_md = ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"]
+    let no_claude_md = ["CLAUDE.md", ".claude/CLAUDE.md"]
         .iter()
         .all(|name| !project_root.join(name).exists());
     no_claude_md
@@ -116,6 +118,23 @@ impl AiToolAdapter for ClaudeAdapter {
 
     fn reads_agents_md(&self, project_root: &Path) -> bool {
         reads_agents_md_fallback(project_root)
+    }
+
+    fn source_files(&self, project_root: &Path) -> Vec<PathBuf> {
+        if reads_agents_md_fallback(project_root) {
+            AGENTS_MD_FALLBACKS
+                .iter()
+                .map(|name| project_root.join(name))
+                .filter(|path| path.is_file())
+                .collect()
+        } else {
+            let claude_md = claude_md_path(project_root);
+            if claude_md.is_file() {
+                vec![claude_md]
+            } else {
+                Vec::new()
+            }
+        }
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {

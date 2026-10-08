@@ -69,6 +69,10 @@ impl AiToolAdapter for ZooCodeAdapter {
         path.ends_with(Path::new(".roo/mcp.json"))
     }
 
+    fn source_files(&self, project_root: &Path) -> Vec<PathBuf> {
+        crate::adapters::first_existing_file(project_root, &[".roorules"])
+    }
+
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
             ManagedDir::files(project_root.join(".roo").join("rules"), ".md"),

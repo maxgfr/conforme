@@ -18,7 +18,24 @@ const BLOCK_END: &str = "# ── end conforme ──";
 /// - Files conforme only merges into (`.mcp.json`, `.vscode/mcp.json`,
 ///   `opencode.json`, `.zed/settings.json`, …) also hold the user's own
 ///   settings and are never ignored.
-fn adapter_gitignore_patterns(id: &str) -> Vec<&'static str> {
+fn adapter_gitignore_patterns(project_root: &Path, id: &str) -> Vec<String> {
+    // Gemini writes its instructions to the context file `context.fileName`
+    // names (GEMINI.md by default), or to none.
+    if id == "gemini" {
+        let mut patterns: Vec<String> = adapters::gemini::instructions_file(project_root)
+            .map(|name| format!("/{name}"))
+            .into_iter()
+            .collect();
+        patterns.extend([
+            ".gemini/skills/".to_string(),
+            ".gemini/agents/*.md".to_string(),
+        ]);
+        return patterns;
+    }
+    static_patterns(id).iter().map(|p| p.to_string()).collect()
+}
+
+fn static_patterns(id: &str) -> Vec<&'static str> {
     match id {
         "claude" => vec![
             "/CLAUDE.md",
@@ -42,7 +59,6 @@ fn adapter_gitignore_patterns(id: &str) -> Vec<&'static str> {
         "codex" => vec![".agents/skills/"],
         "opencode" => vec![".opencode/skills/", ".opencode/agents/*.md"],
         "zoocode" => vec![".roo/rules/*.md", ".roo/skills/"],
-        "gemini" => vec!["/GEMINI.md", ".gemini/skills/", ".gemini/agents/*.md"],
         "zed" => vec!["/.rules", ".agents/skills/"],
         "kiro" => vec![".kiro/steering/*.md", ".kiro/skills/", ".kiro/agents/*.md"],
         "amp" => vec![".agents/skills/"],
@@ -63,18 +79,45 @@ fn build_gitignore_block(project_root: &Path) -> String {
         "# Managed by `conforme gitignore install`. Do not edit this block.".to_string(),
     ];
 
-    // Collect patterns for non-source adapters. A location the source also
-    // uses stays tracked (`.agents/skills/` is Codex's, Zed's and Amp's), and
-    // a pattern another adapter already listed is not repeated.
-    let mut listed = adapter_gitignore_patterns(source_id);
+    // Collect patterns for the tools sync writes to (`only` / `exclude`
+    // respected: an excluded tool's files are the user's). A location the
+    // source also uses stays tracked (`.agents/skills/` is Codex's, Zed's and
+    // Amp's), so does a file the source reads (an Amp source reading
+    // `CLAUDE.md`), and a pattern another adapter already listed is not
+    // repeated.
+    let mut listed = adapter_gitignore_patterns(project_root, source_id);
+    let source_files: Vec<String> = all
+        .iter()
+        .find(|a| a.id() == source_id)
+        .map(|a| a.source_files(project_root))
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|p| p.strip_prefix(project_root).ok())
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect();
+    let reads_pattern = |pattern: &str| {
+        let pattern = pattern.trim_start_matches('/').trim_end_matches('/');
+        source_files.iter().any(|f| f == pattern)
+    };
     for adapter in &all {
         if adapter.id() == source_id {
             continue;
         }
+        let selected = config
+            .only
+            .as_ref()
+            .is_none_or(|only| only.iter().any(|id| id == adapter.id()))
+            && config
+                .exclude
+                .as_ref()
+                .is_none_or(|exclude| !exclude.iter().any(|id| id == adapter.id()));
+        if !selected {
+            continue;
+        }
 
-        let patterns: Vec<&str> = adapter_gitignore_patterns(adapter.id())
+        let patterns: Vec<String> = adapter_gitignore_patterns(project_root, adapter.id())
             .into_iter()
-            .filter(|p| !listed.contains(p))
+            .filter(|p| !listed.contains(p) && !reads_pattern(p))
             .collect();
         if patterns.is_empty() {
             continue;
@@ -82,7 +125,7 @@ fn build_gitignore_block(project_root: &Path) -> String {
 
         lines.push(format!("# {}", adapter.name()));
         for pat in patterns {
-            lines.push(pat.to_string());
+            lines.push(pat.clone());
             listed.push(pat);
         }
     }
@@ -321,7 +364,8 @@ mod tests {
     #[test]
     fn test_patterns_match_generated_files_exactly() {
         for adapter in adapters::all_adapters() {
-            let patterns = adapter_gitignore_patterns(adapter.id());
+            // A project without settings: Gemini's default GEMINI.md.
+            let patterns = adapter_gitignore_patterns(Path::new("/nonexistent"), adapter.id());
             assert!(!patterns.is_empty(), "{} has no patterns", adapter.id());
             let mut all_rels = Vec::new();
             // The default layout, and one where Claude Code's instructions

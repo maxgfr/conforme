@@ -62,6 +62,18 @@ impl AiToolAdapter for DevinAdapter {
         path.ends_with(Path::new(".devin/mcp_config.json"))
     }
 
+    fn source_files(&self, project_root: &Path) -> Vec<PathBuf> {
+        let mut files = crate::adapters::first_existing_file(
+            project_root,
+            &[".devin/global_rules.md", ".windsurf/global_rules.md"],
+        );
+        files.extend(crate::adapters::first_existing_file(
+            project_root,
+            &[".windsurfrules"],
+        ));
+        files
+    }
+
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         let mut dirs = vec![
             ManagedDir::files(devin_dir(project_root).join("rules"), ".md"),

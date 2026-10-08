@@ -55,6 +55,15 @@ fn context_file_names(project_root: &Path) -> Vec<String> {
     configured.unwrap_or_else(|| vec!["GEMINI.md".to_string()])
 }
 
+/// The context file conforme writes the instructions to: the first name in
+/// `context.fileName` other than `AGENTS.md` (`GEMINI.md` by default), or none
+/// when Gemini only loads AGENTS.md.
+pub fn instructions_file(project_root: &Path) -> Option<String> {
+    context_file_names(project_root)
+        .into_iter()
+        .find(|name| name != "AGENTS.md")
+}
+
 /// Gemini CLI adapter.
 /// Uses GEMINI.md discovered hierarchically.
 /// Supports @path/to/file.md imports. No per-rule files — single GEMINI.md.
@@ -104,6 +113,14 @@ impl AiToolAdapter for GeminiAdapter {
         context_file_names(project_root)
             .iter()
             .any(|name| name == "AGENTS.md")
+    }
+
+    fn source_files(&self, project_root: &Path) -> Vec<PathBuf> {
+        context_file_names(project_root)
+            .iter()
+            .map(|name| project_root.join(name))
+            .filter(|path| path.is_file())
+            .collect()
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
@@ -184,10 +201,12 @@ impl AiToolAdapter for GeminiAdapter {
 
         let mut files = Vec::new();
 
-        // Only generate GEMINI.md if there's actual content
+        // Only generate the context file if there's actual content, and only
+        // one Gemini loads (`context.fileName`); when that names AGENTS.md
+        // alone, the AGENTS.md sync generates already carries everything.
         let trimmed = content.trim();
-        if !trimmed.is_empty() {
-            files.push((project_root.join("GEMINI.md"), format!("{}\n", trimmed)));
+        if let Some(name) = instructions_file(project_root).filter(|_| !trimmed.is_empty()) {
+            files.push((project_root.join(name), format!("{}\n", trimmed)));
         }
 
         // Generate skills as .gemini/skills/<name>/SKILL.md

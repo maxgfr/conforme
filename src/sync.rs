@@ -55,7 +55,10 @@ fn target_config<'a>(
     let Some(source) = find_adapter(source_id) else {
         return std::borrow::Cow::Borrowed(config);
     };
-    let source_dirs = skills_dirs(source.as_ref());
+    // The source's skills roots, plus a fallback root it reads (DeepSeek's
+    // `.agents/skills` when `.dsh/skills` is empty).
+    let mut source_dirs = skills_dirs(source.as_ref());
+    source_dirs.extend(source.source_files(project_root));
     if skills_dirs(target).iter().any(|d| source_dirs.contains(d)) {
         let mut stripped = config.clone();
         stripped.skills.clear();
@@ -63,6 +66,121 @@ fn target_config<'a>(
     } else {
         std::borrow::Cow::Borrowed(config)
     }
+}
+
+/// What the source reads outside its own managed directories (see
+/// [`AiToolAdapter::source_files`]); `AGENTS.md` itself when it is the source.
+/// No target writes these, and `remove`/`migrate` never delete them.
+fn source_files(project_root: &Path, source_id: &str) -> Vec<std::path::PathBuf> {
+    if source_id == "agents.md" {
+        return vec![project_root.join("AGENTS.md")];
+    }
+    find_adapter(source_id)
+        .map(|source| source.source_files(project_root))
+        .unwrap_or_default()
+}
+
+fn is_source_file(path: &Path, source_files: &[std::path::PathBuf]) -> bool {
+    source_files.iter().any(|p| path.starts_with(p))
+}
+
+/// The detected tools sync writes to: every tool but the source, filtered by
+/// `only` (command line, else `.conformerc.toml`) and `exclude`. `check`,
+/// `diff` and `status` use the same set, so an excluded tool is never
+/// reported out of sync.
+fn selected_targets<'a>(
+    adapters: &'a [Box<dyn AiToolAdapter>],
+    project_root: &Path,
+    source_id: &str,
+    only: Option<&[String]>,
+    project_cfg: &ProjectConfig,
+) -> Vec<&'a dyn AiToolAdapter> {
+    let only = only
+        .map(<[String]>::to_vec)
+        .or_else(|| project_cfg.only.clone());
+    adapters
+        .iter()
+        .map(|a| a.as_ref())
+        .filter(|a| a.id() != source_id)
+        .filter(|a| {
+            only.as_ref()
+                .is_none_or(|o| o.iter().any(|id| id == a.id()))
+        })
+        .filter(|a| {
+            project_cfg
+                .exclude
+                .as_ref()
+                .is_none_or(|e| !e.iter().any(|id| id == a.id()))
+        })
+        .filter(|a| a.detect(project_root))
+        .collect()
+}
+
+/// The files a target tool gets: what it generates from [`target_config`],
+/// minus the files the source reads (an OpenCode source reading `CLAUDE.md`
+/// keeps it out of the Claude Code target's reach).
+fn target_files(
+    project_root: &Path,
+    source_id: &str,
+    target: &dyn AiToolAdapter,
+    config: &NormalizedConfig,
+    source_files: &[std::path::PathBuf],
+) -> Result<Vec<(std::path::PathBuf, String)>> {
+    let config = target_config(project_root, source_id, target, config);
+    Ok(target
+        .generate(project_root, &config)?
+        .into_iter()
+        .filter(|(path, _)| !is_source_file(path, source_files))
+        .collect())
+}
+
+/// Write a target's files (see [`target_files`]). The adapter's own `write`
+/// runs unless a source file had to be left out of its output.
+fn write_target(
+    project_root: &Path,
+    source_id: &str,
+    target: &dyn AiToolAdapter,
+    config: &NormalizedConfig,
+    source_files: &[std::path::PathBuf],
+) -> Result<adapters::WriteReport> {
+    let config = target_config(project_root, source_id, target, config);
+    let generated = target.generate(project_root, &config)?;
+    if !generated
+        .iter()
+        .any(|(path, _)| is_source_file(path, source_files))
+    {
+        return target.write(project_root, &config);
+    }
+    let mut report = adapters::WriteReport {
+        files_written: Vec::new(),
+        files_unchanged: Vec::new(),
+    };
+    for (path, content) in generated {
+        if !is_source_file(&path, source_files) {
+            adapters::write_if_changed(&path, &content, &mut report)?;
+        }
+    }
+    Ok(report)
+}
+
+/// The AGENTS.md sync generates, when it does: a tool is the source, the
+/// source does not read AGENTS.md itself, and `generate_agents_md` is on.
+fn generated_agents_md(
+    project_root: &Path,
+    source_id: &str,
+    project_cfg: &ProjectConfig,
+    config: &NormalizedConfig,
+) -> Option<(std::path::PathBuf, String)> {
+    let source_reads_agents_md =
+        find_adapter(source_id).is_some_and(|a| a.reads_agents_md(project_root));
+    (source_id != "agents.md" && !source_reads_agents_md && project_cfg.generate_agents_md).then(
+        || {
+            (
+                project_root.join("AGENTS.md"),
+                markdown::export_as_agents_md(config),
+            )
+        },
+    )
 }
 
 /// Resolve the source config: reads from the configured source tool or AGENTS.md.
@@ -269,44 +387,27 @@ pub fn run_sync(
 
     // Determine if we should clean orphans
     let should_clean = !no_clean && project_cfg.clean;
+    let source_files = source_files(project_root, &source_id);
 
-    for adapter in &adapters {
-        // Skip the source tool (don't write back to it)
-        if adapter.id() == source_id {
-            continue;
-        }
-
-        // Filter by --only / .conformerc.toml only
-        if let Some(ref only_list) = effective_only {
-            if !only_list.iter().any(|o| o == adapter.id()) {
-                continue;
-            }
-        }
-
-        // Filter by .conformerc.toml exclude
-        if let Some(ref exclude) = project_cfg.exclude {
-            if exclude.iter().any(|e| e == adapter.id()) {
-                continue;
-            }
-        }
-
-        if !adapter.detect(project_root) {
-            if verbose {
+    if verbose {
+        for adapter in &adapters {
+            if adapter.id() != source_id && !adapter.detect(project_root) {
                 println!(
                     "  {} {} (not detected, skipping)",
                     "-".dimmed(),
                     adapter.name().dimmed()
                 );
             }
-            continue;
         }
+    }
 
+    for adapter in selected_targets(&adapters, project_root, &source_id, only, &project_cfg) {
         // Warn about capability loss
-        warn_capability_loss(adapter.as_ref(), &config);
-        let config = target_config(project_root, &source_id, adapter.as_ref(), &config);
+        warn_capability_loss(adapter, &config);
 
         if dry_run {
-            let generated = adapter.generate(project_root, &config)?;
+            let generated =
+                target_files(project_root, &source_id, adapter, &config, &source_files)?;
             println!("{} {} (dry-run):", ">".cyan(), adapter.name().bold());
             for (path, expected) in &generated {
                 if path.exists() {
@@ -335,7 +436,7 @@ pub fn run_sync(
                 }
             }
         } else {
-            let report = adapter.write(project_root, &config)?;
+            let report = write_target(project_root, &source_id, adapter, &config, &source_files)?;
             if !report.files_written.is_empty() {
                 any_written = true;
                 println!("{} {}:", ">".green(), adapter.name().bold());
@@ -361,7 +462,8 @@ pub fn run_sync(
             if should_clean {
                 let managed_dirs = adapter.managed_directories(project_root);
                 if !managed_dirs.is_empty() {
-                    let generated = adapter.generate(project_root, &config)?;
+                    let target_config = target_config(project_root, &source_id, adapter, &config);
+                    let generated = adapter.generate(project_root, &target_config)?;
                     match clean_orphans(&managed_dirs, &generated) {
                         Ok(cleaned) => {
                             for path in &cleaned {
@@ -385,15 +487,10 @@ pub fn run_sync(
 
     // Optionally generate AGENTS.md as output — unless the source tool reads
     // AGENTS.md itself, in which case that file is the source.
-    let source_reads_agents_md =
-        find_adapter(&source_id).is_some_and(|a| a.reads_agents_md(project_root));
-    if !dry_run
-        && source_id != "agents.md"
-        && !source_reads_agents_md
-        && project_cfg.generate_agents_md
+    if let Some((agents_path, agents_content)) = (!dry_run)
+        .then(|| generated_agents_md(project_root, &source_id, &project_cfg, &config))
+        .flatten()
     {
-        let agents_content = markdown::export_as_agents_md(&config);
-        let agents_path = project_root.join("AGENTS.md");
         let should_write = if agents_path.exists() {
             let existing = std::fs::read_to_string(&agents_path)?;
             !crate::hash::contents_match(&existing, &agents_content)
@@ -475,7 +572,9 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
     let known_ids: Vec<&str> = adapters.iter().map(|a| a.id()).collect();
 
     // A file the source or another tool that stays also generates is never
-    // removed: `.agents/skills/` belongs to Codex, Zed and Amp at once.
+    // removed: `.agents/skills/` belongs to Codex, Zed and Amp at once. Nor is
+    // a file the source reads (an Amp source reading `CLAUDE.md`).
+    let source_files = source_files(project_root, &source_id);
     let mut kept = std::collections::HashSet::new();
     for adapter in &adapters {
         let is_source = adapter.id() == source_id;
@@ -513,7 +612,10 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
         let mut removed_files = Vec::new();
 
         for (path, _) in &generated {
-            if adapter.is_shared_file(path) || kept.contains(path) {
+            if adapter.is_shared_file(path)
+                || kept.contains(path)
+                || is_source_file(path, &source_files)
+            {
                 if verbose && path.exists() {
                     println!(
                         "  {} preserved shared config {}",
@@ -560,37 +662,43 @@ pub fn run_check(project_root: &Path, from: Option<&str>, verbose: bool) -> Resu
     let project_cfg = ProjectConfig::load(project_root);
     let (config, source_id) = resolve_config(project_root, from, &project_cfg, verbose)?;
 
+    // Configs sync would refuse are not "in sync" either.
+    if !validate::validate(&config, verbose) {
+        bail!("Validation failed. Fix the errors above, then run `conforme sync`.");
+    }
+
     let adapters = adapters::all_adapters();
     let mut out_of_sync = Vec::new();
+    let source_files = source_files(project_root, &source_id);
+    // An empty source makes sync stop without writing anything: nothing to
+    // compare either.
+    let targets = if config.is_empty() {
+        Vec::new()
+    } else {
+        selected_targets(&adapters, project_root, &source_id, None, &project_cfg)
+    };
 
-    for adapter in &adapters {
-        if adapter.id() == source_id {
-            continue;
-        }
-
-        if !adapter.detect(project_root) {
-            continue;
-        }
-
-        let config = target_config(project_root, &source_id, adapter.as_ref(), &config);
-        let generated = adapter.generate(project_root, &config)?;
-        let mut tool_diffs = Vec::new();
-
-        for (path, expected) in &generated {
-            if path.exists() {
-                let existing = std::fs::read_to_string(path)?;
-                if !crate::hash::contents_match(&existing, expected) {
-                    tool_diffs.push(path.clone());
-                }
-            } else {
-                tool_diffs.push(path.clone());
-            }
-        }
+    for adapter in targets {
+        let generated = target_files(project_root, &source_id, adapter, &config, &source_files)?;
+        let tool_diffs = differing_files(&generated)?;
 
         if !tool_diffs.is_empty() {
             out_of_sync.push((adapter.name().to_string(), tool_diffs));
         } else if verbose {
             println!("{} {} in sync", "+".green(), adapter.name());
+        }
+    }
+
+    // The AGENTS.md sync generates is an output like any other: Codex,
+    // OpenCode, Amp and DeepSeek read it.
+    if !config.is_empty() {
+        if let Some(agents_md) =
+            generated_agents_md(project_root, &source_id, &project_cfg, &config)
+        {
+            let diffs = differing_files(&[agents_md])?;
+            if !diffs.is_empty() {
+                out_of_sync.push(("AGENTS.md".to_string(), diffs));
+            }
         }
     }
 
@@ -641,10 +749,17 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
             "  {:<20} {:<12} {}",
             "AGENTS.md",
             "Yes".green(),
-            if project_cfg.source.is_some() {
-                "Generated output"
-            } else {
-                "Source of truth"
+            match project_cfg.source.as_deref() {
+                None => "Source of truth",
+                // Codex, OpenCode, Amp, DeepSeek (and Claude Code or Gemini
+                // CLI when they fall back to it) read AGENTS.md as their config.
+                Some(source)
+                    if find_adapter(source).is_some_and(|a| a.reads_agents_md(project_root)) =>
+                {
+                    "Source's own file"
+                }
+                Some(_) if project_cfg.generate_agents_md => "Generated output",
+                Some(_) => "Not managed",
             }
             .dimmed()
         );
@@ -661,6 +776,16 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
     let config = resolve_config(project_root, None, &project_cfg, false).ok();
 
     let adapters = adapters::all_adapters();
+    let source_id = config
+        .as_ref()
+        .map(|(_, id)| id.clone())
+        .unwrap_or_default();
+    let selected: Vec<&str> =
+        selected_targets(&adapters, project_root, &source_id, None, &project_cfg)
+            .iter()
+            .map(|a| a.id())
+            .collect();
+    let source_files = source_files(project_root, &source_id);
     for (tool, adapter) in tools.iter().zip(adapters.iter()) {
         let detected_str = if tool.detected {
             "Yes".green().to_string()
@@ -673,11 +798,20 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
         } else if let Some((ref cfg, ref source_id)) = config {
             if adapter.id() == source_id.as_str() {
                 "Source".cyan().to_string()
+            } else if !selected.contains(&adapter.id()) {
+                "Excluded".dimmed().to_string()
             } else {
-                let cfg = target_config(project_root, source_id, adapter.as_ref(), cfg);
-                match check_sync_status(project_root, adapter.as_ref(), &cfg) {
-                    Ok(true) => "In sync".green().to_string(),
-                    Ok(false) => "Out of sync".yellow().to_string(),
+                match target_files(
+                    project_root,
+                    source_id,
+                    adapter.as_ref(),
+                    cfg,
+                    &source_files,
+                )
+                .and_then(|generated| differing_files(&generated))
+                {
+                    Ok(differing) if differing.is_empty() => "In sync".green().to_string(),
+                    Ok(_) => "Out of sync".yellow().to_string(),
                     Err(_) => "Error".red().to_string(),
                 }
             }
@@ -692,23 +826,17 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn check_sync_status(
-    project_root: &Path,
-    adapter: &dyn AiToolAdapter,
-    config: &NormalizedConfig,
-) -> Result<bool> {
-    let generated = adapter.generate(project_root, config)?;
-    for (path, expected) in &generated {
-        if path.exists() {
-            let existing = std::fs::read_to_string(path)?;
-            if !crate::hash::contents_match(&existing, expected) {
-                return Ok(false);
-            }
-        } else {
-            return Ok(false);
+/// The generated files whose content on disk differs (or that are missing).
+fn differing_files(generated: &[(std::path::PathBuf, String)]) -> Result<Vec<std::path::PathBuf>> {
+    let mut differing = Vec::new();
+    for (path, expected) in generated {
+        let in_sync =
+            path.exists() && crate::hash::contents_match(&std::fs::read_to_string(path)?, expected);
+        if !in_sync {
+            differing.push(path.clone());
         }
     }
-    Ok(true)
+    Ok(differing)
 }
 
 /// Run the `diff` command.
@@ -724,27 +852,26 @@ pub fn run_diff(
 
     let adapters = adapters::all_adapters();
     let mut any_diff = false;
-
-    for adapter in &adapters {
-        if adapter.id() == source_id {
-            continue;
+    let source_files = source_files(project_root, &source_id);
+    let mut outputs: Vec<(String, Vec<(std::path::PathBuf, String)>)> = Vec::new();
+    if !config.is_empty() {
+        for adapter in selected_targets(&adapters, project_root, &source_id, only, &project_cfg) {
+            outputs.push((
+                adapter.name().to_string(),
+                target_files(project_root, &source_id, adapter, &config, &source_files)?,
+            ));
         }
-
-        if let Some(only_list) = only {
-            if !only_list.iter().any(|o| o == adapter.id()) {
-                continue;
-            }
+        if let Some(agents_md) =
+            generated_agents_md(project_root, &source_id, &project_cfg, &config)
+        {
+            outputs.push(("AGENTS.md".to_string(), vec![agents_md]));
         }
+    }
 
-        if !adapter.detect(project_root) {
-            continue;
-        }
-
-        let config = target_config(project_root, &source_id, adapter.as_ref(), &config);
-        let generated = adapter.generate(project_root, &config)?;
+    for (name, generated) in &outputs {
         let mut tool_has_diff = false;
 
-        for (path, expected) in &generated {
+        for (path, expected) in generated {
             let existing = if path.exists() {
                 std::fs::read_to_string(path)?
             } else {
@@ -753,7 +880,7 @@ pub fn run_diff(
 
             if !crate::hash::contents_match(&existing, expected) {
                 if !tool_has_diff {
-                    println!("{} {}:", ">".cyan(), adapter.name().bold());
+                    println!("{} {}:", ">".cyan(), name.bold());
                     tool_has_diff = true;
                     any_diff = true;
                 }
