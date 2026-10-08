@@ -2184,6 +2184,107 @@ fn test_migrate_between_tools_sharing_agents_skills_keeps_bundled_files() {
     assert!(skill.join("scripts/run.sh").exists());
 }
 
+fn migrate(root: &std::path::Path, source: &str, output: &str) {
+    conforme()
+        .args([
+            "-C",
+            root.to_str().unwrap(),
+            "migrate",
+            "--source",
+            source,
+            "--output",
+            output,
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_migrate_codex_to_amp_leaves_shared_skills_byte_identical() {
+    // Codex and Amp read the same `.agents/skills/`: migrating between them
+    // must not rewrite the user's skills (dropping `license`, `metadata` or
+    // Amp's `mcpServers`) nor add flat copies of nested ones.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::write(root.join("AGENTS.md"), "Be helpful.\n").unwrap();
+    let linear = root.join(".agents/skills/linear/SKILL.md");
+    let nested = root.join(".agents/skills/nested/deep/SKILL.md");
+    fs::create_dir_all(linear.parent().unwrap()).unwrap();
+    fs::create_dir_all(nested.parent().unwrap()).unwrap();
+    let linear_text = "---\nname: linear\ndescription: Linear issues\nlicense: MIT\nmetadata:\n  short-description: Issues\nmcpServers:\n  linear:\n    url: https://mcp.linear.app/mcp\n---\nUse Linear.\n";
+    let nested_text = "---\nname: deep\ndescription: Deep\n---\nDeep.\n";
+    fs::write(&linear, linear_text).unwrap();
+    fs::write(&nested, nested_text).unwrap();
+
+    migrate(root, "codex", "amp");
+
+    assert_eq!(fs::read_to_string(&linear).unwrap(), linear_text);
+    assert_eq!(fs::read_to_string(&nested).unwrap(), nested_text);
+    assert!(!root.join(".agents/skills/deep").exists());
+}
+
+#[test]
+fn test_migrate_keeps_skills_another_detected_tool_reads() {
+    // Zed → Claude while Codex is still set up: `.agents/skills/` is Codex's
+    // too, so the migration must leave it in place.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join(".rules"), "Be helpful.\n").unwrap();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    let skill = root.join(".agents/skills/deploy/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::write(&skill, "---\nname: deploy\ndescription: Deploy\n---\nRun.\n").unwrap();
+
+    migrate(root, "zed", "claude");
+
+    assert!(!root.join(".rules").exists());
+    assert!(root.join(".claude/skills/deploy/SKILL.md").exists());
+    assert_eq!(
+        fs::read_to_string(&skill).unwrap(),
+        "---\nname: deploy\ndescription: Deploy\n---\nRun.\n"
+    );
+}
+
+#[test]
+fn test_migrate_keeps_files_conforme_never_reads() {
+    // Kiro `.json` agents and Zoo Code `.txt` rules are not read by conforme:
+    // migrating away must not delete them along with the generated files.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".kiro/agents")).unwrap();
+    fs::create_dir_all(root.join(".kiro/steering")).unwrap();
+    fs::write(root.join(".kiro/steering/style.md"), "Use tabs.\n").unwrap();
+    fs::write(
+        root.join(".kiro/agents/reviewer.md"),
+        "---\nname: reviewer\ndescription: Review\n---\nReview.\n",
+    )
+    .unwrap();
+    fs::write(root.join(".kiro/agents/json-agent.json"), "{\"name\": \"j\"}").unwrap();
+
+    migrate(root, "kiro", "claude");
+
+    assert!(!root.join(".kiro/agents/reviewer.md").exists());
+    assert_eq!(
+        fs::read_to_string(root.join(".kiro/agents/json-agent.json")).unwrap(),
+        "{\"name\": \"j\"}"
+    );
+
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".roo/rules")).unwrap();
+    fs::write(root.join(".roo/rules/01-style.md"), "Use tabs.\n").unwrap();
+    fs::write(root.join(".roo/rules/notes.txt"), "Plain notes.\n").unwrap();
+
+    migrate(root, "zoocode", "claude");
+
+    assert!(!root.join(".roo/rules/01-style.md").exists());
+    assert_eq!(
+        fs::read_to_string(root.join(".roo/rules/notes.txt")).unwrap(),
+        "Plain notes.\n"
+    );
+}
+
 #[test]
 fn test_opencode_env_references_reach_other_tools_in_their_syntax() {
     let dir = TempDir::new().unwrap();
