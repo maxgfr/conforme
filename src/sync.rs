@@ -385,7 +385,8 @@ pub fn run_sync(
 
     // Optionally generate AGENTS.md as output — unless the source tool reads
     // AGENTS.md itself, in which case that file is the source.
-    let source_reads_agents_md = find_adapter(&source_id).is_some_and(|a| a.reads_agents_md());
+    let source_reads_agents_md =
+        find_adapter(&source_id).is_some_and(|a| a.reads_agents_md(project_root));
     if !dry_run
         && source_id != "agents.md"
         && !source_reads_agents_md

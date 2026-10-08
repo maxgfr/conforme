@@ -2184,6 +2184,79 @@ fn test_migrate_between_tools_sharing_agents_skills_keeps_bundled_files() {
     assert!(skill.join("scripts/run.sh").exists());
 }
 
+const NATIVE_AGENTS_MD: &str =
+    "# Project\nAlways run make test.\n\n## Rule: TS\n<!-- activation: glob src/**/*.ts -->\nUse TS.\n";
+
+#[test]
+fn test_claude_source_reading_agents_md_keeps_it() {
+    // Without CLAUDE.md, Claude Code loads AGENTS.md: it is the source's own
+    // instruction file, never regenerated from the rest of the config.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("AGENTS.md"), NATIVE_AGENTS_MD).unwrap();
+    let skill = root.join(".claude/skills/deploy/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::write(
+        &skill,
+        "---\nname: deploy\ndescription: Deploy\n---\nRun.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".gemini")).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+        NATIVE_AGENTS_MD
+    );
+    let gemini = fs::read_to_string(root.join("GEMINI.md")).unwrap();
+    assert!(gemini.contains("Always run make test."), "{gemini}");
+    assert!(gemini.contains("Use TS."), "{gemini}");
+    assert!(root.join(".gemini/skills/deploy/SKILL.md").exists());
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "gitignore", "install"])
+        .assert()
+        .success();
+    let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
+    assert!(
+        !gitignore.lines().any(|l| l.trim() == "/AGENTS.md"),
+        "{gitignore}"
+    );
+}
+
+#[test]
+fn test_gemini_source_with_agents_md_context_file_keeps_it() {
+    // `context.fileName` makes Gemini CLI load AGENTS.md instead of GEMINI.md.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("AGENTS.md"), NATIVE_AGENTS_MD).unwrap();
+    fs::create_dir_all(root.join(".gemini")).unwrap();
+    fs::write(
+        root.join(".gemini/settings.json"),
+        "{\n  // where Gemini reads its instructions\n  \"context\": {\"fileName\": [\"AGENTS.md\"]}\n}\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync", "--from", "gemini"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+        NATIVE_AGENTS_MD
+    );
+    let claude = fs::read_to_string(root.join("CLAUDE.md")).unwrap();
+    assert!(claude.contains("Always run make test."), "{claude}");
+    assert!(root.join(".claude/rules/ts.md").exists());
+}
+
 #[test]
 fn test_sync_from_an_empty_source_writes_and_cleans_nothing() {
     // A source tool that reads back as empty (a bare `.roo/`) must neither

@@ -32,7 +32,7 @@ impl AiToolAdapter for CodexAdapter {
         }
     }
 
-    fn reads_agents_md(&self) -> bool {
+    fn reads_agents_md(&self, _project_root: &Path) -> bool {
         true
     }
 

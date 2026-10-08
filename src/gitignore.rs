@@ -91,7 +91,7 @@ fn build_gitignore_block(project_root: &Path) -> String {
     // — but not when the source tool reads AGENTS.md itself: it is the source.
     let source_reads_agents_md = all
         .iter()
-        .any(|a| a.id() == source_id && a.reads_agents_md());
+        .any(|a| a.id() == source_id && a.reads_agents_md(project_root));
     if source_id != "agents.md" && !source_reads_agents_md && config.generate_agents_md {
         lines.push("# Generated AGENTS.md".to_string());
         lines.push("/AGENTS.md".to_string());

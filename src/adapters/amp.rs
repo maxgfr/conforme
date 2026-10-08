@@ -51,7 +51,7 @@ impl AiToolAdapter for AmpAdapter {
     /// `.amp/settings.json` is Amp's whole workspace settings blob; conforme
     /// only merges `amp.mcpServers` into it, so `remove`/`migrate` must
     /// never delete the file wholesale.
-    fn reads_agents_md(&self) -> bool {
+    fn reads_agents_md(&self, _project_root: &Path) -> bool {
         true
     }
 

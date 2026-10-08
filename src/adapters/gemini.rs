@@ -28,6 +28,28 @@ fn is_gemini_user_agent(path: &Path) -> bool {
     }
 }
 
+/// The context file names Gemini CLI loads in this project: the project
+/// `.gemini/settings.json` `context.fileName` (a string or a list), else
+/// `GEMINI.md`.
+fn context_file_names(project_root: &Path) -> Vec<String> {
+    let configured =
+        crate::json_settings::load(&project_root.join(".gemini").join("settings.json"))
+            .ok()
+            .flatten()
+            .and_then(|settings| match settings.get("context")?.get("fileName")? {
+                serde_json::Value::String(name) => Some(vec![name.clone()]),
+                serde_json::Value::Array(names) => Some(
+                    names
+                        .iter()
+                        .filter_map(|n| n.as_str().map(str::to_string))
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .filter(|names: &Vec<String>| !names.is_empty());
+    configured.unwrap_or_else(|| vec!["GEMINI.md".to_string()])
+}
+
 /// Gemini CLI adapter.
 /// Uses GEMINI.md discovered hierarchically.
 /// Supports @path/to/file.md imports. No per-rule files — single GEMINI.md.
@@ -73,16 +95,28 @@ impl AiToolAdapter for GeminiAdapter {
         ]
     }
 
+    fn reads_agents_md(&self, project_root: &Path) -> bool {
+        context_file_names(project_root)
+            .iter()
+            .any(|name| name == "AGENTS.md")
+    }
+
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
-        let gemini_md = project_root.join("GEMINI.md");
-        let instructions = if gemini_md.exists() {
-            std::fs::read_to_string(&gemini_md)
-                .with_context(|| format!("failed to read {}", gemini_md.display()))?
-                .trim()
-                .to_string()
-        } else {
-            String::new()
-        };
+        // The context files `context.fileName` names (GEMINI.md by default);
+        // AGENTS.md among them is parsed with the AGENTS.md convention below.
+        let context_files = context_file_names(project_root);
+        let mut parts = Vec::new();
+        for name in context_files.iter().filter(|n| *n != "AGENTS.md") {
+            let path = project_root.join(name);
+            if path.is_file() {
+                let text = std::fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read {}", path.display()))?;
+                if !text.trim().is_empty() {
+                    parts.push(text.trim().to_string());
+                }
+            }
+        }
+        let instructions = parts.join("\n\n");
 
         // Read skills, agents, and MCP so a Gemini project round-trips as a source.
         let skills =
@@ -104,13 +138,27 @@ impl AiToolAdapter for GeminiAdapter {
             );
         }
 
-        Ok(NormalizedConfig {
+        let config = NormalizedConfig {
             instructions,
             rules: Vec::new(),
             skills,
             agents,
             mcp_servers,
-        })
+        };
+        if !self.reads_agents_md(project_root) {
+            return Ok(config);
+        }
+        let other_files = config.instructions.clone();
+        let mut config =
+            crate::markdown::read_native_agents_md(project_root, &["AGENTS.md"], config)?;
+        if !other_files.is_empty() {
+            config.instructions = if config.instructions.is_empty() {
+                other_files
+            } else {
+                format!("{other_files}\n\n{}", config.instructions)
+            };
+        }
+        Ok(config)
     }
 
     fn generate(

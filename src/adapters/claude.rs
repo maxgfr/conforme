@@ -70,6 +70,22 @@ fn claude_md_path(project_root: &Path) -> PathBuf {
     root
 }
 
+/// `AGENTS.md` files Claude Code loads when the project has no `CLAUDE.md`,
+/// `.claude/CLAUDE.md` nor `CLAUDE.local.md`.
+const AGENTS_MD_FALLBACKS: &[&str] = &["AGENTS.md", ".claude/AGENTS.md"];
+
+/// Whether Claude Code reads `AGENTS.md` in this project: no `CLAUDE.md`
+/// exists, and an `AGENTS.md` does.
+fn reads_agents_md_fallback(project_root: &Path) -> bool {
+    let no_claude_md = ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"]
+        .iter()
+        .all(|name| !project_root.join(name).exists());
+    no_claude_md
+        && AGENTS_MD_FALLBACKS
+            .iter()
+            .any(|name| project_root.join(name).is_file())
+}
+
 impl AiToolAdapter for ClaudeAdapter {
     fn name(&self) -> &str {
         "Claude Code"
@@ -96,6 +112,10 @@ impl AiToolAdapter for ClaudeAdapter {
     /// conforme never writes, and Copilot CLI reads it too.
     fn is_shared_file(&self, path: &Path) -> bool {
         path.ends_with(Path::new(".mcp.json"))
+    }
+
+    fn reads_agents_md(&self, project_root: &Path) -> bool {
+        reads_agents_md_fallback(project_root)
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
@@ -280,13 +300,26 @@ impl AiToolAdapter for ClaudeAdapter {
             mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
         }
 
-        Ok(NormalizedConfig {
+        let config = NormalizedConfig {
             instructions,
             rules,
             skills,
             agents,
             mcp_servers,
-        })
+        };
+        if !reads_agents_md_fallback(project_root) {
+            return Ok(config);
+        }
+        // Without CLAUDE.md, Claude Code loads AGENTS.md: its `## Rule:`
+        // sections join `.claude/rules/`, whose files win on a name clash.
+        let claude_rules = config.rules.clone();
+        let mut config =
+            crate::markdown::read_native_agents_md(project_root, AGENTS_MD_FALLBACKS, config)?;
+        config
+            .rules
+            .retain(|r| !claude_rules.iter().any(|c| c.name == r.name));
+        config.rules.extend(claude_rules);
+        Ok(config)
     }
 
     fn generate(
