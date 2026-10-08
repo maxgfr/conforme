@@ -1038,6 +1038,11 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
 
     let mut result = Vec::new();
     for (name, value) in servers_obj {
+        // Zed extension servers and Claude SDK servers have no portable form;
+        // the merge keeps them in place on the target side.
+        if !crate::json_settings::is_expressible_server(&value) {
+            continue;
+        }
         let obj = value.as_object();
         let Some(obj) = obj else { continue };
 
@@ -1490,6 +1495,22 @@ bearer_token_env_var = "MCP_TOKEN"
             McpTransport::Http { url, .. } => assert_eq!(url, "wss://example.com/mcp"),
             other => panic!("expected HTTP transport for ws, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_parse_mcp_json_skips_extension_and_sdk_servers() {
+        // A Zed extension server has only `settings`; a Claude SDK server is
+        // in-process. Neither must become a stdio server with no command.
+        let zed = r#"{"context_servers": {
+            "ext": {"settings": {"token": "x"}},
+            "fs": {"command": "npx", "args": ["-y"]}
+        }}"#;
+        let parsed = parse_mcp_json(zed).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "fs");
+
+        let claude = r#"{"mcpServers": {"inproc": {"type": "sdk", "name": "inproc"}}}"#;
+        assert!(parse_mcp_json(claude).unwrap().is_empty());
     }
 
     #[test]
