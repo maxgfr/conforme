@@ -73,28 +73,36 @@ pub fn merge_codex_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> 
                 }
                 entry.insert("args", value(toml_args));
 
-                if server.env.is_empty() {
-                    entry.remove("env");
+                // Codex expands no `${VAR}`: `NAME=${NAME}` is forwarded from
+                // Codex's environment through `env_vars`; anything else is a
+                // literal value.
+                let (forwarded, literal): (Vec<_>, Vec<_>) = server
+                    .env
+                    .iter()
+                    .partition(|(name, env_value)| env_ref_name(env_value) == Some(name.as_str()));
+                let literal: BTreeMap<String, String> = literal
+                    .into_iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                set_string_map(entry, "env", &literal, entry_inline);
+                // Object entries (`source = "remote"`) are Codex-only and kept.
+                let mut env_vars: Array = entry
+                    .get("env_vars")
+                    .and_then(Item::as_array)
+                    .map(|existing| existing.iter().filter(|v| !v.is_str()).cloned().collect())
+                    .unwrap_or_default();
+                for (name, _) in forwarded {
+                    env_vars.push(name.as_str());
+                }
+                if env_vars.is_empty() {
+                    entry.remove("env_vars");
                 } else {
-                    let mut env = Table::new();
-                    for (name, env_value) in &server.env {
-                        env[name.as_str()] = value(env_value.clone());
-                    }
-                    let env = if entry_inline {
-                        Item::Value(Value::InlineTable(env.into_inline_table()))
-                    } else {
-                        Item::Table(env)
-                    };
-                    entry.insert("env", env);
+                    entry.insert("env_vars", value(env_vars));
                 }
             }
             McpTransport::Http { url, headers } => {
-                if !server.env.is_empty() {
-                    bail!(
-                        "Codex HTTP MCP server `{}` cannot represent literal environment variables",
-                        server.name
-                    );
-                }
+                // Codex rejects `env` on an HTTP server: it is dropped, as in
+                // every JSON shape without `env` on remote servers.
                 entry.remove("command");
                 entry.remove("args");
                 entry.remove("env");
@@ -102,25 +110,71 @@ pub fn merge_codex_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> 
                 entry.remove("env_vars");
                 entry.insert("url", value(url.clone()));
 
-                if headers.is_empty() {
-                    entry.remove("http_headers");
-                } else {
-                    let mut http_headers = Table::new();
-                    for (name, header_value) in headers {
-                        http_headers[name.as_str()] = value(header_value.clone());
-                    }
-                    let http_headers = if entry_inline {
-                        Item::Value(Value::InlineTable(http_headers.into_inline_table()))
+                // Codex expands no `${VAR}` in headers: `Bearer ${VAR}` on
+                // `Authorization` becomes `bearer_token_env_var`, and a header
+                // that is exactly `${VAR}` becomes `env_http_headers`.
+                let mut bearer = None;
+                let mut from_env = BTreeMap::new();
+                let mut literal = BTreeMap::new();
+                for (name, header_value) in headers {
+                    let bearer_ref = header_value
+                        .strip_prefix("Bearer ")
+                        .and_then(env_ref_name)
+                        .filter(|_| name.eq_ignore_ascii_case("Authorization"));
+                    if let Some(var) = bearer_ref {
+                        bearer = Some(var.to_string());
+                    } else if let Some(var) = env_ref_name(header_value) {
+                        from_env.insert(name.clone(), var.to_string());
                     } else {
-                        Item::Table(http_headers)
-                    };
-                    entry.insert("http_headers", http_headers);
+                        literal.insert(name.clone(), header_value.clone());
+                    }
                 }
+                match bearer {
+                    Some(var) => {
+                        entry.insert("bearer_token_env_var", value(var));
+                    }
+                    None => {
+                        entry.remove("bearer_token_env_var");
+                    }
+                }
+                set_string_map(entry, "env_http_headers", &from_env, entry_inline);
+                set_string_map(entry, "http_headers", &literal, entry_inline);
             }
         }
     }
 
     Ok(document.to_string())
+}
+
+/// `VAR` for a value that is exactly `${VAR}`.
+fn env_ref_name(text: &str) -> Option<&str> {
+    let name = text.strip_prefix("${")?.strip_suffix('}')?;
+    (!name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .then_some(name)
+}
+
+/// Write `map` as the string table `key` of a Codex server entry (inline when
+/// the entry is), or remove the key when `map` is empty.
+fn set_string_map(
+    entry: &mut dyn toml_edit::TableLike,
+    key: &str,
+    map: &BTreeMap<String, String>,
+    inline: bool,
+) {
+    if map.is_empty() {
+        entry.remove(key);
+        return;
+    }
+    let mut table = Table::new();
+    for (name, map_value) in map {
+        table[name.as_str()] = value(map_value.clone());
+    }
+    let item = if inline {
+        Item::Value(Value::InlineTable(table.into_inline_table()))
+    } else {
+        Item::Table(table)
+    };
+    entry.insert(key, item);
 }
 
 /// Parse Codex's TOML MCP tables into normalized server definitions.
@@ -159,13 +213,39 @@ pub fn parse_codex_mcp_toml(content: &str) -> Result<Vec<NormalizedMcpServer>> {
             if command.is_some() {
                 bail!("Codex MCP server `{name}` cannot define both `url` and `command`");
             }
-            validate_codex_mcp_fields(entry, &["url", "http_headers", "enabled"], name)?;
-            let headers = toml_string_map(entry, "http_headers", name)?;
+            validate_codex_mcp_fields(
+                entry,
+                &[
+                    &[
+                        "url",
+                        "http_headers",
+                        "env_http_headers",
+                        "bearer_token_env_var",
+                    ],
+                    CODEX_TUNING_KEYS,
+                ]
+                .concat(),
+                name,
+            )?;
+            let mut headers = toml_string_map(entry, "http_headers", name)?;
+            for (header, var) in toml_string_map(entry, "env_http_headers", name)? {
+                headers.insert(header, format!("${{{var}}}"));
+            }
+            if let Some(var) = optional_toml_string(entry, "bearer_token_env_var", name)? {
+                headers.insert("Authorization".to_string(), format!("Bearer ${{{var}}}"));
+            }
             (McpTransport::Http { url, headers }, BTreeMap::new())
         } else if let Some(command) = command {
-            validate_codex_mcp_fields(entry, &["command", "args", "env", "enabled"], name)?;
+            validate_codex_mcp_fields(
+                entry,
+                &[&["command", "args", "env", "env_vars"], CODEX_TUNING_KEYS].concat(),
+                name,
+            )?;
             let args = toml_string_array(entry, "args", name)?;
-            let env = toml_string_map(entry, "env", name)?;
+            let mut env = toml_string_map(entry, "env", name)?;
+            for var in codex_env_vars(entry, name)? {
+                env.insert(var.clone(), format!("${{{var}}}"));
+            }
             (McpTransport::Stdio { command, args }, env)
         } else {
             bail!("Codex MCP server `{name}` must define either `url` or `command`");
@@ -198,6 +278,59 @@ fn optional_toml_string(
             Ok(value.to_string())
         })
         .transpose()
+}
+
+/// Codex server options that tune how Codex itself runs a server, with no
+/// equivalent elsewhere: reading them changes nothing a target can express,
+/// and the merge keeps them in `.codex/config.toml`.
+const CODEX_TUNING_KEYS: &[&str] = &[
+    "enabled",
+    "required",
+    "startup_timeout_sec",
+    "startup_timeout_ms",
+    "tool_timeout_sec",
+    "enabled_tools",
+    "disabled_tools",
+    "default_tools_approval_mode",
+    "tools",
+    "scopes",
+    "oauth_resource",
+];
+
+/// The variables a stdio server forwards from Codex's environment
+/// (`env_vars`): plain names, or `{ name, source = "local" }`. A variable read
+/// from a remote executor has no equivalent in other tools.
+fn codex_env_vars(entry: &toml::value::Table, server_name: &str) -> Result<Vec<String>> {
+    let Some(value) = entry.get("env_vars") else {
+        return Ok(Vec::new());
+    };
+    let unsupported = || {
+        anyhow::anyhow!(
+            "Codex MCP server `{server_name}` uses `env_vars` entries conforme cannot safely migrate without losing their semantics"
+        )
+    };
+    value
+        .as_array()
+        .ok_or_else(unsupported)?
+        .iter()
+        .map(|item| match item {
+            toml::Value::String(name) => Ok(name.clone()),
+            toml::Value::Table(table)
+                if table
+                    .get("source")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or("local")
+                    == "local" =>
+            {
+                table
+                    .get("name")
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(unsupported)
+            }
+            _ => Err(unsupported()),
+        })
+        .collect()
 }
 
 fn validate_codex_mcp_fields(
@@ -1302,25 +1435,97 @@ command = "node"
     }
 
     #[test]
-    fn test_parse_codex_mcp_toml_rejects_unsupported_auth() {
-        let content = r#"[mcp_servers.private]
+    fn test_codex_env_references_use_codex_env_keys() {
+        // Codex expands no `${VAR}` in config.toml: a reference must become
+        // `env_vars` (stdio), `bearer_token_env_var` or `env_http_headers`.
+        let servers = vec![
+            NormalizedMcpServer {
+                name: "fs".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec![],
+                },
+                env: BTreeMap::from([
+                    ("ROOT".to_string(), "${ROOT}".to_string()),
+                    ("MODE".to_string(), "fast".to_string()),
+                ]),
+            },
+            NormalizedMcpServer {
+                name: "github".to_string(),
+                transport: McpTransport::Http {
+                    url: "https://api.githubcopilot.com/mcp/".to_string(),
+                    headers: BTreeMap::from([
+                        (
+                            "Authorization".to_string(),
+                            "Bearer ${GITHUB_TOKEN}".to_string(),
+                        ),
+                        ("X-Api-Key".to_string(), "${API_KEY}".to_string()),
+                        ("X-Region".to_string(), "eu".to_string()),
+                    ]),
+                },
+                env: BTreeMap::new(),
+            },
+        ];
+
+        let toml = merge_codex_mcp_toml("", &servers).unwrap();
+        assert!(!toml.contains("${"), "{toml}");
+        let root: toml::Value = toml::from_str(&toml).unwrap();
+        let fs = &root["mcp_servers"]["fs"];
+        assert_eq!(fs["env_vars"], toml::Value::Array(vec!["ROOT".into()]));
+        assert_eq!(fs["env"]["MODE"].as_str(), Some("fast"));
+        assert!(fs["env"].get("ROOT").is_none());
+        let github = &root["mcp_servers"]["github"];
+        assert_eq!(
+            github["bearer_token_env_var"].as_str(),
+            Some("GITHUB_TOKEN")
+        );
+        assert_eq!(
+            github["env_http_headers"]["X-Api-Key"].as_str(),
+            Some("API_KEY")
+        );
+        assert_eq!(github["http_headers"]["X-Region"].as_str(), Some("eu"));
+        assert!(github["http_headers"].get("Authorization").is_none());
+
+        let parsed = parse_codex_mcp_toml(&toml).unwrap();
+        let by_name = |n: &str| parsed.iter().find(|s| s.name == n).unwrap().clone();
+        assert_eq!(by_name("fs"), servers[0]);
+        assert_eq!(by_name("github"), servers[1]);
+    }
+
+    #[test]
+    fn test_parse_codex_mcp_toml_ignores_tuning_keys() {
+        let content = r#"[mcp_servers.fs]
+command = "npx"
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+required = true
+enabled_tools = ["read"]
+disabled_tools = ["write"]
+default_tools_approval_mode = "approve"
+
+[mcp_servers.api]
 url = "https://example.com/mcp"
-bearer_token_env_var = "MCP_TOKEN"
+startup_timeout_ms = 20000
+scopes = ["read"]
+oauth_resource = "https://example.com"
 "#;
-
-        let error = parse_codex_mcp_toml(content).unwrap_err();
-
-        assert!(error.to_string().contains("cannot safely migrate"));
-        assert!(error.to_string().contains("bearer_token_env_var"));
+        let parsed = parse_codex_mcp_toml(content).unwrap();
+        assert_eq!(parsed.len(), 2);
     }
 
     #[test]
     fn test_parse_codex_mcp_toml_rejects_unrepresentable_stdio_options() {
-        for field in ["cwd = \"tools\"", "env_vars = [\"TOKEN\"]"] {
+        for field in [
+            "cwd = \"tools\"",
+            "env_vars = [{ name = \"TOKEN\", source = \"remote\" }]",
+        ] {
             let content = format!("[mcp_servers.private]\ncommand = \"node\"\n{field}\n");
             let error = parse_codex_mcp_toml(&content).unwrap_err();
 
-            assert!(error.to_string().contains("cannot safely migrate"));
+            assert!(
+                error.to_string().contains("cannot safely migrate"),
+                "{error}"
+            );
         }
     }
 
@@ -1341,7 +1546,10 @@ bearer_token_env_var = "MCP_TOKEN"
     }
 
     #[test]
-    fn test_merge_codex_mcp_toml_rejects_http_literal_env() {
+    fn test_merge_codex_mcp_toml_drops_env_on_http() {
+        // Codex rejects `env` on an HTTP server; it is dropped, as every JSON
+        // shape without `env` on remote servers does, instead of aborting the
+        // whole sync.
         let server = NormalizedMcpServer {
             name: "api".to_string(),
             transport: McpTransport::Http {
@@ -1351,11 +1559,10 @@ bearer_token_env_var = "MCP_TOKEN"
             env: BTreeMap::from([("TOKEN".to_string(), "secret".to_string())]),
         };
 
-        let error = merge_codex_mcp_toml("", &[server]).unwrap_err();
+        let toml = merge_codex_mcp_toml("", &[server]).unwrap();
 
-        assert!(error
-            .to_string()
-            .contains("cannot represent literal environment variables"));
+        assert!(!toml.contains("TOKEN"), "{toml}");
+        assert_eq!(parse_codex_mcp_toml(&toml).unwrap().len(), 1);
     }
 
     #[test]

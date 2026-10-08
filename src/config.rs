@@ -33,7 +33,7 @@ pub struct NormalizedSkill {
 }
 
 /// A normalized MCP server definition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NormalizedMcpServer {
     pub name: String,
     pub transport: McpTransport,
@@ -41,7 +41,7 @@ pub struct NormalizedMcpServer {
 }
 
 /// MCP server transport type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum McpTransport {
     Stdio {
         command: String,
