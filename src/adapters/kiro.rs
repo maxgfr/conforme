@@ -358,7 +358,11 @@ mod tests {
         assert!(smart_rule.1.contains("inclusion: auto"));
         // `name` is an identifier ("Used for display and matching"), the
         // file's own stem, not the display title.
-        assert!(smart_rule.1.contains("name: smart-rule"), "{}", smart_rule.1);
+        assert!(
+            smart_rule.1.contains("name: smart-rule"),
+            "{}",
+            smart_rule.1
+        );
         assert!(smart_rule.1.contains("description: API context"));
         assert!(smart_rule.1.contains("Decide wisely."));
     }
@@ -375,7 +379,11 @@ mod tests {
             .find(|(p, _)| p.ends_with("manual-rule.md"))
             .unwrap();
         assert!(manual_rule.1.contains("inclusion: manual"));
-        assert!(manual_rule.1.contains("name: manual-rule"), "{}", manual_rule.1);
+        assert!(
+            manual_rule.1.contains("name: manual-rule"),
+            "{}",
+            manual_rule.1
+        );
         assert!(manual_rule.1.contains("Only when asked."));
     }
 
