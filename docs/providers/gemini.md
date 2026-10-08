@@ -21,7 +21,7 @@
 
 | Feature | Path | Format |
 |---------|------|--------|
-| Instructions | `GEMINI.md` | Single markdown file (all rules merged) |
+| Instructions | `GEMINI.md` (or the first `context.fileName` entry other than `AGENTS.md`) | Single markdown file (all rules merged) |
 | Skills | `.gemini/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` ONLY |
 | Agents | `.gemini/agents/<name>.md` | YAML frontmatter: `name`, `description`, `kind: local`, `tools`, `model` |
 | MCP | `.gemini/settings.json` | JSON: `{ "mcpServers": { ... } }` (no `type` field, `httpUrl` for HTTP) |
@@ -36,7 +36,7 @@ No activation modes. Single GEMINI.md file, all content always-on.
 - ID: `gemini`
 - Capabilities: skills, agents, MCP
 - No activation modes
-- All rules merged into single GEMINI.md
+- All rules merged into a single context file: the first `context.fileName` entry other than `AGENTS.md` (`GEMINI.md` by default); none is written when `context.fileName` names only `AGENTS.md`
 - Empty config -> no file generated (avoids empty GEMINI.md)
 - `read()` round-trips instructions (the files `context.fileName` names, `GEMINI.md` by default) plus skills (`.gemini/skills/`), agents (`.gemini/agents/`), and MCP (`.gemini/settings.json`)
 
@@ -58,12 +58,12 @@ No activation modes. Single GEMINI.md file, all content always-on.
 - The agent schema is strict and rejects the whole agent when `tools` holds an unknown name. conforme translates common tool names from other hosts (`Read` → `read_file`, `Grep` → `grep_search`, `Bash` → `run_shell_command`, `Edit` → `replace`, `WebFetch` → `web_fetch`, …), respells MCP tools (`mcp__github__list_issues` → `mcp_github_list_issues`, `mcp__github` / Kiro `@github` → `mcp_github_*`; Gemini rejects any name starting with `mcp__`), maps Kiro `@mcp` to `mcp_*` (every MCP tool), keeps Gemini built-ins (including the `tracker_*` tools), `*`, `mcp_*` and valid `mcp_<server>_<tool>` names, and drops anything else; a restricted list in which nothing translates becomes `read_file` rather than every tool
 - Agent `model` is passed to Gemini's API unchanged unless it is an alias, so conforme writes only `inherit`, `auto`, `pro`, `flash`, `flash-lite`, `gemini-*` or `gemma-*`; another vendor's id is left out and the agent uses the parent model
 - Agent files whose name starts with `_` are skipped by Gemini, and by conforme's `read()` too, so a draft is not propagated
-- Remote (A2A) agents — `kind: remote`, or a file whose frontmatter is a YAML list of remote agents — are neither read nor cleaned as orphans, like `_` drafts
+- Remote (A2A) agents — `kind: remote`, an agent card (`agent_card_url` / `agent_card_json`) without `kind` (the remote schema defaults `kind` to `remote`, `agentLoader.ts`), or a file whose frontmatter is a YAML list of remote agents — are neither read nor cleaned as orphans, like `_` drafts
 - Agent names must match `^[a-z0-9-_]+$`; conforme's name sanitizer writes kebab-case ASCII (accents folded, other characters separate words)
 - Agent frontmatter also supports `display_name`, `temperature`, `max_turns`, `timeout_mins`, and `mcp_servers`; `model` defaults to `inherit`. Files whose name starts with `_` are skipped
-- Gemini also reads skills from `.agents/skills/`, an alias that takes precedence over `.gemini/skills/`. conforme does not read it when Gemini is the source (known gap: the directory is shared with Codex, Zed and Amp)
+- Gemini also reads skills from `.agents/skills/`, an alias that takes precedence over `.gemini/skills/`. conforme does not read it when Gemini is the source (known gap: the directory is shared with Codex, Zed and Amp, and a skill kept only there is not synced). When Codex, Zed or Amp is synced too, each skill exists in both roots and Gemini CLI prints "Skill conflict detected: … is overriding the same skill" for every one of them at startup (seen with Gemini CLI 0.63.0); the `.agents/skills` copy wins and works, the warning is cosmetic (known gap, design pending)
 - Hierarchical: `~/.gemini/GEMINI.md` -> project -> subdirs
 - Supports `@file.md` imports in GEMINI.md
-- `GEMINI.md` is only the *default* context file name: `context.fileName` in `settings.json` accepts a name or a list (e.g. `["AGENTS.md", "GEMINI.md"]`). Gemini CLI does **not** read `AGENTS.md` unless configured to. conforme's `read()` honours the project `context.fileName`; when it names `AGENTS.md`, that file is read with the AGENTS.md convention and, with Gemini as the source, is never regenerated nor gitignored (`reads_agents_md`)
-- As a target conforme always writes `GEMINI.md`, even when `context.fileName` leaves it out (known gap)
+- `GEMINI.md` is only the *default* context file name: `context.fileName` in `settings.json` accepts a name or a list (e.g. `["AGENTS.md", "GEMINI.md"]`). Gemini CLI does **not** read `AGENTS.md` unless configured to. conforme's `read()` honours the project `context.fileName`; when it names `AGENTS.md`, that file is read with the AGENTS.md convention and, with Gemini as the source, is never regenerated nor gitignored (`reads_agents_md`). With Gemini as the source, the context files it reads (`source_files`) are never written by another target, deleted by `remove`/`migrate`, nor gitignored
+- As a target conforme writes the instructions to the first `context.fileName` entry other than `AGENTS.md` (`GEMINI.md` by default), and writes none when it names only `AGENTS.md` (Gemini then reads `AGENTS.md`, which is what `migrate --output gemini` writes). `gitignore install` ignores the context file conforme writes, not a fixed `GEMINI.md`
 - The former Google Cloud page (`docs.cloud.google.com/gemini/docs/codeassist/gemini-cli`) now 404s; the `google-gemini/gemini-cli` repository docs are the canonical reference

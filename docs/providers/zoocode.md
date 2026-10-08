@@ -41,15 +41,15 @@ Mode-specific rules go in `.roo/rules-{modeSlug}/` directories (e.g., `.roo/rule
 - ID: `zoocode`
 - Capabilities: skills, MCP
 - No activation modes, no agents
-- Uses numeric prefixes for ordering: `00-general.md`, `01-rule-name.md`; the `NN-` prefix is stripped on read (`01-security.md` is the rule `security`)
+- Uses numeric prefixes for ordering: `00-general.md`, `01-rule-name.md`; the 2–3 digit order prefix is stripped on read (`01-security.md` is the rule `security`; `2024-plan.md` stays `2024-plan`)
 - Glob/agent-decision info stored as HTML comments (`<!-- Intended scope: ... -->`); the `Intended scope` comment is read back as the rule's globs
-- `.roorules` is read as the instructions when `.roo/rules/` is missing or empty, as Zoo Code does
+- `.roorules` is read as the instructions when `.roo/rules/` is missing or empty; with Zoo as the source it is a `source_files()` entry, so no target writes it and `remove`/`migrate` never delete it. Zoo itself reads `.roorules` (and `.clinerules`) only when no `.roo/rules` directory — the global `~/.roo/rules` included — has files; conforme checks only the project's
 - `read()` round-trips rules plus skills (`.roo/skills/`) and MCP (`.roo/mcp.json`)
 
 ## Notes
 
 - Plain markdown only -- no YAML frontmatter in rules
-- `.roo/rules/` is read **recursively** and files are sorted by base name only (case-insensitive), which is what makes the `00-`/`01-` prefixes meaningful; conforme reads nested rules the same way. Zoo reads every file type there (`.txt` rules included), conforme reads back only `.md` (known gap); orphan cleanup and `migrate --source zoocode` leave `.txt` rules in place
+- `.roo/rules/` is read **recursively** and files are sorted by base name only (case-insensitive), which is what makes the `00-`/`01-` prefixes meaningful; conforme reads nested rules the same way. Zoo reads every file there except cache and temporary ones (`.bak`, `.log`, `.lock`, `.swp`, `.tmp`, `.DS_Store`, …), so `.txt` and other extensions are rules too; conforme reads back only `.md` (known gap); orphan cleanup and `migrate --source zoocode` leave `.txt` rules in place
 - Mode-specific *rules* are controlled via directory placement (`.roo/rules-{modeSlug}/`), not a frontmatter field; mode-specific skills live in `.roo/skills-{modeSlug}/`, which conforme does not generate
 - Skills are discovered from project `.roo/skills/` and `.agents/skills/`, plus the global `~/.roo/skills/` and `~/.agents/skills/`
 - Custom "modes" are distinct from agents/subagents, but they ARE file-based: a project-level `.roomodes` (YAML or JSON) file at the workspace root (plus a global `custom_modes.yaml`)

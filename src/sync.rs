@@ -255,7 +255,9 @@ pub fn run_init(project_root: &Path, force: bool, verbose: bool) -> Result<()> {
 # Exclude these tools from sync
 # exclude = ["zed", "amp"]
 
-# Auto-generate AGENTS.md from source (default: true)
+# Auto-generate AGENTS.md from source (default: true; never applies when the
+# source reads AGENTS.md itself: codex, opencode, amp, deepseek; claude when the
+# project has no CLAUDE.md; gemini when context.fileName names AGENTS.md)
 generate_agents_md = true
 
 # Clean orphan files on sync (default: true)
