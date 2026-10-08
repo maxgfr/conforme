@@ -31,6 +31,11 @@ src/
   lib.rs            — Library crate re-exports (adapters, config, etc.)
   sync.rs           — Core sync engine: init, sync, check, status, remove, diff, migrate commands
                        (target_config, renamed-id check, AGENTS.md output unless the source reads it;
+                       selected_targets (detection + only/exclude) is the one target set of sync, check,
+                       diff and status; target_files/write_target leave out the source's source_files();
+                       generated_agents_md is compared by check and diff too; check validates the config;
+                       status shows excluded tools as "Excluded" and AGENTS.md as "Source's own file" /
+                       "Generated output" / "Not managed";
                        a source that reads back empty warns "nothing to sync" and writes/cleans nothing;
                        migrate keeps what staying tools generate or manage — see Orphan cleanup below)
   detect.rs         — Tool detection (which tools present in project)
@@ -44,12 +49,20 @@ src/
                        server_settings_file leaves the file untouched when the source has no server)
   hook.rs           — Git pre-commit hook install/uninstall (like Husky)
   gitignore.rs      — `conforme gitignore install/uninstall`: ignores the files each non-source
-                       adapter owns (root files anchored, rules/agents dirs by suffix);
-                       merged settings files and the source's own locations stay tracked
+                       adapter selected by only/exclude owns (root files anchored, rules/agents dirs
+                       by suffix; Gemini's pattern is the context file it writes); merged settings
+                       files, the source's own locations and its source_files() stay tracked
   project_config.rs  — .conformerc.toml parser (source, only, exclude, clean options)
   validate.rs        — Config validation (duplicate names, empty content, invalid globs,
-                       names that sanitize to nothing or collide, over-long skill descriptions)
-  watch.rs           — File watcher for auto-sync (notify + debounce)
+                       names that sanitize to nothing or collide, over-long skill descriptions,
+                       a rule whose file name becomes `general` while there are instructions — Cursor,
+                       Devin and Kiro write the instructions there; warns on skills Claude Code reserves:
+                       synced, anthropic-skills, claude-ai)
+  watch.rs           — File watcher for auto-sync (notify + debounce): watches every location the
+                       source reads (per-tool source_locations + source_files()), .conformerc.toml and
+                       AGENTS.md; an existing directory recursively, a file or missing path through its
+                       nearest existing parent (never a whole .claude/ or .github/ tree); re-plans after
+                       each change so directories created later are watched; syncs only on events there
   help_ai.rs        — Detailed help about all supported tools and formats
   mcp.rs            — MCP config generation/parsing per tool:
                        - JSON entry shapes are data (`ServerShape`: type values, URL key, env on remote,
@@ -80,29 +93,37 @@ src/
                        round-trip skills/agents on read(); TOOL_EQUIVALENTS translates agent tools
                        for Claude/Gemini/Kiro (Gemini `mcp_*` ⇄ Kiro `@mcp`, Kiro todo tool `todo`);
                        claude_model/gemini_model/opencode_model keep only values the tool accepts
-                       (gemini_model also keeps `gemma-*`); kiro_model/copilot_model/cursor_model drop
+                       (claude_model drops dotted ids such as Kiro's `claude-sonnet-4.5`;
+                       gemini_model also keeps `gemma-*`); kiro_model/copilot_model/cursor_model drop
                        another host's alias (sonnet, opus, haiku, fable, pro, flash, flash-lite) and any
                        provider/model id, Kiro and Copilot also `inherit`
   adapters/
     mod.rs          — AiToolAdapter trait + registry + shared write_if_changed +
                        collect_rule_files (recursive rules-dir scan, sorted by base name) +
-                       ManagedDir / clean_orphans
+                       ManagedDir / clean_orphans + source_files() (what read() loads outside the
+                       managed dirs; see Orphan cleanup below)
     claude.rs       — Claude Code: CLAUDE.md (or .claude/CLAUDE.md when only that exists)
-                       + .claude/rules/**/*.md, read recursively (paths: frontmatter); with no CLAUDE.md,
-                       .claude/CLAUDE.md nor CLAUDE.local.md, reads AGENTS.md / .claude/AGENTS.md as Claude Code does
+                       + .claude/rules/**/*.md, read recursively (paths: frontmatter); with no CLAUDE.md
+                       nor .claude/CLAUDE.md, reads AGENTS.md and .claude/AGENTS.md (root first) as Claude
+                       Code does (CLAUDE.local.md deliberately ignored); a skill and a command of the same
+                       name read as the skill
     cursor.rs       — Cursor: .cursor/rules/**/*.mdc, read recursively (alwaysApply/globs/description); subagents at .cursor/agents/*.md
     devin.rs        — Devin Desktop (formerly Windsurf): writes .devin/{rules,skills,mcp_config.json}; reads
                        .devin/ and the legacy .windsurf/ (both loaded upstream) and cleans conforme's legacy copies;
                        global_rules.md (.devin/, else .windsurf/) is read into the instructions
-    copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md; MCP merged into .vscode/mcp.json
+    copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md; MCP merged into .vscode/mcp.json;
+                       detected from copilot-instructions.md or .github/{instructions,agents,skills}/
     codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively
     opencode.rs     — OpenCode: reads AGENTS.md natively; agents read from .opencode/agents/, .opencode/agent/
-                       and the opencode.json `agent` key together (markdown wins; built-in overrides skipped)
+                       and the opencode.json `agent` key together (markdown wins; built-in overrides skipped);
+                       an agent named like a built-in one (build, plan, …) is never written
     zoocode.rs      — Zoo Code (community fork of Roo Code): .roo/rules/**/*.md, read recursively (plain Markdown);
-                       `NN-` prefix stripped and `Intended scope` comment read back as globs; .roorules read
+                       2–3 digit `NN-` prefix stripped and `Intended scope` comment read back as globs; .roorules read
                        when .roo/rules/ is missing or empty (.clinerules does not trigger detection)
-    gemini.rs       — Gemini CLI: GEMINI.md; on read, the files `context.fileName` names (AGENTS.md among
-                       them is read with the AGENTS.md convention); remote agents and `_` drafts left alone
+    gemini.rs       — Gemini CLI: writes the first `context.fileName` entry other than AGENTS.md (GEMINI.md
+                       by default; none when it names only AGENTS.md); on read, the files `context.fileName`
+                       names (AGENTS.md among them is read with the AGENTS.md convention); remote agents
+                       (`kind: remote`, or an agent card without `kind`) and `_` drafts left alone
     zed.rs          — Zed AI: .rules file
     kiro.rs         — Kiro (AWS): .kiro/steering/*.md (inclusion/fileMatchPattern)
     amp.rs          — Amp: reads AGENTS.md natively; MCP in .amp/settings.json (or .jsonc)
@@ -239,14 +260,36 @@ file another detected tool generates nor anything in a directory a staying tool
 (the output or another detected tool) manages, and in the source's own
 directories deletes only files with conforme's suffix not protected by `keep`
 (Kiro `.json` agents, Zoo `.txt` rules survive) and, in a skills directory, only
-skill sub-folders, never top-level files.
+skill sub-folders, never top-level files. It also keeps a skill folder that
+bundles other files (only `SKILL.md` reaches the output) and the skills or
+agents the output cannot hold. It validates the config and refuses an empty
+source, like `sync`; when the output keeps its instructions in `AGENTS.md`
+(Codex, OpenCode, Amp, DeepSeek, Gemini CLI loading only `AGENTS.md`) it writes
+`AGENTS.md`, and refuses before changing anything when a different `AGENTS.md`
+exists that the source does not read. `--dry-run` reports identical files as
+"unchanged".
+
+`AiToolAdapter::source_files(project_root)` lists what `read()` loads outside
+the tool's managed directories, only paths that exist and are used: Claude Code
+`CLAUDE.md` (or `AGENTS.md` + `.claude/AGENTS.md` in the fallback), Codex
+`AGENTS.md`, OpenCode the first of `AGENTS.md` / `CLAUDE.md`, Amp the first of
+`AGENTS.md` / `AGENT.md` / `CLAUDE.md`, DeepSeek the first of `AGENTS.md` /
+`CLAUDE.md` plus `.agents/skills` when `.dsh/skills` has none, Gemini CLI its
+existing context files, Devin `global_rules.md` and `.windsurfrules`, Zoo Code
+`.roorules`. With that tool as the source no target writes them
+(`sync::target_files` / `write_target`), `remove`/`migrate` never delete them,
+`gitignore install` never ignores them, and `target_config` treats a fallback
+skills root like a shared one.
+
 `reads_agents_md(project_root)` is true for Codex, OpenCode, Amp and DeepSeek;
-for Claude Code when the project has no `CLAUDE.md`, `.claude/CLAUDE.md` nor
-`CLAUDE.local.md` but has `AGENTS.md` / `.claude/AGENTS.md`; for Gemini CLI when
-`.gemini/settings.json` `context.fileName` names `AGENTS.md`. Such a tool reads
-it with the AGENTS.md convention, and when it is the source `AGENTS.md` is
-never regenerated nor gitignored. Renamed tool ids
-(`windsurf` → `devin`) are an error wherever an id is accepted.
+for Claude Code when the project has no `CLAUDE.md` nor `.claude/CLAUDE.md` but
+has `AGENTS.md` / `.claude/AGENTS.md` (a personal `CLAUDE.local.md` deliberately
+does not change that); for Gemini CLI when `.gemini/settings.json`
+`context.fileName` names `AGENTS.md`. Such a tool reads it with the AGENTS.md
+convention, and when it is the source `AGENTS.md` is never regenerated nor
+gitignored, and `conforme add` refuses to append to an `AGENTS.md` a tool
+source regenerates. Renamed tool ids (`windsurf` → `devin`) are an error
+wherever an id is accepted.
 
 Every JSON file conforme merges into (`.mcp.json`, `.cursor/mcp.json`,
 `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`,
@@ -258,7 +301,7 @@ never delete it wholesale and `gitignore install` never ignores it.
 ### Sync algorithm
 
 1. Parse AGENTS.md (or the source tool) → NormalizedConfig; an empty config stops with "nothing to sync"
-2. For each detected adapter: generate expected files, write if changed
+2. For each selected target (`selected_targets`: detected, filtered by `only`/`exclude`): generate expected files minus the source's `source_files()`, write if changed
 3. Change detection uses SHA-256 content hashing
 
 ### Source-based flow
