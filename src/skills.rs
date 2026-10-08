@@ -1280,11 +1280,13 @@ pub(crate) fn cursor_model(model: Option<&str>) -> Option<&str> {
 /// The `model` to write for a Gemini CLI subagent. Gemini passes any other
 /// value to its API unchanged, so a Claude alias such as `sonnet` would load
 /// and then fail on every call; only `inherit`, Gemini's aliases (`auto`,
-/// `pro`, `flash`, `flash-lite`) and `gemini-*` ids are written.
+/// `pro`, `flash`, `flash-lite`), `gemini-*` ids and the `gemma-*` ids
+/// Gemini CLI also accepts are written.
 pub(crate) fn gemini_model(model: Option<&str>) -> Option<&str> {
     model.filter(|m| {
         matches!(*m, "inherit" | "auto" | "pro" | "flash" | "flash-lite")
             || m.starts_with("gemini-")
+            || m.starts_with("gemma-")
     })
 }
 
@@ -1504,6 +1506,8 @@ mod tests {
             Some("GPT-5 (copilot)")
         );
         assert_eq!(copilot_model(Some("gpt-4o")), Some("gpt-4o"));
+        assert_eq!(gemini_model(Some("gemma-4-27b-it")), Some("gemma-4-27b-it"));
+        assert_eq!(gemini_model(Some("sonnet")), None);
     }
 
     #[test]
