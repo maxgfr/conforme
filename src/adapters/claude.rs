@@ -313,8 +313,12 @@ impl AiToolAdapter for ClaudeAdapter {
         // Without CLAUDE.md, Claude Code loads AGENTS.md: its `## Rule:`
         // sections join `.claude/rules/`, whose files win on a name clash.
         let claude_rules = config.rules.clone();
-        let mut config =
-            crate::markdown::read_native_agents_md(project_root, AGENTS_MD_FALLBACKS, config)?;
+        // Claude Code loads both files, the root one first.
+        let files: Vec<PathBuf> = AGENTS_MD_FALLBACKS
+            .iter()
+            .map(|name| project_root.join(name))
+            .collect();
+        let mut config = crate::markdown::read_agents_md_files(&files, config)?;
         config
             .rules
             .retain(|r| !claude_rules.iter().any(|c| c.name == r.name));

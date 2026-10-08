@@ -688,6 +688,32 @@ fn test_roundtrip_zoocode_is_stable() {
 }
 
 #[test]
+fn test_claude_reads_both_agents_md_files_without_claude_md() {
+    // Without CLAUDE.md, Claude Code loads `AGENTS.md` and `.claude/AGENTS.md`.
+    let adapter = conforme::adapters::claude::ClaudeAdapter;
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::write(
+        root.join("AGENTS.md"),
+        "Root instructions.\n\n## Rule: TS\nUse TS.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".claude/AGENTS.md"),
+        "Claude instructions.\n\n## Rule: Docs\nWrite docs.\n",
+    )
+    .unwrap();
+
+    let config = adapter.read(root).unwrap();
+
+    assert!(config.instructions.contains("Root instructions."));
+    assert!(config.instructions.contains("Claude instructions."));
+    let names: Vec<&str> = config.rules.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, vec!["TS", "Docs"]);
+}
+
+#[test]
 fn test_opencode_reads_every_agent_location() {
     // OpenCode loads `.opencode/agents/`, the singular `.opencode/agent/` and
     // the `agent` key of opencode.json together; built-in overrides

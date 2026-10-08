@@ -71,10 +71,37 @@ pub fn read_native_agents_md(
     else {
         return Ok(tool);
     };
-    let md = parse_agents_md(&std::fs::read_to_string(&path)?)?;
+    read_agents_md_files(&[path], tool)
+}
+
+/// Like [`read_native_agents_md`], for a tool that loads *every* existing
+/// file among `files` (Claude Code loads both `AGENTS.md` and
+/// `.claude/AGENTS.md`): their instructions and rules are concatenated in
+/// order, a later rule of the same name replacing an earlier one.
+pub fn read_agents_md_files(
+    files: &[std::path::PathBuf],
+    tool: NormalizedConfig,
+) -> Result<NormalizedConfig> {
     let mut config = tool;
-    config.instructions = md.instructions;
-    config.rules = md.rules;
+    let mut instructions = Vec::new();
+    let mut rules: Vec<crate::config::NormalizedRule> = Vec::new();
+    let mut sections = NormalizedConfig::default();
+    for path in files.iter().filter(|path| path.is_file()) {
+        let md = parse_agents_md(&std::fs::read_to_string(path)?)?;
+        if !md.instructions.trim().is_empty() {
+            instructions.push(md.instructions);
+        }
+        for rule in md.rules {
+            rules.retain(|r| r.name != rule.name);
+            rules.push(rule);
+        }
+        sections.skills.extend(md.skills);
+        sections.agents.extend(md.agents);
+        sections.mcp_servers.extend(md.mcp_servers);
+    }
+    config.instructions = instructions.join("\n\n");
+    config.rules = rules;
+    let md = sections;
     // Names are compared as written to disk: `## Skill: Deploy App` is the
     // tool's `deploy-app` folder.
     let same =
