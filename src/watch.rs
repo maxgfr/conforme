@@ -17,7 +17,7 @@ pub fn run_watch(project_root: &Path, only: Option<&[String]>, verbose: bool) ->
     // Determine what paths to watch based on the source
     let relevant = get_watch_paths(project_root, &project_cfg)?;
 
-    if relevant.is_empty() {
+    if project_cfg.source.is_none() && !project_root.join("AGENTS.md").exists() {
         bail!(
             "No source paths to watch. Configure a source in .conformerc.toml or create AGENTS.md."
         );

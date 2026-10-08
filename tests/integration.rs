@@ -1294,6 +1294,35 @@ fn test_add_rule() {
 }
 
 #[test]
+fn test_add_refuses_when_agents_md_is_regenerated_from_a_tool() {
+    // With a Cursor source, AGENTS.md is an output: the next sync would drop
+    // the added rule.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join(".conformerc.toml"), "source = \"cursor\"\n").unwrap();
+    fs::write(root.join("AGENTS.md"), "Generated.\n").unwrap();
+
+    run(
+        root,
+        &["add", "rule", "TypeScript", "--activation", "always"],
+    )
+    .failure()
+    .stderr(predicate::str::contains("cursor"));
+    assert_eq!(
+        fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+        "Generated.\n"
+    );
+
+    // A source reading AGENTS.md itself (Codex) keeps the addition.
+    fs::write(root.join(".conformerc.toml"), "source = \"codex\"\n").unwrap();
+    run(
+        root,
+        &["add", "rule", "TypeScript", "--activation", "always"],
+    )
+    .success();
+}
+
+#[test]
 fn test_add_mcp() {
     let dir = TempDir::new().unwrap();
 

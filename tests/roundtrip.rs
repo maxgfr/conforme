@@ -795,6 +795,23 @@ fn test_zoocode_reads_roorules_when_rules_dir_is_empty() {
 }
 
 #[test]
+fn test_copilot_is_detected_from_its_agents_or_skills() {
+    use conforme::adapters::AiToolAdapter;
+    for dir_name in [".github/agents", ".github/skills"] {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join(dir_name)).unwrap();
+        assert!(
+            conforme::adapters::copilot::CopilotAdapter.detect(dir.path()),
+            "{dir_name}"
+        );
+    }
+    // `.github/workflows/` alone is not Copilot.
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".github/workflows")).unwrap();
+    assert!(!conforme::adapters::copilot::CopilotAdapter.detect(dir.path()));
+}
+
+#[test]
 fn test_zoocode_is_not_detected_from_clinerules() {
     // `.clinerules` is Cline's; Zoo Code only reads it as a legacy file.
     use conforme::adapters::AiToolAdapter;

@@ -1195,6 +1195,17 @@ pub fn run_migrate(
 pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result<()> {
     let agents_path = project_root.join("AGENTS.md");
 
+    // With a tool source that does not read AGENTS.md, the next sync
+    // regenerates AGENTS.md from that tool and the addition is lost.
+    if let Some(source) = ProjectConfig::load(project_root).source {
+        if find_adapter(&source).is_some_and(|a| !a.reads_agents_md(project_root)) {
+            bail!(
+                "the source is {source}, so AGENTS.md is regenerated from it on every sync; \
+                 add the entry in {source}'s own files instead"
+            );
+        }
+    }
+
     // Read existing AGENTS.md or start fresh
     let mut content = if agents_path.exists() {
         std::fs::read_to_string(&agents_path)?
