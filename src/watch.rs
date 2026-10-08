@@ -1,7 +1,9 @@
 use anyhow::{bail, Result};
+use notify::{RecursiveMode, Watcher};
 use notify_debouncer_mini::new_debouncer;
 use owo_colors::OwoColorize;
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -13,16 +15,16 @@ pub fn run_watch(project_root: &Path, only: Option<&[String]>, verbose: bool) ->
     let project_cfg = ProjectConfig::load(project_root);
 
     // Determine what paths to watch based on the source
-    let watch_paths = get_watch_paths(project_root, &project_cfg)?;
+    let relevant = get_watch_paths(project_root, &project_cfg)?;
 
-    if watch_paths.is_empty() {
+    if relevant.is_empty() {
         bail!(
             "No source paths to watch. Configure a source in .conformerc.toml or create AGENTS.md."
         );
     }
 
     println!("{} Watching for changes...", ">".cyan());
-    for path in &watch_paths {
+    for path in &relevant {
         println!(
             "  {} {}",
             "watching".dimmed(),
@@ -34,14 +36,12 @@ pub fn run_watch(project_root: &Path, only: Option<&[String]>, verbose: bool) ->
     let (tx, rx) = mpsc::channel();
 
     let mut debouncer = new_debouncer(Duration::from_millis(500), tx)?;
-
-    for path in &watch_paths {
-        if path.exists() {
-            debouncer
-                .watcher()
-                .watch(path, notify::RecursiveMode::Recursive)?;
-        }
-    }
+    let mut watched = HashSet::new();
+    add_watches(
+        debouncer.watcher(),
+        &watch_plan(project_root, &relevant),
+        &mut watched,
+    );
 
     // Initial sync
     if let Err(e) = crate::sync::run_sync(
@@ -59,9 +59,12 @@ pub fn run_watch(project_root: &Path, only: Option<&[String]>, verbose: bool) ->
     loop {
         match rx.recv() {
             Ok(Ok(events)) => {
-                let relevant = events.iter().any(|e| !is_noise(&e.path));
+                let relevant_now = get_watch_paths(project_root, &project_cfg)?;
+                let changed = events
+                    .iter()
+                    .any(|e| !is_noise(&e.path) && is_relevant(&e.path, &relevant_now));
 
-                if relevant {
+                if changed {
                     println!("\n{} Change detected, syncing...", ">".cyan());
                     if let Err(e) = crate::sync::run_sync(
                         project_root,
@@ -74,6 +77,12 @@ pub fn run_watch(project_root: &Path, only: Option<&[String]>, verbose: bool) ->
                         eprintln!("{} Sync failed: {}", "!".red(), e);
                     }
                 }
+                // A directory or file created since: watch it from now on.
+                add_watches(
+                    debouncer.watcher(),
+                    &watch_plan(project_root, &relevant_now),
+                    &mut watched,
+                );
             }
             Ok(Err(errors)) => {
                 eprintln!("{} Watch error: {}", "!".red(), errors);
@@ -86,6 +95,56 @@ pub fn run_watch(project_root: &Path, only: Option<&[String]>, verbose: bool) ->
     }
 
     Ok(())
+}
+
+fn add_watches(
+    watcher: &mut dyn Watcher,
+    plan: &[(PathBuf, RecursiveMode)],
+    watched: &mut HashSet<(PathBuf, bool)>,
+) {
+    for (path, mode) in plan {
+        let key = (path.clone(), *mode == RecursiveMode::Recursive);
+        if watched.contains(&key) {
+            continue;
+        }
+        if watcher.watch(path, *mode).is_ok() {
+            watched.insert(key);
+        }
+    }
+}
+
+/// An event concerns the source when it is inside a relevant path, or is a
+/// directory on the way to one (`.opencode/` created before `agent/`).
+fn is_relevant(event: &Path, relevant: &[PathBuf]) -> bool {
+    relevant
+        .iter()
+        .any(|path| event.starts_with(path) || path.starts_with(event))
+}
+
+/// How to watch the relevant paths: an existing directory recursively; a file
+/// (editors save by replacing it) or a path that does not exist yet through
+/// its nearest existing parent directory, not recursively — a whole `.claude/`
+/// or `.github/` tree is never watched just to see one file appear.
+fn watch_plan(project_root: &Path, relevant: &[PathBuf]) -> Vec<(PathBuf, RecursiveMode)> {
+    let mut plan: Vec<(PathBuf, RecursiveMode)> = Vec::new();
+    let mut push = |entry: (PathBuf, RecursiveMode)| {
+        if !plan.contains(&entry) {
+            plan.push(entry);
+        }
+    };
+    for path in relevant {
+        if path.is_dir() {
+            push((path.clone(), RecursiveMode::Recursive));
+            continue;
+        }
+        let parent = path
+            .ancestors()
+            .skip(1)
+            .find(|a| a.is_dir() && a.starts_with(project_root))
+            .unwrap_or(project_root);
+        push((parent.to_path_buf(), RecursiveMode::NonRecursive));
+    }
+    plan
 }
 
 /// Files that change without the configuration changing: Finder metadata and
@@ -103,82 +162,110 @@ fn is_noise(path: &Path) -> bool {
         || name.ends_with(".tmp")
 }
 
-/// Get the paths to watch based on the configured source.
-fn get_watch_paths(
-    project_root: &Path,
-    project_cfg: &ProjectConfig,
-) -> Result<Vec<std::path::PathBuf>> {
-    let mut paths = Vec::new();
+/// Every location a source tool's `read()` may load, whether or not it exists
+/// yet: a file created later must trigger a sync too.
+fn source_locations(id: &str) -> &'static [&'static str] {
+    match id {
+        "claude" => &[
+            "CLAUDE.md",
+            ".claude/CLAUDE.md",
+            "AGENTS.md",
+            ".claude/AGENTS.md",
+            ".claude/rules",
+            ".claude/skills",
+            ".claude/commands",
+            ".claude/agents",
+            ".mcp.json",
+        ],
+        "cursor" => &[
+            ".cursor/rules",
+            ".cursor/skills",
+            ".cursor/agents",
+            ".cursor/mcp.json",
+        ],
+        "devin" => &[
+            ".devin/rules",
+            ".devin/skills",
+            ".devin/global_rules.md",
+            ".devin/mcp_config.json",
+            ".windsurf/rules",
+            ".windsurf/skills",
+            ".windsurf/global_rules.md",
+            ".windsurfrules",
+        ],
+        "copilot" => &[
+            ".github/copilot-instructions.md",
+            ".github/instructions",
+            ".github/skills",
+            ".github/agents",
+            ".vscode/mcp.json",
+        ],
+        "codex" => &["AGENTS.md", ".agents/skills", ".codex"],
+        "opencode" => &[
+            "AGENTS.md",
+            "CLAUDE.md",
+            "opencode.json",
+            ".opencode/skills",
+            ".opencode/skill",
+            ".opencode/agents",
+            ".opencode/agent",
+        ],
+        "zoocode" => &[".roo/rules", ".roo/skills", ".roo/mcp.json", ".roorules"],
+        "gemini" => &[
+            "GEMINI.md",
+            ".gemini/settings.json",
+            ".gemini/skills",
+            ".gemini/agents",
+        ],
+        "zed" => &[".rules", ".agents/skills", ".zed/settings.json"],
+        "kiro" => &[
+            ".kiro/steering",
+            ".kiro/skills",
+            ".kiro/agents",
+            ".kiro/settings/mcp.json",
+        ],
+        "amp" => &[
+            "AGENTS.md",
+            "AGENT.md",
+            "CLAUDE.md",
+            ".agents/skills",
+            ".amp/settings.json",
+            ".amp/settings.jsonc",
+        ],
+        "deepseek" => &["AGENTS.md", "CLAUDE.md", ".dsh/skills", ".agents/skills"],
+        _ => &[],
+    }
+}
+
+/// The paths whose changes trigger a sync: every location the source reads
+/// (see [`source_locations`]), its managed directories, the files it reads
+/// in this project (`source_files`: Gemini's `context.fileName` files, …),
+/// `.conformerc.toml`, and `AGENTS.md`.
+fn get_watch_paths(project_root: &Path, project_cfg: &ProjectConfig) -> Result<Vec<PathBuf>> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    let mut push = |path: PathBuf| {
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    };
 
     if let Some(ref source_id) = project_cfg.source {
         let adapters = adapters::all_adapters();
         if let Some(adapter) = adapters.iter().find(|a| a.id() == source_id.as_str()) {
-            // Watch the managed directories of the source adapter
-            let managed = adapter.managed_directories(project_root);
-            paths.extend(managed.into_iter().map(|dir| dir.path));
-
-            // ...and every file it reads back: what it would generate from its
-            // own config (CLAUDE.md, GEMINI.md, settings files, …). A skills
-            // root is watched as a whole so a new skill is seen too.
-            if let Ok(files) = adapter
-                .read(project_root)
-                .and_then(|config| adapter.generate(project_root, &config))
-            {
-                for (path, _) in files {
-                    let skills_root = path
-                        .strip_prefix(project_root)
-                        .ok()
-                        .and_then(|rel| {
-                            rel.ancestors()
-                                .find(|a| a.file_name().is_some_and(|n| n == "skills"))
-                        })
-                        .map(|rel| project_root.join(rel));
-                    let watched = skills_root.unwrap_or(path);
-                    if watched.exists() && !paths.contains(&watched) {
-                        paths.push(watched);
-                    }
-                }
+            for location in source_locations(adapter.id()) {
+                push(project_root.join(location));
             }
-
-            // Also watch tool-specific main files
-            match source_id.as_str() {
-                "claude" => {
-                    let claude_md = project_root.join("CLAUDE.md");
-                    if claude_md.exists() {
-                        paths.push(claude_md);
-                    }
-                    let mcp = project_root.join(".mcp.json");
-                    if mcp.exists() {
-                        paths.push(mcp);
-                    }
-                }
-                "cursor" => {
-                    let mcp = project_root.join(".cursor").join("mcp.json");
-                    if mcp.exists() {
-                        paths.push(mcp);
-                    }
-                }
-                "codex" => {
-                    // Watch the directory, not the file inode: editors commonly
-                    // save by atomically replacing config.toml, and the file may
-                    // also be created after watch starts.
-                    let codex_dir = project_root.join(".codex");
-                    if codex_dir.is_dir() {
-                        paths.retain(|p| !p.starts_with(&codex_dir));
-                        paths.push(codex_dir);
-                    }
-                }
-                _ => {}
+            for dir in adapter.managed_directories(project_root) {
+                push(dir.path);
+            }
+            for file in adapter.source_files(project_root) {
+                push(file);
             }
         }
     }
 
-    // Always watch AGENTS.md if it exists
-    let agents_md = project_root.join("AGENTS.md");
-    if agents_md.exists() && !paths.contains(&agents_md) {
-        paths.push(agents_md);
-    }
-
+    push(project_root.join("AGENTS.md"));
+    push(project_root.join(".conformerc.toml"));
     Ok(paths)
 }
 
@@ -187,49 +274,103 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn config(source: &str) -> ProjectConfig {
+        ProjectConfig {
+            source: Some(source.to_string()),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_codex_source_watches_config_directory() {
         let dir = TempDir::new().unwrap();
-        let codex_dir = dir.path().join(".codex");
-        std::fs::create_dir_all(&codex_dir).unwrap();
-        let project_config = ProjectConfig {
-            source: Some("codex".to_string()),
-            ..Default::default()
-        };
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".codex")).unwrap();
 
-        let paths = get_watch_paths(dir.path(), &project_config).unwrap();
+        let paths = get_watch_paths(root, &config("codex")).unwrap();
 
-        // The config directory, and the shared skills root Codex reads.
+        // The config directory (editors replace config.toml atomically), the
+        // shared skills root Codex reads, and AGENTS.md.
+        for path in [".codex", ".agents/skills", "AGENTS.md"] {
+            assert!(paths.contains(&root.join(path)), "{path}: {paths:?}");
+        }
+        let plan = watch_plan(root, &paths);
+        assert!(plan.contains(&(root.join(".codex"), RecursiveMode::Recursive)));
+    }
+
+    /// Every file a source reads is watched, including those that do not
+    /// exist when `watch` starts.
+    #[test]
+    fn test_every_source_read_location_is_watched() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        for (source, path) in [
+            ("claude", ".claude/AGENTS.md"),
+            ("claude", ".claude/commands"),
+            ("gemini", ".gemini/settings.json"),
+            ("devin", ".devin/global_rules.md"),
+            ("devin", ".windsurfrules"),
+            ("opencode", ".opencode/agent"),
+            ("opencode", "CLAUDE.md"),
+            ("zoocode", ".roorules"),
+            ("deepseek", ".agents/skills"),
+            ("amp", "AGENT.md"),
+        ] {
+            let paths = get_watch_paths(root, &config(source)).unwrap();
+            assert!(
+                paths.contains(&root.join(path)),
+                "{source} {path}: {paths:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_gemini_context_files_are_watched() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".gemini")).unwrap();
+        std::fs::write(
+            root.join(".gemini/settings.json"),
+            r#"{"context": {"fileName": "CONTEXT.md"}}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("CONTEXT.md"), "Instr.\n").unwrap();
+
+        let paths = get_watch_paths(root, &config("gemini")).unwrap();
+
+        assert!(paths.contains(&root.join("CONTEXT.md")), "{paths:?}");
+    }
+
+    /// A missing path is watched through its nearest existing parent, never
+    /// by watching a whole tree recursively.
+    #[test]
+    fn test_missing_paths_are_watched_through_their_parent() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".opencode")).unwrap();
+
+        let plan = watch_plan(
+            root,
+            &[root.join(".opencode/agent"), root.join("AGENTS.md")],
+        );
+
         assert_eq!(
-            paths,
-            vec![dir.path().join(".agents").join("skills"), codex_dir]
+            plan,
+            vec![
+                (root.join(".opencode"), RecursiveMode::NonRecursive),
+                (root.to_path_buf(), RecursiveMode::NonRecursive),
+            ]
         );
     }
 
     #[test]
-    fn test_source_files_and_skill_roots_are_watched() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path();
-        std::fs::write(
-            root.join("opencode.json"),
-            r#"{"mcp": {"fs": {"type": "local", "command": ["npx"]}}}"#,
-        )
-        .unwrap();
-        std::fs::create_dir_all(root.join(".opencode/skills/deploy")).unwrap();
-        std::fs::write(
-            root.join(".opencode/skills/deploy/SKILL.md"),
-            "---\nname: deploy\ndescription: Deploy\n---\nRun.\n",
-        )
-        .unwrap();
-        let project_config = ProjectConfig {
-            source: Some("opencode".to_string()),
-            ..Default::default()
-        };
-
-        let paths = get_watch_paths(root, &project_config).unwrap();
-
-        assert!(paths.contains(&root.join("opencode.json")), "{paths:?}");
-        assert!(paths.contains(&root.join(".opencode/skills")), "{paths:?}");
+    fn test_events_outside_the_source_are_ignored() {
+        let root = Path::new("/p");
+        let relevant = vec![root.join(".claude/rules"), root.join("CLAUDE.md")];
+        assert!(is_relevant(&root.join(".claude/rules/ts.md"), &relevant));
+        assert!(is_relevant(&root.join(".claude"), &relevant));
+        assert!(!is_relevant(&root.join("src/main.rs"), &relevant));
+        assert!(!is_relevant(&root.join(".cursor/rules/ts.mdc"), &relevant));
     }
 
     #[test]
