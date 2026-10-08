@@ -23,7 +23,7 @@ cargo install --path .
 1. **Write your config** in your preferred tool (Claude Code, Cursor, Devin, etc.) or directly in `AGENTS.md`
 2. **Run `conforme sync`** — it reads from your chosen source and propagates to all detected tools
 3. **Only changed files are updated** — content is compared using SHA-256 hashes, so unchanged files are never touched
-4. **Orphan files are cleaned** — when you rename or remove a rule, the old generated files are automatically deleted. Only files of the kind conforme writes are touched: files a tool accepts but conforme never generates (Kiro `.json` agents, flat DeepSeek skills, hand-written `.md` Copilot agents) are left alone
+4. **Orphan files are cleaned** — when you rename or remove a rule, the old generated files are automatically deleted. Only files of the kind conforme writes are touched: files a tool accepts but conforme never generates (Kiro `.json` agents, flat DeepSeek skills, hand-written `.md` Copilot agents) are left alone. A source that reads back empty (no instructions, rules, skills, agents or MCP servers) warns "nothing to sync" and writes and cleans nothing. `migrate` removes the source tool's files under the same rule, and never a file or directory the output or another detected tool still uses (`.agents/skills/` shared by Codex, Amp and Zed included)
 5. **Shared settings are merged, never replaced** — settings and MCP files that also hold your own configuration (`.mcp.json`, `.cursor/mcp.json`, `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`, `.codex/config.toml`) only have conforme's key updated. JSONC comments and trailing commas are kept, per-server options a tool added (Kiro `autoApprove`, Zoo Code approvals, Gemini `trust`, …) survive, a file conforme cannot parse is never overwritten, and `remove`/`migrate` never delete one
 6. **Each tool gets values it accepts** — agent tool names are translated into each tool's vocabulary (Claude Code, Gemini CLI and Kiro reject or ignore names they do not know), a model id another tool cannot use is left out, skill and agent names are written as kebab-case ASCII (rules, which only become files, keep other letters), and environment-variable references in MCP configs are rewritten to each tool's syntax (`${VAR}`, `${env:VAR}`, `{env:VAR}`)
 
@@ -48,7 +48,7 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 |------|-------------|-------|
 | OpenAI Codex CLI | `AGENTS.md` | Also supports `AGENTS.override.md` (personal; not used as a conforme source) |
 | OpenCode | `AGENTS.md` | Falls back to `CLAUDE.md` |
-| Gemini CLI | `GEMINI.md` | Configurable to read AGENTS.md via settings.json |
+| Gemini CLI | `GEMINI.md` | Reads AGENTS.md when `context.fileName` in `.gemini/settings.json` names it |
 | Zed AI | `.rules` | First match wins: `.rules` → `.cursorrules` → `.windsurfrules` → `.clinerules` → `.github/copilot-instructions.md` → `AGENT.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` |
 | Amp | `AGENTS.md` | Falls back to `AGENT.md` or `CLAUDE.md` |
 | DeepSeek Harness (`dsh`) | `AGENTS.md` | Also loads `CLAUDE.md` when present; skills in `.dsh/skills/` |
@@ -87,7 +87,8 @@ only = ["cursor", "copilot", "devin"]
 exclude = ["zed", "amp"]
 
 # Auto-generate AGENTS.md from source (default: true; never applies when the
-# source reads AGENTS.md itself: codex, opencode, amp, deepseek)
+# source reads AGENTS.md itself: codex, opencode, amp, deepseek; claude when the
+# project has no CLAUDE.md; gemini when context.fileName names AGENTS.md)
 generate_agents_md = true
 
 # Clean orphan files on sync (default: true)
@@ -212,15 +213,15 @@ Agents (sub-agents) are custom AI assistants with a model, tools, and system pro
 | Tool | Path | Format |
 |------|------|--------|
 | Claude Code | `.claude/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model` (Claude ids only), `tools` (Claude tool names) |
-| Copilot | `.github/agents/<name>.agent.md` | YAML frontmatter: `name`, `description`, `model`, `tools` |
-| Cursor | `.cursor/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model` (no `tools` — inherited) |
-| Kiro | `.kiro/agents/<name>.md` | YAML frontmatter: `description`, `model`, `tools` (Kiro tools and tags: `read`, `grep`, `shell`, `@server/tool`, …; name from the file) |
+| Copilot | `.github/agents/<name>.agent.md` | YAML frontmatter: `name`, `description`, `model` (no other host's alias), `tools` |
+| Cursor | `.cursor/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model` (no other host's alias; no `tools` — inherited) |
+| Kiro | `.kiro/agents/<name>.md` | YAML frontmatter: `description`, `model` (no other host's alias, no `inherit`), `tools` (Kiro tools and tags: `read`, `grep`, `shell`, `@server/tool`, …; name from the file) |
 | Gemini CLI | `.gemini/agents/<name>.md` | YAML frontmatter: `name`, `description`, `kind: local`, `model` (Gemini ids only), `tools` (Gemini tool names) |
 | OpenCode | `opencode.json` (`agent` key) + `.opencode/agents/<name>.md` | JSON merged into `opencode.json`; markdown for per-project agents; `model` only when written as `provider/model` |
 
 Tools without agents support: Devin Desktop, Zoo Code, Codex CLI, Zed AI, Amp, DeepSeek Harness.
 
-Claude Code, Gemini CLI and Kiro only accept their own tool names, so common names are translated (`Read` / `read_file` / `read`, `Bash` / `run_shell_command` / `shell`, `WebFetch` / `web_fetch`, …), MCP tools are respelled (`mcp__github__list_issues` / `mcp_github_list_issues` / `@github/list_issues`), and names with no equivalent are dropped; a restricted list in which nothing translates becomes read-only access (`Read` / `read_file` / `read`) rather than every tool. A skill or agent without a description gets its name as description, since several tools skip one that has none.
+Claude Code, Gemini CLI and Kiro only accept their own tool names, so common names are translated (`Read` / `read_file` / `read`, `Bash` / `run_shell_command` / `shell`, `WebFetch` / `web_fetch`, …), MCP tools are respelled (`mcp__github__list_issues` / `mcp_github_list_issues` / `@github/list_issues`, and every MCP tool as Gemini `mcp_*` / Kiro `@mcp`), and names with no equivalent are dropped; a restricted list in which nothing translates becomes read-only access (`Read` / `read_file` / `read`) rather than every tool. A skill or agent without a description gets its name as description, since several tools skip one that has none.
 
 ### MCP format equivalence
 
@@ -238,10 +239,10 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | OpenCode | `opencode.json` (merged) | `mcp` | `type: local/remote`; `command` as single array; env key is `environment` (local only); `{env:VAR}` references |
 | Zed AI | `.zed/settings.json` (merged) | `context_servers` | No `type` field; remote uses `url` + `headers`; no variable expansion |
 | Amp | `.amp/settings.json` or `.amp/settings.jsonc` (merged) | `amp.mcpServers` | Dotted key; no `type` field |
-| Codex CLI | `.codex/config.toml` (merged) | `[mcp_servers.<name>]` | TOML; atomic merge preserves unrelated settings, comments, target-only servers, and Codex-specific options |
+| Codex CLI | `.codex/config.toml` (merged) | `[mcp_servers.<name>]` | TOML; no `${VAR}` expansion: `NAME=${NAME}` → `env_vars`, `Authorization: Bearer ${VAR}` → `bearer_token_env_var`, a `${VAR}` header → `env_http_headers`; atomic merge preserves unrelated settings, comments, target-only servers, and Codex-specific options |
 | DeepSeek Harness | _(not project-scoped)_ | — | MCP servers are `@deepseek-ai/dsh-mcp-client` plugin entries in the user-level `cordis.patch.yml` under `$DSH_HOME`, so conforme generates nothing |
 
-The source decides which servers exist: a server only the target lists is dropped (Codex keeps target-only servers), and a synced server is re-enabled (`disabled` / `enabled: false` are reset) so `check` never passes while a tool hides it. A source with no MCP server at all leaves every MCP file untouched, so servers kept by hand in a tool survive when conforme only syncs rules. conforme writes environment-variable references in each tool's syntax and reads them back to `${VAR}`.
+The source decides which servers exist: a server only the target lists is dropped (Codex keeps target-only servers), and a synced server is re-enabled (`disabled` / `enabled: false` are reset) so `check` never passes while a tool hides it. Entries conforme cannot express (a Zed extension server configured only through `settings`, a Claude Code `type: "sdk"` server, an OpenCode `{ "enabled": false }` toggle) are skipped on read and kept as they are on write. A source with no MCP server at all leaves every MCP file untouched, so servers kept by hand in a tool survive when conforme only syncs rules. conforme writes environment-variable references in each tool's syntax (Codex, which expands none, through its `env_vars` / `bearer_token_env_var` / `env_http_headers` keys) and reads them back to `${VAR}`.
 
 ## Examples
 
@@ -653,11 +654,11 @@ Or use the pre-commit hook for local enforcement.
 
 ## Manual skill invocation
 
-Manual skills preserve `disable-model-invocation: true`, OpenCode V2 `metadata.opencode/autoinvoke: "false"`, and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. OpenCode V1 still needs the corresponding `permission.skill` deny entries; skill synchronization does not change user permissions.
+Manual skills preserve `disable-model-invocation: true`, `metadata.opencode/autoinvoke: "false"`, and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. conforme writes `metadata.opencode/autoinvoke` as a hint that OpenCode is not known to read (no reader exists on its `dev` branch), so OpenCode needs the corresponding `permission.skill` deny entries; skill synchronization does not change user permissions.
 
 These skills run when explicitly invoked: `verify-providers`. Use `$name` in Codex or `/name` in Claude Code and OpenCode (with the plugin namespace when installed as a Claude plugin).
 
-The skill bundle disables implicit selection in Codex and Claude Code. OpenCode V2 reads `metadata.opencode/autoinvoke: "false"`. For OpenCode V1, merge these entries into `permission.skill` in `~/.config/opencode/opencode.json` or the project configuration; retain unrelated permissions:
+The skill bundle disables implicit selection in Codex and Claude Code. Its `metadata.opencode/autoinvoke: "false"` is only a hint OpenCode is not known to read, so for OpenCode merge these entries into `permission.skill` in `~/.config/opencode/opencode.json` or the project configuration; retain unrelated permissions:
 
 ```json
 {

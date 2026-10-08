@@ -24,7 +24,7 @@ pub fn print_help_ai() {
             "Commands (.claude/commands/**/*.md) → synced as skills to other tools",
             "Skills synced to .claude/skills/<name>/SKILL.md, agents to .claude/agents/<name>.md (Claude tool names and models only)",
             "MCP merged into .mcp.json (`mcpServers`, ${VAR} references; per-server options kept)",
-            "Reads AGENTS.md natively only when no CLAUDE.md exists (conforme writes CLAUDE.md)",
+            "Reads AGENTS.md (or .claude/AGENTS.md) natively when no CLAUDE.md exists; conforme then reads it as Claude's source and never regenerates it",
         ],
     );
     print_tool(
@@ -32,12 +32,12 @@ pub fn print_help_ai() {
         "cursor",
         ".cursor/rules/*.mdc",
         &[
-            "Frontmatter: alwaysApply (bool), globs (string), description (string)",
+            "Frontmatter: alwaysApply (bool), globs (string; a list is also read), description (string)",
             "4 rule types: Always, Auto Attached (globs), Agent Requested (description), Manual",
             "Skills synced to .cursor/skills/<name>/SKILL.md",
             "Subagents synced to .cursor/agents/<name>.md (plain .md, no tools field, lowercase-hyphen name)",
             "MCP merged into .cursor/mcp.json (no `type` on remote servers, ${env:VAR} references)",
-            "Reads AGENTS.md natively",
+            "Reads AGENTS.md natively (root and subdirectories)",
         ],
     );
     print_tool(
@@ -47,6 +47,7 @@ pub fn print_help_ai() {
         &[
             "Frontmatter: trigger (always_on|glob|model_decision|manual; `agent` is read as model_decision), description, globs",
             "Legacy .windsurf/rules/ and .windsurf/skills/ are read too, and conforme's old copies there are cleaned",
+            "global_rules.md (.devin/, else .windsurf/) is read into the instructions",
             "Skills synced to .devin/skills/<name>/SKILL.md (`triggers: [user]` for manual skills)",
             "MCP merged into .devin/mcp_config.json (no `type`, ${env:VAR} references)",
             "Reads AGENTS.md natively",
@@ -84,7 +85,8 @@ pub fn print_help_ai() {
         ".roo/rules/*.md",
         &[
             "Plain Markdown — NO YAML frontmatter",
-            "Files loaded alphabetically (use numeric prefixes: 00-, 01-)",
+            "Files loaded alphabetically (use numeric prefixes: 00-, 01-; stripped on read)",
+            "Detected by .roo/ or .roorules (not .clinerules); .roorules is read when .roo/rules/ is empty",
             "Skills synced to .roo/skills/<name>/SKILL.md",
             "Mode-specific rules in .roo/rules-{mode}/",
             "MCP merged into .roo/mcp.json (streamable-http for HTTP; alwaysAllow/disabledTools kept)",
@@ -104,6 +106,7 @@ pub fn print_help_ai() {
         &[
             "Config at ~/.codex/config.toml (global) or .codex/config.toml (project)",
             "MCP merged into project .codex/config.toml as [mcp_servers.<name>] tables",
+            "No ${VAR} expansion: references written as env_vars, bearer_token_env_var, env_http_headers",
             "Skills synced to .agents/skills/<name>/SKILL.md",
             "Manual skills preserve their Codex agents/openai.yaml invocation policy",
         ],
@@ -116,6 +119,7 @@ pub fn print_help_ai() {
             "Skills synced to .opencode/skills/<name>/SKILL.md (name, description, and manual invocation metadata)",
             "MCP merged into opencode.json under `mcp` key (type:local/remote, command as single array, key `environment`)",
             "Agents merged into opencode.json under `agent` key + per-agent .opencode/agents/<name>.md (model only as provider/model)",
+            "Agents read from .opencode/agents/, .opencode/agent/ and the `agent` key together (markdown wins)",
             "Also scans .claude/skills/, .agents/skills/",
         ],
     );
@@ -125,6 +129,7 @@ pub fn print_help_ai() {
         "GEMINI.md + .gemini/settings.json",
         &[
             "Hierarchical: ~/.gemini/GEMINI.md → project → subdirs",
+            "context.fileName in .gemini/settings.json is honoured on read; when it names AGENTS.md, that file is the source",
             "Skills synced to .gemini/skills/<name>/SKILL.md (name, description, and manual invocation metadata)",
             "Agents synced to .gemini/agents/<name>.md (kind:local frontmatter, tools translated to Gemini names)",
             "MCP merged into .gemini/settings.json (Gemini format: no type field, httpUrl for HTTP)",
@@ -137,7 +142,7 @@ pub fn print_help_ai() {
         ".rules + .zed/settings.json",
         &[
             "Fallback chain: .rules → .cursorrules → .windsurfrules → .clinerules → .github/copilot-instructions.md → AGENT.md → AGENTS.md → CLAUDE.md → GEMINI.md",
-            "MCP merged into .zed/settings.json (context_servers format, preserves existing settings)",
+            "MCP merged into .zed/settings.json (context_servers format, preserves existing settings and extension servers)",
             "Skills synced to shared .agents/skills/<name>/SKILL.md",
             "Single .rules file, no frontmatter",
         ],

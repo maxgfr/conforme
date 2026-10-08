@@ -41,7 +41,7 @@
 - File: `src/adapters/claude.rs`
 - ID: `claude`
 - Capabilities: rules, skills, agents, MCP
-- Read: CLAUDE.md + .claude/rules/ + .claude/skills/ + .claude/commands/ + .claude/agents/ + .mcp.json
+- Read: CLAUDE.md + .claude/rules/ + .claude/skills/ + .claude/commands/ + .claude/agents/ + .mcp.json (and `AGENTS.md` / `.claude/AGENTS.md` when the project has no `CLAUDE.md`)
 - Write: CLAUDE.md + .claude/rules/ + .claude/skills/ + .claude/agents/ + .mcp.json
 
 ## Notes
@@ -59,14 +59,17 @@
 - Subagent `tools` must resolve to Claude Code tools, or Claude Code refuses to launch the subagent ("would be spawned with zero tools"). Names from other hosts are translated (`read_file` → `Read`, `run_shell_command` → `Bash`, `codebase` → `Grep`, Gemini `mcp_github_list_issues` / Kiro `@github/list_issues` → `mcp__github__list_issues`, …), `Agent(type)` restrictions pass through, Kiro's `*` / `@builtin` become no `tools` (every tool), and a restricted list in which nothing translates becomes `tools: Read` rather than every tool
 - Subagent `model` is an alias (`sonnet`, `opus`, `haiku`, `fable`), `inherit`, or a `claude-*` id; another vendor's id (`gpt-4o`) is left out
 - Boolean frontmatter fields accept `yes`/`no`, `on`/`off` and `1`/`0` besides `true`/`false`; conforme reads all of them (e.g. `disable-model-invocation: yes`)
-- Since 2.1.277 (2026-09-18) Claude Code reads `AGENTS.md` itself when the project has no `CLAUDE.md`. conforme always writes `CLAUDE.md` when there is content, so Claude Code keeps reading the inlined `CLAUDE.md` and that fallback is unused
+- Since 2.1.277 (2026-09-18) Claude Code reads `AGENTS.md` (or `.claude/AGENTS.md`) itself when the project has no `CLAUDE.md`, `.claude/CLAUDE.md` nor `CLAUDE.local.md`. In that case conforme's `read()` takes it too, with the AGENTS.md convention (its `## Rule:` sections join `.claude/rules/`, whose files win on a name clash), and with Claude as the source that `AGENTS.md` is never regenerated nor gitignored (`reads_agents_md`). As a target conforme writes `CLAUDE.md` when there is content, after which Claude Code reads `CLAUDE.md` instead
 - A skill or agent is always written with a `description`, falling back to its name when the source has none (other tools skip entries without one)
+- Agent `name` may be up to 256 characters upstream; conforme's `sanitize_name` keeps every tool's names at 64 or fewer
+- Claude Code skips skills named `synced`, `anthropic-skills` or `claude-ai`; conforme does not validate against these names, so such a skill synced from another tool is silently ignored by Claude Code (known gap)
 - A project `CLAUDE.md` may live at `./CLAUDE.md` **or** `./.claude/CLAUDE.md`. conforme prefers the root file, and falls back to `./.claude/CLAUDE.md` when only that one exists — for both reading and writing, so a project using the nested location is neither read as empty nor given a competing second instruction file
 - MCP: `.mcp.json` is merged, not owned (`is_shared_file`): per-server keys conforme never writes (`oauth`, `headersHelper`, `timeout`, `alwaysLoad`) survive a sync, and `remove claude` / `migrate --source claude` keep the file (Copilot CLI reads it too). Environment references are `${VAR}` / `${VAR:-default}`, conforme's normalized spelling; `env` is written on stdio servers only
+- MCP: in-process `type: "sdk"` servers have neither a command nor a URL; conforme skips them on read and keeps them untouched on write
 - MCP: `type: "stdio"` is optional in `.mcp.json` (transport is inferred from `command`). HTTP transport accepts `"http"` (and the `"streamable-http"` alias); the older `"sse"` transport is deprecated and the `"ws"` (WebSocket) transport is also parsed on read — conforme maps all remote transports to its HTTP variant (`url` + `headers`)
 - `tools` (subagents) and `allowed-tools` (skills/commands) accept a space-separated string, a comma-separated string, or a YAML list; conforme parses all three forms on read
 - Subagent `color` (`red`/`blue`/`green`/`yellow`/`purple`/`orange`/`pink`/`cyan`) and `permissionMode` (`default`/`acceptEdits`/`auto`/`dontAsk`/`plan`/`manual`/`bypassPermissions`) are preserved on the Claude read→write round-trip (and carried through AGENTS.md as `<!-- color: -->` / `<!-- permission-mode: -->` comments); they are Claude-specific and not mapped to other tools
 
 ## Manual skill invocation
 
-Manual skills preserve `disable-model-invocation: true`, OpenCode V2 `metadata.opencode/autoinvoke: "false"`, and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. OpenCode V1 still needs the corresponding `permission.skill` deny entries; skill synchronization does not change user permissions.
+Manual skills preserve `disable-model-invocation: true`, `metadata.opencode/autoinvoke: "false"`, and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. conforme writes `metadata.opencode/autoinvoke` as a hint that OpenCode is not known to read (no reader exists on its `dev` branch), so OpenCode needs the corresponding `permission.skill` deny entries; skill synchronization does not change user permissions.

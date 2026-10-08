@@ -57,9 +57,10 @@
 
 - MCP uses `"servers"` key (NOT `"mcpServers"`) -- unique among all tools
 - MCP: `env` on stdio servers and `headers` on HTTP ones (VS Code's remote fields are `type`, `url`, `headers`, `oauth`), which is what conforme writes. Environment references are written `${env:VAR}` (VS Code's predefined-variable syntax) and read back as `${VAR}`; `${input:…}` references are kept as they are
+- MCP: conforme maps every remote server to its HTTP transport, so a `type: "sse"` server is written as `http` (known gap)
 - Agent-decision and manual rules are inlined into `copilot-instructions.md` (deliberate): VS Code can load a `description`-only instructions file on demand, but GitHub.com and Copilot CLI only apply files with `applyTo`. On read, a hand-written file with a `description` and no `applyTo` becomes an agent-decision rule, and one with neither a manual rule
 - `applyTo` is written comma-separated without spaces (the documented form), with brace groups expanded, and read back brace-aware
-- Agent `model` is copied as is; VS Code expects names such as `GPT-5.2 (copilot)` and its docs do not say what an unknown value does (unverified)
+- Agent `model` is a string or an array; VS Code expects names such as `GPT-5.2 (copilot)` and its docs do not say what an unknown value does (unverified). conforme leaves out another host's alias (`sonnet`, `opus`, `haiku`, `fable`, `pro`, `flash`, `flash-lite`), any `provider/model` id and `inherit`, and copies other values as they are
 - VS Code 1.140 (2026-09-30) lists `.vscode/mcp.json` as deprecated in favour of the portable workspace `.mcp.json` (`mcpServers`). VS Code still reads it; conforme keeps writing it until the move can be coordinated with the Claude Code target, which owns `.mcp.json`
 - `.vscode/mcp.json` also holds VS Code's `inputs` (prompted secrets referenced as `${input:…}`) and `sandbox` settings, and VS Code parses it as JSONC. conforme **merges** only the `servers` key: comments, `inputs`, `sandbox`, and per-server keys it never emits (`envFile`, …) survive, a file it cannot parse is left untouched (sync fails), and `remove copilot` / `migrate --source copilot` keep the file
 - Copilot CLI reads MCP servers from `.mcp.json` or `.github/mcp.json` (`mcpServers` key, added 1.0.61), not `.vscode/mcp.json`. conforme does not write a Copilot-specific CLI file; when Claude Code is also a target, its `.mcp.json` covers the CLI
@@ -69,9 +70,11 @@
 - **Skills moved to `.github/skills/`**: GitHub documents Copilot skills as `SKILL.md` folders under `.github/skills/` (also `.claude/skills/` and `.agents/skills/`), for both Copilot CLI and the cloud agent. prompt files are a distinct, user-authored VS Code feature, so conforme writes `.github/skills/` only and never reads, writes, or cleans `.github/prompts/`. Anything you keep there is left untouched by orphan cleanup
 - Prompts have optional `agent` field (values: `ask`, `edit`, `agent`, `plan`, or custom agent name)
 - Additional optional fields on instructions: `name`, `description`, `excludeAgent`
-- Additional optional fields on agents: `handoffs`, `mcp-servers`, `target` (`vscode` / `github-copilot`, both when unset), `user-invocable`, `disable-model-invocation`, `metadata`
+- Additional optional fields on agents: `target` (`vscode` / `github-copilot`, both when unset), `agents`, `argument-hint`, `handoffs`, `hooks`, `mcp-servers`, `metadata`, `user-invocable`, `disable-model-invocation`, CLI `reasoning-effort` and `model-policy`; conforme does not generate them
+- VS Code skills also accept `argument-hint`, `user-invocable`, `disable-model-invocation`, `context`, `license` and `allowed-tools`; VS Code honours `disable-model-invocation`, so a manual skill conforme writes stays manual there
 - `handoffs` is not supported on the Copilot cloud agent on GitHub.com (CLI only)
 - Agent files are accepted as `<name>.agent.md` **or** plain `<name>.md`; the filename minus extension is what deduplicates an agent across config levels. conforme writes the `.agent.md` form, and an agent file without a `name` reads back as `<name>` (the whole `.agent.md` suffix is stripped). Hand-written plain `.md` agents in `.github/agents/` are never deleted by orphan cleanup
 - `infer` is a retired agent field, superseded by `disable-model-invocation`; conforme emits neither
 - Agent prompt bodies are capped at 30,000 characters upstream
 - Copilot now has hooks support (CLI and cloud agent) -- not synced by conforme
+- Copilot (cloud agent, CLI and VS Code) also loads `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `.claude/rules/`, so in a project that keeps those files (or syncs Claude Code / Gemini CLI too) the instructions reach the model more than once

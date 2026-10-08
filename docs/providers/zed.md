@@ -47,6 +47,8 @@ Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` 
   - `.zed/settings.json` holds the user's entire Zed configuration, so conforme **merges** the `context_servers` key into any existing file rather than overwriting it, and `remove zed` / `migrate --source zed` leave the file in place
   - Zed settings are JSONC. The merge edits only `context_servers` in place, so comments and trailing commas elsewhere survive; per-server keys conforme never emits are kept, and a file conforme cannot parse is left untouched (sync fails). A hand-set `"enabled": false` is reset, so `check` never passes while Zed hides a synced server
   - Zed's remote variant has no `env`, so `env` is written on stdio servers only
+  - `context_servers` is a documented project setting (`.zed/settings.json`), not only a user one
+  - An extension context server configured only through `settings` (no `command`, no `url`) has no portable form: conforme skips it on read and keeps it untouched on write
   - Zed expands no variable references (none documented or found in its source): values are copied as they are, so a `${VAR}` from another tool stays literal
 - Project skills and project MCP servers only take effect in a trusted worktree (project MCP servers auto-start only when the project is trusted)
 - Zed has "Agent Profiles" but configured via settings, not project files
