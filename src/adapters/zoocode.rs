@@ -4,6 +4,35 @@ use std::path::{Path, PathBuf};
 use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::{rule_file_name, ActivationMode, NormalizedConfig, NormalizedRule};
 
+/// The comment `generate` puts above a glob rule, since Zoo Code has no
+/// activation modes.
+const SCOPE_COMMENT: &str = "<!-- Intended scope: ";
+
+/// `01-security` → `security`: the numeric prefix only orders the files.
+fn strip_order_prefix(stem: &str) -> &str {
+    match stem.split_once('-') {
+        Some((digits, rest))
+            if !digits.is_empty()
+                && digits.bytes().all(|b| b.is_ascii_digit())
+                && !rest.is_empty() =>
+        {
+            rest
+        }
+        _ => stem,
+    }
+}
+
+/// Read back the scope comment `generate` writes above a glob rule, so the
+/// rule keeps its globs when Zoo Code is the source.
+fn parse_scope_comment(content: &str) -> (ActivationMode, String) {
+    let scoped = content.strip_prefix(SCOPE_COMMENT).and_then(|rest| {
+        let (line, body) = rest.split_once('\n').unwrap_or((rest, ""));
+        let globs = crate::config::split_globs(line.trim_end().strip_suffix("-->")?);
+        (!globs.is_empty()).then(|| (ActivationMode::GlobMatch(globs), body.trim().to_string()))
+    });
+    scoped.unwrap_or_else(|| (ActivationMode::Always, content.to_string()))
+}
+
 /// Zoo Code (community fork of Roo Code) adapter.
 /// Rules in .roo/rules/*.md — plain Markdown, NO YAML frontmatter.
 /// Files loaded in alphabetical order. Mode-specific rules in .roo/rules-{mode}/.
@@ -18,10 +47,10 @@ impl AiToolAdapter for ZooCodeAdapter {
         "zoocode"
     }
 
+    // `.clinerules` is Cline's own file: Zoo Code reads it only as a legacy
+    // fallback, so it does not mean Zoo Code is set up.
     fn detect(&self, project_root: &Path) -> bool {
-        project_root.join(".roo").is_dir()
-            || project_root.join(".roorules").exists()
-            || project_root.join(".clinerules").exists()
+        project_root.join(".roo").is_dir() || project_root.join(".roorules").exists()
     }
 
     fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
@@ -53,24 +82,33 @@ impl AiToolAdapter for ZooCodeAdapter {
 
         let rules_dir = project_root.join(".roo").join("rules");
         // Zoo Code reads `.roo/rules/` recursively, sorting by base name only.
-        for path in crate::adapters::collect_rule_files(&rules_dir, "md")? {
-            let content = std::fs::read_to_string(&path)
+        let rule_files = crate::adapters::collect_rule_files(&rules_dir, "md")?;
+        for path in &rule_files {
+            let content = std::fs::read_to_string(path)
                 .with_context(|| format!("failed to read {}", path.display()))?;
-            let name = path
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
+            let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+            // `NN-` only orders the files; it is not part of the rule's name.
+            let name = strip_order_prefix(&stem).to_string();
+            let (activation, body) = parse_scope_comment(content.trim());
 
-            if name == "00-general" || name == "general" {
-                instructions = content.trim().to_string();
+            if name == "general" && activation == ActivationMode::Always {
+                instructions = body;
             } else {
                 rules.push(NormalizedRule {
                     name,
-                    content: content.trim().to_string(),
-                    activation: ActivationMode::Always,
+                    content: body,
+                    activation,
                 });
             }
+        }
+        // Zoo Code falls back to `.roorules` when `.roo/rules/` is missing or
+        // empty.
+        let roorules = project_root.join(".roorules");
+        if rule_files.is_empty() && roorules.is_file() {
+            instructions = std::fs::read_to_string(&roorules)
+                .with_context(|| format!("failed to read {}", roorules.display()))?
+                .trim()
+                .to_string();
         }
 
         // Read skills and MCP back so a Zoo Code project round-trips as a source.
@@ -122,10 +160,7 @@ impl AiToolAdapter for ZooCodeAdapter {
             let mut content = String::new();
             match &rule.activation {
                 ActivationMode::GlobMatch(globs) => {
-                    content.push_str(&format!(
-                        "<!-- Intended scope: {} -->\n\n",
-                        globs.join(", ")
-                    ));
+                    content.push_str(&format!("{SCOPE_COMMENT}{} -->\n\n", globs.join(", ")));
                 }
                 ActivationMode::AgentDecision { description } if !description.is_empty() => {
                     content.push_str(&format!("<!-- {description} -->\n\n"));
