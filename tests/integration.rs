@@ -2348,6 +2348,29 @@ fn test_migrate_keeps_skills_another_detected_tool_reads() {
 }
 
 #[test]
+fn test_migrate_is_not_blocked_by_another_tools_unreadable_settings() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join(".rules"), "Be helpful.\n").unwrap();
+    fs::create_dir_all(root.join(".gemini")).unwrap();
+    fs::write(root.join(".gemini/settings.json"), "{ not json").unwrap();
+    fs::create_dir_all(root.join(".zed")).unwrap();
+    fs::write(
+        root.join(".zed/settings.json"),
+        r#"{"context_servers": {"fs": {"command": "npx"}}}"#,
+    )
+    .unwrap();
+
+    migrate(root, "zed", "claude");
+
+    assert!(root.join("CLAUDE.md").exists());
+    assert_eq!(
+        fs::read_to_string(root.join(".gemini/settings.json")).unwrap(),
+        "{ not json"
+    );
+}
+
+#[test]
 fn test_migrate_keeps_files_conforme_never_reads() {
     // Kiro `.json` agents and Zoo Code `.txt` rules are not read by conforme:
     // migrating away must not delete them along with the generated files.

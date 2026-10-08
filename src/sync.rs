@@ -860,12 +860,13 @@ pub fn run_migrate(
     let mut staying_dirs = Vec::new();
     for adapter in &staying {
         let adapter_config = target_config(project_root, source, adapter.as_ref(), &config);
-        kept_paths.extend(
-            adapter
-                .generate(project_root, &adapter_config)?
-                .into_iter()
-                .map(|(path, _)| path),
-        );
+        // Another tool's unreadable settings file must not block the
+        // migration; its managed directories below are still protected.
+        let generated = match adapter.generate(project_root, &adapter_config) {
+            Err(e) if adapter.id() == output => return Err(e),
+            result => result.unwrap_or_default(),
+        };
+        kept_paths.extend(generated.into_iter().map(|(path, _)| path));
         staying_dirs.extend(
             adapter
                 .managed_directories(project_root)
