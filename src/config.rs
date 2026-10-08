@@ -33,7 +33,7 @@ pub struct NormalizedSkill {
 }
 
 /// A normalized MCP server definition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NormalizedMcpServer {
     pub name: String,
     pub transport: McpTransport,
@@ -41,7 +41,7 @@ pub struct NormalizedMcpServer {
 }
 
 /// MCP server transport type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum McpTransport {
     Stdio {
         command: String,
@@ -95,6 +95,15 @@ impl NormalizedConfig {
             mcp_servers: Vec::new(),
             agents: Vec::new(),
         }
+    }
+
+    /// Whether the config holds nothing at all to sync.
+    pub fn is_empty(&self) -> bool {
+        self.instructions.trim().is_empty()
+            && self.rules.is_empty()
+            && self.skills.is_empty()
+            && self.mcp_servers.is_empty()
+            && self.agents.is_empty()
     }
 }
 
@@ -214,6 +223,20 @@ pub fn split_globs(globs: &str) -> Vec<String> {
         .map(|p| p.trim().to_string())
         .filter(|p| !p.is_empty())
         .collect()
+}
+
+/// Read a glob frontmatter field written either as a YAML list or as a
+/// comma-separated string (`split_globs`); blank entries are dropped.
+pub fn yaml_globs(value: Option<&serde_yaml_ng::Value>) -> Vec<String> {
+    match value {
+        Some(serde_yaml_ng::Value::Sequence(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty())
+            .collect(),
+        Some(serde_yaml_ng::Value::String(s)) => split_globs(s),
+        _ => Vec::new(),
+    }
 }
 
 /// Expand `{a,b}` alternatives in a glob (`*.{ts,tsx}` → `*.ts`, `*.tsx`).

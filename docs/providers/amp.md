@@ -38,7 +38,7 @@ Also reads `AGENT.md` (singular) as fallback.
 - ID: `amp`
 - Capabilities: skills, MCP
 - No activation modes, no agents
-- Skills use `.agents/skills/` (shared format with Codex)
+- Skills use `.agents/skills/` (shared format with Codex); `migrate` between Amp and Codex or Zed leaves `.agents/skills/` untouched, since the skills there already belong to the output
 - `read()` round-trips AGENTS.md plus skills (`.agents/skills/`) and MCP (`.amp/settings.json`); the file is parsed with conforme's AGENTS.md convention (instructions plus `## Rule:` sections), and its `## Skill:`/`## Agent:`/`## MCP:` sections are added to what this tool's own files hold (which win on a name clash). With this tool as the source, AGENTS.md *is* the source: sync never regenerates it (`generate_agents_md` does not apply) and `gitignore install` keeps it tracked
 
 ## Notes

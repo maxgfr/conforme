@@ -287,7 +287,8 @@ fn test_roundtrip_copilot_skills_agents_mcp() {
     assert_eq!(read_config.skills[0].name, "deploy");
     assert_eq!(read_config.agents.len(), 1);
     assert_eq!(read_config.agents[0].name, "reviewer");
-    assert_eq!(read_config.agents[0].model.as_deref(), Some("sonnet"));
+    // `sonnet` is a Claude Code alias, not a Copilot model: it is left out.
+    assert_eq!(read_config.agents[0].model, None);
     assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
     assert_eq!(
         find_http_url(&read_config, "api").as_deref(),
@@ -643,7 +644,110 @@ fn test_zoocode_reads_nested_rules() {
 
     assert_eq!(config.instructions, "General.");
     assert_eq!(config.rules.len(), 1, "nested rule dropped");
-    assert_eq!(config.rules[0].name, "01-style");
+    // The `NN-` ordering prefix is not part of the rule's name.
+    assert_eq!(config.rules[0].name, "style");
+}
+
+/// Zoo Code has no activation modes: a glob rule is written always-on with an
+/// `Intended scope` comment. Reading it back must restore the scope and the
+/// name (without the `NN-` prefix), so a second write is byte-identical
+/// instead of growing `01-01-security.md`.
+#[test]
+fn test_roundtrip_zoocode_is_stable() {
+    let adapter = conforme::adapters::zoocode::ZooCodeAdapter;
+    let dir = TempDir::new().unwrap();
+    setup_tool(&dir, "zoocode");
+    let config = NormalizedConfig {
+        instructions: "Be helpful.".to_string(),
+        rules: vec![
+            NormalizedRule {
+                name: "security".to_string(),
+                content: "No eval.".to_string(),
+                activation: ActivationMode::Always,
+            },
+            NormalizedRule {
+                name: "ts".to_string(),
+                content: "Use TS.".to_string(),
+                activation: ActivationMode::GlobMatch(vec![
+                    "src/**/*.{ts,tsx}".to_string(),
+                    "lib/**".to_string(),
+                ]),
+            },
+        ],
+        ..Default::default()
+    };
+    let first = adapter.generate(dir.path(), &config).unwrap();
+    adapter.write(dir.path(), &config).unwrap();
+
+    let read_config = adapter.read(dir.path()).unwrap();
+    assert_eq!(read_config.rules[0].name, "security");
+    assert_eq!(read_config.rules[1].name, "ts");
+    assert_eq!(read_config.rules[1].activation, config.rules[1].activation);
+    assert_eq!(read_config.rules[1].content, "Use TS.");
+    assert_eq!(adapter.generate(dir.path(), &read_config).unwrap(), first);
+}
+
+#[test]
+fn test_opencode_reads_every_agent_location() {
+    // OpenCode loads `.opencode/agents/`, the singular `.opencode/agent/` and
+    // the `agent` key of opencode.json together; built-in overrides
+    // (`build`, `plan`) are not agents.
+    let adapter = conforme::adapters::opencode::OpenCodeAdapter;
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".opencode/agents")).unwrap();
+    fs::create_dir_all(root.join(".opencode/agent")).unwrap();
+    fs::write(
+        root.join(".opencode/agents/docs.md"),
+        "---\ndescription: Docs\nmode: subagent\n---\nWrite docs.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".opencode/agent/legacy.md"),
+        "---\ndescription: Legacy\nmode: subagent\n---\nOld.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("opencode.json"),
+        r#"{"agent": {
+            "build": {"model": "anthropic/claude-sonnet-4-5"},
+            "code-reviewer": {"description": "Review", "prompt": "Review."},
+            "docs": {"description": "JSON docs", "prompt": "Ignored."}
+        }}"#,
+    )
+    .unwrap();
+
+    let config = adapter.read(root).unwrap();
+    let mut names: Vec<&str> = config.agents.iter().map(|a| a.name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, vec!["code-reviewer", "docs", "legacy"]);
+    let docs = config.agents.iter().find(|a| a.name == "docs").unwrap();
+    assert_eq!(docs.description, "Docs");
+}
+
+#[test]
+fn test_zoocode_reads_roorules_when_rules_dir_is_empty() {
+    // Zoo Code falls back to `.roorules` when `.roo/rules/` is missing or empty.
+    let adapter = conforme::adapters::zoocode::ZooCodeAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join(".roorules"), "Legacy rules.\n").unwrap();
+    assert_eq!(
+        adapter.read(dir.path()).unwrap().instructions,
+        "Legacy rules."
+    );
+
+    fs::create_dir_all(dir.path().join(".roo/rules")).unwrap();
+    fs::write(dir.path().join(".roo/rules/00-general.md"), "New.\n").unwrap();
+    assert_eq!(adapter.read(dir.path()).unwrap().instructions, "New.");
+}
+
+#[test]
+fn test_zoocode_is_not_detected_from_clinerules() {
+    // `.clinerules` is Cline's; Zoo Code only reads it as a legacy file.
+    use conforme::adapters::AiToolAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".clinerules")).unwrap();
+    assert!(!conforme::adapters::zoocode::ZooCodeAdapter.detect(dir.path()));
 }
 
 /// Claude Code accepts `paths` as a comma-separated string, scans
@@ -756,6 +860,28 @@ fn test_deepseek_reads_flat_skills() {
     let names: Vec<_> = config.skills.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, ["deploy", "release"]);
     assert_eq!(config.skills[0].description, "Deploy (bundle)");
+}
+
+/// dsh ignores a flat file without both `name` and `description`, or with a
+/// name that is not kebab-case: a README there is not a skill.
+#[test]
+fn test_deepseek_ignores_flat_files_that_are_not_skills() {
+    let adapter = conforme::adapters::deepseek::DeepSeekAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".dsh/skills")).unwrap();
+    fs::write(dir.path().join(".dsh/skills/README.md"), "# Our skills\n").unwrap();
+    fs::write(
+        dir.path().join(".dsh/skills/notes.md"),
+        "---\nname: notes\n---\nNo description.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".dsh/skills/bad.md"),
+        "---\nname: Bad Name\ndescription: d\n---\nBad.\n",
+    )
+    .unwrap();
+
+    assert!(adapter.read(dir.path()).unwrap().skills.is_empty());
 }
 
 #[test]

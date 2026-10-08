@@ -45,10 +45,12 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 ## Notes
 
 - **MCP supports both global and project-level** -- configured via TOML in `~/.codex/config.toml` (global) or `.codex/config.toml` (project, requires trust approval)
-- MCP TOML format: `[mcp_servers.name]`; stdio uses `command`, `args`, and `env`, while HTTP uses `url` and `http_headers`
-- Codex has no `${VAR}` interpolation: it forwards variables by name (`env_vars`, `bearer_token_env_var`, `env_http_headers`). Values are written literally
+- MCP TOML format: `[mcp_servers.name]`; stdio uses `command`, `args`, `env` and `env_vars`, while HTTP uses `url`, `http_headers`, `env_http_headers` and `bearer_token_env_var`
+- Codex has no `${VAR}` interpolation: it forwards variables by name. conforme writes a stdio `NAME=${NAME}` as `env_vars = ["NAME"]` (other `env` values are literal), `Authorization: Bearer ${VAR}` as `bearer_token_env_var = "VAR"`, a header that is exactly `${VAR}` as `env_http_headers.<Header> = "VAR"`, and other headers as `http_headers`; all of them read back to `${VAR}`. `env_vars` object entries with `source = "remote"` are Codex-only and kept by the merge
+- `env` on an HTTP server is dropped, as in every JSON shape without `env` on remote servers
 - Disabled servers (`enabled = false`) are omitted when migrating from Codex
-- Fields outside conforme's normalized transport model (for example `auth`, `bearer_token_env_var`, `env_http_headers`, `cwd`, or `env_vars`) fail migration explicitly rather than silently losing behavior
+- Codex tuning keys are accepted on read and ignored (the merge keeps them): `enabled`, `required`, `startup_timeout_sec`, `startup_timeout_ms`, `tool_timeout_sec`, `enabled_tools`, `disabled_tools`, `default_tools_approval_mode`, `tools`, `scopes`, `oauth_resource`
+- Fields outside conforme's normalized transport model (for example `auth`, `cwd`, `http_headers_helper`, or `env_vars` entries with `source = "remote"`) fail migration explicitly rather than silently losing behavior
 - When a server switches from HTTP to stdio, the merge drops every key Codex rejects on a stdio server ("X is not supported for stdio"): `url`, `http_headers`, `env_http_headers`, `http_headers_helper`, `bearer_token_env_var`, `bearer_token`, `auth`, `oauth`, `oauth_resource`. Switching to HTTP drops `command`, `args`, `env`, `cwd`, `env_vars`
 - Skills are always written with a `description`; the Codex skill parser rejects a skill without one, so an empty description falls back to the name
 - Codex reads at most one file per directory: `AGENTS.override.md` when it exists, otherwise `AGENTS.md`. The override is a personal, local file, so conforme's `read()` deliberately uses the shared `AGENTS.md` as the source and never propagates the override; conforme writes neither file
@@ -60,4 +62,4 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 
 ## Manual skill invocation
 
-Manual skills preserve `disable-model-invocation: true`, OpenCode V2 `metadata.opencode/autoinvoke: "false"`, and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. OpenCode V1 still needs the corresponding `permission.skill` deny entries; skill synchronization does not change user permissions.
+Manual skills preserve `disable-model-invocation: true`, `metadata.opencode/autoinvoke: "false"`, and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. conforme writes `metadata.opencode/autoinvoke` as a hint that OpenCode is not known to read (no reader exists on its `dev` branch), so OpenCode needs the corresponding `permission.skill` deny entries; skill synchronization does not change user permissions.

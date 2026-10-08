@@ -164,13 +164,22 @@ fn render_plain(
 /// key in `owned_keys` (the keys conforme may emit for this tool, across all
 /// transports, plus any enable/disable flag it resets). Any other key an
 /// existing entry carries is tool-specific configuration and is kept.
+///
+/// An existing entry no source can express (see [`is_expressible_server`]:
+/// a Zed extension server, a Claude `type: "sdk"` server) is kept as is.
 pub fn merge_server_entries(
     existing: Option<&Value>,
     generated: Map<String, Value>,
     owned_keys: &[&str],
 ) -> Map<String, Value> {
     let existing = existing.and_then(Value::as_object);
-    generated
+    let kept: Vec<(String, Value)> = existing
+        .into_iter()
+        .flatten()
+        .filter(|(name, entry)| !generated.contains_key(*name) && !is_expressible_server(entry))
+        .map(|(name, entry)| (name.clone(), entry.clone()))
+        .collect();
+    let mut merged: Map<String, Value> = generated
         .into_iter()
         .map(|(name, entry)| {
             let merged = match (existing.and_then(|e| e.get(&name)), entry) {
@@ -187,7 +196,26 @@ pub fn merge_server_entries(
             };
             (name, merged)
         })
-        .collect()
+        .collect();
+    merged.extend(kept);
+    merged
+}
+
+/// Whether a server entry is one conforme can read and write: a local
+/// server with a `command` or a remote one with a URL, and not a Claude
+/// Code in-process `type: "sdk"` server. Anything else (a Zed extension
+/// server configured only through `settings`) is skipped on read and kept
+/// untouched on write.
+pub fn is_expressible_server(entry: &Value) -> bool {
+    let Some(obj) = entry.as_object() else {
+        return false;
+    };
+    if obj.get("type").and_then(Value::as_str) == Some("sdk") {
+        return false;
+    }
+    ["command", "url", "httpUrl", "serverUrl"]
+        .iter()
+        .any(|key| obj.contains_key(*key))
 }
 
 fn to_cst(value: &Value) -> CstInputValue {
@@ -318,6 +346,31 @@ mod tests {
         assert_eq!(
             Value::Object(merged),
             json!({"fs": {"command": "npx", "args": ["-y"], "alwaysAllow": ["read"]}})
+        );
+    }
+
+    #[test]
+    fn test_merge_server_entries_keeps_entries_conforme_cannot_express() {
+        // A Zed extension server and a Claude SDK server carry neither a
+        // command nor a URL: no source can produce them, so they stay.
+        let existing = json!({
+            "github-ext": {"settings": {"token": "x"}},
+            "sdk-thing": {"type": "sdk", "name": "sdk-thing"},
+            "gone": {"command": "x"}
+        });
+        let generated = json!({"fs": {"command": "npx"}});
+        let merged = merge_server_entries(
+            Some(&existing),
+            generated.as_object().unwrap().clone(),
+            &["type", "command", "args", "env", "url", "headers"],
+        );
+        assert_eq!(
+            Value::Object(merged),
+            json!({
+                "fs": {"command": "npx"},
+                "github-ext": {"settings": {"token": "x"}},
+                "sdk-thing": {"type": "sdk", "name": "sdk-thing"}
+            })
         );
     }
 }

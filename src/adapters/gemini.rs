@@ -4,6 +4,52 @@ use std::path::{Path, PathBuf};
 use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::NormalizedConfig;
 
+/// An agent file in `.gemini/agents/` that is the user's, not a local agent
+/// conforme reads and writes: a `_`-prefixed draft (Gemini skips those), a
+/// `kind: remote` (A2A) agent, or a file whose frontmatter is a YAML list of
+/// remote agents. Such files are neither read nor cleaned as orphans.
+fn is_gemini_user_agent(path: &Path) -> bool {
+    if path
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with('_'))
+    {
+        return true;
+    }
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    match crate::frontmatter::parse(&content) {
+        Ok((fields, _)) => fields
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .is_some_and(|kind| kind != "local"),
+        // Not a map: a list of remote agents (or a file Gemini rejects).
+        Err(_) => true,
+    }
+}
+
+/// The context file names Gemini CLI loads in this project: the project
+/// `.gemini/settings.json` `context.fileName` (a string or a list), else
+/// `GEMINI.md`.
+fn context_file_names(project_root: &Path) -> Vec<String> {
+    let configured =
+        crate::json_settings::load(&project_root.join(".gemini").join("settings.json"))
+            .ok()
+            .flatten()
+            .and_then(|settings| match settings.get("context")?.get("fileName")? {
+                serde_json::Value::String(name) => Some(vec![name.clone()]),
+                serde_json::Value::Array(names) => Some(
+                    names
+                        .iter()
+                        .filter_map(|n| n.as_str().map(str::to_string))
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .filter(|names: &Vec<String>| !names.is_empty());
+    configured.unwrap_or_else(|| vec!["GEMINI.md".to_string()])
+}
+
 /// Gemini CLI adapter.
 /// Uses GEMINI.md discovered hierarchically.
 /// Supports @path/to/file.md imports. No per-rule files — single GEMINI.md.
@@ -40,38 +86,46 @@ impl AiToolAdapter for GeminiAdapter {
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
-            // Gemini skips `_`-prefixed agent files: they are the user's drafts.
-            ManagedDir::files_except(project_root.join(".gemini").join("agents"), ".md", |path| {
-                path.file_name()
-                    .is_some_and(|n| n.to_string_lossy().starts_with('_'))
-            }),
+            ManagedDir::files_except(
+                project_root.join(".gemini").join("agents"),
+                ".md",
+                is_gemini_user_agent,
+            ),
             ManagedDir::subdirs(project_root.join(".gemini").join("skills")),
         ]
     }
 
+    fn reads_agents_md(&self, project_root: &Path) -> bool {
+        context_file_names(project_root)
+            .iter()
+            .any(|name| name == "AGENTS.md")
+    }
+
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
-        let gemini_md = project_root.join("GEMINI.md");
-        let instructions = if gemini_md.exists() {
-            std::fs::read_to_string(&gemini_md)
-                .with_context(|| format!("failed to read {}", gemini_md.display()))?
-                .trim()
-                .to_string()
-        } else {
-            String::new()
-        };
+        // The context files `context.fileName` names (GEMINI.md by default);
+        // AGENTS.md among them is parsed with the AGENTS.md convention below.
+        let context_files = context_file_names(project_root);
+        let mut parts = Vec::new();
+        for name in context_files.iter().filter(|n| *n != "AGENTS.md") {
+            let path = project_root.join(name);
+            if path.is_file() {
+                let text = std::fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read {}", path.display()))?;
+                if !text.trim().is_empty() {
+                    parts.push(text.trim().to_string());
+                }
+            }
+        }
+        let instructions = parts.join("\n\n");
 
         // Read skills, agents, and MCP so a Gemini project round-trips as a source.
         let skills =
             crate::skills::read_skills_from_dir(&project_root.join(".gemini").join("skills"))?;
-        // Gemini skips agent files whose name starts with `_` (drafts), so a
-        // disabled agent is not propagated to the other tools either.
+        // Drafts and remote agents are not propagated to the other tools.
         let agent_files: Vec<PathBuf> =
             crate::skills::agent_files(&project_root.join(".gemini").join("agents"), false)?
                 .into_iter()
-                .filter(|p| {
-                    !p.file_name()
-                        .is_some_and(|n| n.to_string_lossy().starts_with('_'))
-                })
+                .filter(|p| !is_gemini_user_agent(p))
                 .collect();
         let agents = crate::skills::read_agent_files(&agent_files)?;
         let mut mcp_servers = Vec::new();
@@ -84,13 +138,27 @@ impl AiToolAdapter for GeminiAdapter {
             );
         }
 
-        Ok(NormalizedConfig {
+        let config = NormalizedConfig {
             instructions,
             rules: Vec::new(),
             skills,
             agents,
             mcp_servers,
-        })
+        };
+        if !self.reads_agents_md(project_root) {
+            return Ok(config);
+        }
+        let other_files = config.instructions.clone();
+        let mut config =
+            crate::markdown::read_native_agents_md(project_root, &["AGENTS.md"], config)?;
+        if !other_files.is_empty() {
+            config.instructions = if config.instructions.is_empty() {
+                other_files
+            } else {
+                format!("{other_files}\n\n{}", config.instructions)
+            };
+        }
+        Ok(config)
     }
 
     fn generate(

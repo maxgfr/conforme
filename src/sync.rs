@@ -225,6 +225,18 @@ pub fn run_sync(
         bail!("Validation failed. Fix the errors above before syncing.");
     }
 
+    // A source that reads back as empty (an unconfigured tool, a format
+    // conforme does not read) would blank AGENTS.md and clean every rule,
+    // skill and agent of the other tools: refuse to treat it as a config.
+    if config.is_empty() {
+        eprintln!(
+            "{} {} has no instructions, rules, skills, agents or MCP servers: nothing to sync.",
+            "!".yellow(),
+            source_id
+        );
+        return Ok(());
+    }
+
     let adapters = adapters::all_adapters();
     let mut any_written = false;
 
@@ -373,7 +385,8 @@ pub fn run_sync(
 
     // Optionally generate AGENTS.md as output — unless the source tool reads
     // AGENTS.md itself, in which case that file is the source.
-    let source_reads_agents_md = find_adapter(&source_id).is_some_and(|a| a.reads_agents_md());
+    let source_reads_agents_md =
+        find_adapter(&source_id).is_some_and(|a| a.reads_agents_md(project_root));
     if !dry_run
         && source_id != "agents.md"
         && !source_reads_agents_md
@@ -828,35 +841,60 @@ pub fn run_migrate(
     // Warn about capability loss on the output adapter
     warn_capability_loss(output_adapter.as_ref(), &config);
 
+    // The output leaves a skills directory it shares with the source
+    // (`.agents/skills/` for Codex, Amp and Zed) alone, as `sync` does: the
+    // skills there are already the output's, and regenerating them would drop
+    // frontmatter conforme does not model and flatten nested skills.
+    let output_config = target_config(project_root, source, output_adapter.as_ref(), &config);
+
     // Collect source files to delete (generated files for the source adapter)
     let source_files = source_adapter.generate(project_root, &config)?;
-    // Files the output tool owns are never deleted, even when they sit in a
-    // directory both tools use (`.agents/skills/` is shared by Codex, Amp and
-    // Zed): migrating from Amp to Codex would otherwise remove the skills it
-    // has just written.
-    let output_paths: std::collections::HashSet<std::path::PathBuf> = output_adapter
-        .generate(project_root, &config)?
-        .into_iter()
-        .map(|(path, _)| path)
+    // Tools that keep using the project after the migration: the output and
+    // every other detected tool. A file one of them generates is never
+    // deleted, even when it sits in a directory it shares with the source.
+    let staying: Vec<&Box<dyn AiToolAdapter>> = adapters
+        .iter()
+        .filter(|a| a.id() == output || (a.id() != source && a.detect(project_root)))
         .collect();
-    // Migrating away from a tool clears its managed directories wholesale,
-    // except a directory the output tool manages too: everything in it
-    // (bundled skill scripts included) now belongs to the output.
-    let output_managed_dirs: Vec<std::path::PathBuf> = output_adapter
+    let mut kept_paths = std::collections::HashSet::new();
+    let mut staying_dirs = Vec::new();
+    for adapter in &staying {
+        let adapter_config = target_config(project_root, source, adapter.as_ref(), &config);
+        // Another tool's unreadable settings file must not block the
+        // migration; its managed directories below are still protected.
+        let generated = match adapter.generate(project_root, &adapter_config) {
+            Err(e) if adapter.id() == output => return Err(e),
+            result => result.unwrap_or_default(),
+        };
+        kept_paths.extend(generated.into_iter().map(|(path, _)| path));
+        staying_dirs.extend(
+            adapter
+                .managed_directories(project_root)
+                .into_iter()
+                .map(|dir| dir.path),
+        );
+    }
+    // Migrating away from a tool clears what conforme manages in its
+    // directories, except a directory a staying tool manages too: everything
+    // in it (bundled skill scripts included) belongs to that tool.
+    let source_managed_dirs: Vec<adapters::ManagedDir> = source_adapter
         .managed_directories(project_root)
         .into_iter()
-        .map(|dir| dir.path)
+        .filter(|dir| !staying_dirs.contains(&dir.path))
         .collect();
-    let source_managed_dirs: Vec<std::path::PathBuf> = source_adapter
-        .managed_directories(project_root)
-        .into_iter()
-        .map(|dir| dir.path)
-        .filter(|dir| !output_managed_dirs.contains(dir))
-        .collect();
+    let is_kept = |path: &std::path::PathBuf| {
+        kept_paths.contains(path) || staying_dirs.iter().any(|dir| path.starts_with(dir))
+    };
+    let managed_files = |dir: &adapters::ManagedDir| -> Result<Vec<std::path::PathBuf>> {
+        Ok(migrated_files(dir)?
+            .into_iter()
+            .filter(|path| !kept_paths.contains(path))
+            .collect())
+    };
 
     if dry_run {
         // Show what would be written
-        let generated = output_adapter.generate(project_root, &config)?;
+        let generated = output_adapter.generate(project_root, &output_config)?;
         println!(
             "{} {} (dry-run, would generate):",
             ">".cyan(),
@@ -878,7 +916,7 @@ pub fn run_migrate(
             source_adapter.name().bold()
         );
         for (path, _) in &source_files {
-            if path.exists() && !output_paths.contains(path) {
+            if path.exists() && !is_kept(path) {
                 let rel = path.strip_prefix(project_root).unwrap_or(path);
                 if source_adapter.is_shared_file(path) {
                     println!(
@@ -893,19 +931,17 @@ pub fn run_migrate(
         }
         // Also show managed directory contents (recursive)
         for dir in &source_managed_dirs {
-            if dir.is_dir() {
-                for path in collect_files_recursive(dir)? {
-                    if output_paths.contains(&path) {
-                        continue;
-                    }
-                    let rel = path.strip_prefix(project_root).unwrap_or(&path);
-                    println!("    {} {}", "would remove".red(), rel.display());
+            for path in managed_files(dir)? {
+                if source_files.iter().any(|(p, _)| *p == path) {
+                    continue;
                 }
+                let rel = path.strip_prefix(project_root).unwrap_or(&path);
+                println!("    {} {}", "would remove".red(), rel.display());
             }
         }
     } else {
         // 1. Write output files
-        let report = output_adapter.write(project_root, &config)?;
+        let report = output_adapter.write(project_root, &output_config)?;
         if !report.files_written.is_empty() {
             println!("{} {}:", ">".green(), output_adapter.name().bold());
             for path in &report.files_written {
@@ -922,7 +958,7 @@ pub fn run_migrate(
         let mut removed_paths = Vec::new();
 
         for (path, _) in &source_files {
-            if source_adapter.is_shared_file(path) || output_paths.contains(path) {
+            if source_adapter.is_shared_file(path) || is_kept(path) {
                 continue;
             }
             if path.exists() {
@@ -933,11 +969,8 @@ pub fn run_migrate(
 
         // Also clean managed directories (recursive)
         for dir in &source_managed_dirs {
-            if dir.is_dir() {
-                for path in collect_files_recursive(dir)? {
-                    if output_paths.contains(&path) {
-                        continue;
-                    }
+            for path in managed_files(dir)? {
+                if path.exists() {
                     std::fs::remove_file(&path)?;
                     removed_paths.push(path);
                 }
@@ -1076,6 +1109,30 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
 }
 
 /// Recursively collect all files under a directory.
+/// The files `migrate` removes from a managed directory of the source tool:
+/// in a rules or agents directory, the files (nested ones included) with the
+/// suffix conforme reads there and that `keep` does not protect; in a skills
+/// directory, every file inside a skill folder. A file the tool accepts but
+/// conforme never reads (a Kiro `.json` agent, a Zoo Code `.txt` rule, a dsh
+/// flat skill) was not migrated, so it stays.
+fn migrated_files(dir: &adapters::ManagedDir) -> Result<Vec<std::path::PathBuf>> {
+    let files = collect_files_recursive(&dir.path)?;
+    Ok(match dir.orphan_suffix {
+        Some(suffix) => files
+            .into_iter()
+            .filter(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(suffix))
+                    && !dir.keep.is_some_and(|keep| keep(path))
+            })
+            .collect(),
+        None => files
+            .into_iter()
+            .filter(|path| path.parent() != Some(dir.path.as_path()))
+            .collect(),
+    })
+}
+
 fn collect_files_recursive(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
     let mut files = Vec::new();
     if !dir.is_dir() {

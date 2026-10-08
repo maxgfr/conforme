@@ -37,7 +37,7 @@ impl AiToolAdapter for OpenCodeAdapter {
     /// `opencode.json` is the user's whole OpenCode configuration; conforme
     /// only merges the `mcp` and `agent` keys into it, so `remove`/`migrate`
     /// must never delete the file wholesale.
-    fn reads_agents_md(&self) -> bool {
+    fn reads_agents_md(&self, _project_root: &Path) -> bool {
         true
     }
 
@@ -73,12 +73,23 @@ impl AiToolAdapter for OpenCodeAdapter {
             }
         }
 
-        // Read agents back from `.opencode/agents/*.md`, falling back to the
-        // `agent` key in `opencode.json` when no markdown agents exist.
-        let mut agents = crate::skills::read_agents_from_dir(
-            &project_root.join(".opencode").join("agents"),
-            true,
-        )?;
+        // Read agents back from `.opencode/agents/` and the singular
+        // `.opencode/agent/`, then the `agent` key in `opencode.json`:
+        // OpenCode loads all three, the markdown files winning on a clash.
+        let mut agents = Vec::new();
+        for dir in ["agents", "agent"] {
+            for agent in crate::skills::read_agents_from_dir(
+                &project_root.join(".opencode").join(dir),
+                true,
+            )? {
+                if !agents
+                    .iter()
+                    .any(|a: &crate::config::NormalizedAgent| a.name == agent.name)
+                {
+                    agents.push(agent);
+                }
+            }
+        }
 
         // MCP servers live inside `opencode.json` under the `mcp` key, in
         // OpenCode's own shape (`type: local/remote`, `command` array,
@@ -93,9 +104,11 @@ impl AiToolAdapter for OpenCodeAdapter {
                     crate::mcp::EnvRefStyle::OpenCode,
                 );
             }
-            if agents.is_empty() {
-                if let Some(agent) = root.get("agent") {
-                    agents = crate::mcp::parse_opencode_agent_object(agent);
+            if let Some(agent) = root.get("agent") {
+                for agent in crate::mcp::parse_opencode_agent_object(agent) {
+                    if !agents.iter().any(|a| a.name == agent.name) {
+                        agents.push(agent);
+                    }
                 }
             }
         }

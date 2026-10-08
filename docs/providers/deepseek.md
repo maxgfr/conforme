@@ -100,6 +100,11 @@ Because this configuration is user-level and not project-scoped, conforme does
   `.dsh/skills/` — both `<name>/SKILL.md` bundles and flat `<name>.md` files,
   a bundle winning over a flat file of the same name — falling back to the
   shared `.agents/skills/` root
+- A flat `.dsh/skills/<name>.md` is read only when it has a kebab-case `name`
+  and a `description`, as dsh ignores any other (a README there is not a skill)
+- `.agents/skills/` is read only when `.dsh/skills/` holds no skill, although
+  dsh loads both roots (rank 100 and 200): a deliberate deviation, the shared
+  root is only a fallback for a project that carries the shared layout alone
 - Managed directory: `.dsh/skills`. conforme only writes bundles there, so
   orphan cleanup never deletes a top-level file (flat skills are safe)
 - Names are sanitized to kebab-case ASCII (accents folded); a name with no

@@ -69,11 +69,13 @@ pub trait AiToolAdapter: Send + Sync {
         false
     }
 
-    /// Whether the tool reads `AGENTS.md` itself as its instruction file
-    /// (Codex, OpenCode, Amp, DeepSeek Harness). When such a tool is the
-    /// source, `AGENTS.md` *is* its config: sync never regenerates it, and
+    /// Whether the tool reads `AGENTS.md` itself as its instruction file in
+    /// this project: always for Codex, OpenCode, Amp and DeepSeek Harness;
+    /// Claude Code when the project has no `CLAUDE.md`; Gemini CLI when
+    /// `context.fileName` names it. When such a tool is the source,
+    /// `AGENTS.md` *is* its config: sync never regenerates it, and
     /// `gitignore install` never ignores it.
-    fn reads_agents_md(&self) -> bool {
+    fn reads_agents_md(&self, _project_root: &Path) -> bool {
         false
     }
 

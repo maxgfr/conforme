@@ -41,14 +41,15 @@ Mode-specific rules go in `.roo/rules-{modeSlug}/` directories (e.g., `.roo/rule
 - ID: `zoocode`
 - Capabilities: skills, MCP
 - No activation modes, no agents
-- Uses numeric prefixes for ordering: `00-general.md`, `01-rule-name.md`
-- Glob/agent-decision info stored as HTML comments (`<!-- Intended scope: ... -->`)
+- Uses numeric prefixes for ordering: `00-general.md`, `01-rule-name.md`; the `NN-` prefix is stripped on read (`01-security.md` is the rule `security`)
+- Glob/agent-decision info stored as HTML comments (`<!-- Intended scope: ... -->`); the `Intended scope` comment is read back as the rule's globs
+- `.roorules` is read as the instructions when `.roo/rules/` is missing or empty, as Zoo Code does
 - `read()` round-trips rules plus skills (`.roo/skills/`) and MCP (`.roo/mcp.json`)
 
 ## Notes
 
 - Plain markdown only -- no YAML frontmatter in rules
-- `.roo/rules/` is read **recursively** and files are sorted by base name only (case-insensitive), which is what makes the `00-`/`01-` prefixes meaningful; conforme reads nested rules the same way. Zoo reads every file type there, conforme reads back only `.md`
+- `.roo/rules/` is read **recursively** and files are sorted by base name only (case-insensitive), which is what makes the `00-`/`01-` prefixes meaningful; conforme reads nested rules the same way. Zoo reads every file type there (`.txt` rules included), conforme reads back only `.md` (known gap); orphan cleanup and `migrate --source zoocode` leave `.txt` rules in place
 - Mode-specific *rules* are controlled via directory placement (`.roo/rules-{modeSlug}/`), not a frontmatter field; mode-specific skills live in `.roo/skills-{modeSlug}/`, which conforme does not generate
 - Skills are discovered from project `.roo/skills/` and `.agents/skills/`, plus the global `~/.roo/skills/` and `~/.agents/skills/`
 - Custom "modes" are distinct from agents/subagents, but they ARE file-based: a project-level `.roomodes` (YAML or JSON) file at the workspace root (plus a global `custom_modes.yaml`)
@@ -56,10 +57,10 @@ Mode-specific rules go in `.roo/rules-{modeSlug}/` directories (e.g., `.roo/rule
 - Remote (`sse`/`streamable-http`) entries carry no `env`: Zoo's schema requires it to be absent there and rejects the server otherwise
 - Zoo writes its own per-server state (`alwaysAllow`, `disabledTools`) into `.roo/mcp.json`, so conforme **merges** the `mcpServers` key: those keys (and any other key conforme does not emit, such as `timeout`, `cwd`, `watchPaths`) survive a sync, `disabled` is reset so a synced server is re-enabled, a file conforme cannot parse (JSONC is accepted) is left untouched, and `remove zoocode` / `migrate --source zoocode` keep the file
 - Skills require `name` (equal to the folder name, `^[a-z0-9]+(?:-[a-z0-9]+)*$`, at most 64 characters) and `description` (1–1024 characters); conforme always writes a description, falling back to the name, sanitizes names to that form, and `validate` warns about a longer description
-- Zoo's skill loader also reads `modeSlugs` (restrict a skill to some modes); conforme does not carry it, so a Zoo skill synced back is available in every mode (known gap)
+- Zoo's skill loader also reads `mode` / `modeSlugs` (restrict a skill to some modes); conforme does not carry them, so a Zoo skill synced back is available in every mode (known gap)
 - Zoo loads a root `AGENTS.md` next to `.roo/rules/` unless `useAgentRules` is off, so in a project that keeps an `AGENTS.md` the instructions reach the model twice
 - conforme maps every remote server to its normalized HTTP transport and writes `streamable-http`; an SSE-only server read from another tool is therefore written with the wrong transport (known gap)
 - Environment references are written `${env:VAR}` (Zoo's syntax) and read back as `${VAR}`
 - Skill manual-invocation keys conforme writes (`disable-model-invocation`, `metadata`, `agents/openai.yaml`) are ignored by Zoo, which has no manual-only mechanism
 - Reads AGENTS.md natively
-- Also detects `.roorules` and `.clinerules` files (and the legacy `.roorules-{modeSlug}` mode-specific files)
+- Detection: `.roo/` or a root `.roorules`. `.clinerules` is Cline's file, which Zoo reads only as a legacy fallback, so it does not make conforme detect Zoo Code (the legacy `.roorules-{modeSlug}` mode-specific files are not read either)

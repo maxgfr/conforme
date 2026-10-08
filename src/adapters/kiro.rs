@@ -235,7 +235,7 @@ fn build_kiro_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_ng::V
             );
             fields.insert(
                 "name".to_string(),
-                serde_yaml_ng::Value::String(rule.name.clone()),
+                serde_yaml_ng::Value::String(rule_file_name(&rule.name)),
             );
             // `auto` rules require a description: Kiro decides from it.
             fields.insert(
@@ -253,7 +253,7 @@ fn build_kiro_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_ng::V
             );
             fields.insert(
                 "name".to_string(),
-                serde_yaml_ng::Value::String(rule.name.clone()),
+                serde_yaml_ng::Value::String(rule_file_name(&rule.name)),
             );
         }
     }
@@ -356,7 +356,13 @@ mod tests {
             .find(|(p, _)| p.ends_with("smart-rule.md"))
             .unwrap();
         assert!(smart_rule.1.contains("inclusion: auto"));
-        assert!(smart_rule.1.contains("name: Smart Rule"));
+        // `name` is an identifier ("Used for display and matching"), the
+        // file's own stem, not the display title.
+        assert!(
+            smart_rule.1.contains("name: smart-rule"),
+            "{}",
+            smart_rule.1
+        );
         assert!(smart_rule.1.contains("description: API context"));
         assert!(smart_rule.1.contains("Decide wisely."));
     }
@@ -373,6 +379,11 @@ mod tests {
             .find(|(p, _)| p.ends_with("manual-rule.md"))
             .unwrap();
         assert!(manual_rule.1.contains("inclusion: manual"));
+        assert!(
+            manual_rule.1.contains("name: manual-rule"),
+            "{}",
+            manual_rule.1
+        );
         assert!(manual_rule.1.contains("Only when asked."));
     }
 
