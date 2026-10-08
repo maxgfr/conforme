@@ -4,6 +4,30 @@ use std::path::{Path, PathBuf};
 use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::NormalizedConfig;
 
+/// An agent file in `.gemini/agents/` that is the user's, not a local agent
+/// conforme reads and writes: a `_`-prefixed draft (Gemini skips those), a
+/// `kind: remote` (A2A) agent, or a file whose frontmatter is a YAML list of
+/// remote agents. Such files are neither read nor cleaned as orphans.
+fn is_gemini_user_agent(path: &Path) -> bool {
+    if path
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with('_'))
+    {
+        return true;
+    }
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    match crate::frontmatter::parse(&content) {
+        Ok((fields, _)) => fields
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .is_some_and(|kind| kind != "local"),
+        // Not a map: a list of remote agents (or a file Gemini rejects).
+        Err(_) => true,
+    }
+}
+
 /// Gemini CLI adapter.
 /// Uses GEMINI.md discovered hierarchically.
 /// Supports @path/to/file.md imports. No per-rule files — single GEMINI.md.
@@ -40,11 +64,11 @@ impl AiToolAdapter for GeminiAdapter {
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
-            // Gemini skips `_`-prefixed agent files: they are the user's drafts.
-            ManagedDir::files_except(project_root.join(".gemini").join("agents"), ".md", |path| {
-                path.file_name()
-                    .is_some_and(|n| n.to_string_lossy().starts_with('_'))
-            }),
+            ManagedDir::files_except(
+                project_root.join(".gemini").join("agents"),
+                ".md",
+                is_gemini_user_agent,
+            ),
             ManagedDir::subdirs(project_root.join(".gemini").join("skills")),
         ]
     }
@@ -63,15 +87,11 @@ impl AiToolAdapter for GeminiAdapter {
         // Read skills, agents, and MCP so a Gemini project round-trips as a source.
         let skills =
             crate::skills::read_skills_from_dir(&project_root.join(".gemini").join("skills"))?;
-        // Gemini skips agent files whose name starts with `_` (drafts), so a
-        // disabled agent is not propagated to the other tools either.
+        // Drafts and remote agents are not propagated to the other tools.
         let agent_files: Vec<PathBuf> =
             crate::skills::agent_files(&project_root.join(".gemini").join("agents"), false)?
                 .into_iter()
-                .filter(|p| {
-                    !p.file_name()
-                        .is_some_and(|n| n.to_string_lossy().starts_with('_'))
-                })
+                .filter(|p| !is_gemini_user_agent(p))
                 .collect();
         let agents = crate::skills::read_agent_files(&agent_files)?;
         let mut mcp_servers = Vec::new();

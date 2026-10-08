@@ -2345,3 +2345,60 @@ fn test_orphan_cleanup_keeps_agent_drafts_and_docs() {
     assert!(!root.join(".claude/agents/old.md").exists());
     assert!(root.join(".claude/agents/reviewer.md").exists());
 }
+
+const GEMINI_REMOTE_AGENT: &str =
+    "---\nkind: remote\nname: remote-helper\nagent_card_url: https://agents.example.com/card.json\n---\n";
+const GEMINI_REMOTE_AGENTS_LIST: &str =
+    "---\n- kind: remote\n  name: a\n  agent_card_url: https://a.example.com/card.json\n- kind: remote\n  name: b\n  agent_card_url: https://b.example.com/card.json\n---\n";
+
+#[test]
+fn test_gemini_remote_agents_survive_a_sync() {
+    // Remote (A2A) agents have no portable form: conforme must not sweep them
+    // as orphans when Gemini is a target.
+    let agents_md = "# Instructions\nBe helpful.\n\n## Agent: reviewer\n<!-- description: Review -->\nReview.\n";
+    let dir = create_project_with_tools(agents_md, &["gemini"]);
+    let root = dir.path();
+    fs::create_dir_all(root.join(".gemini/agents")).unwrap();
+    fs::write(root.join(".gemini/agents/remote-helper.md"), GEMINI_REMOTE_AGENT).unwrap();
+    fs::write(root.join(".gemini/agents/fleet.md"), GEMINI_REMOTE_AGENTS_LIST).unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(root.join(".gemini/agents/remote-helper.md")).unwrap(),
+        GEMINI_REMOTE_AGENT
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".gemini/agents/fleet.md")).unwrap(),
+        GEMINI_REMOTE_AGENTS_LIST
+    );
+    assert!(root.join(".gemini/agents/reviewer.md").exists());
+}
+
+#[test]
+fn test_gemini_remote_agents_are_not_read_as_local_agents() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("GEMINI.md"), "Be helpful.\n").unwrap();
+    fs::create_dir_all(root.join(".gemini/agents")).unwrap();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::write(root.join(".gemini/agents/remote-helper.md"), GEMINI_REMOTE_AGENT).unwrap();
+    fs::write(root.join(".gemini/agents/fleet.md"), GEMINI_REMOTE_AGENTS_LIST).unwrap();
+    fs::write(
+        root.join(".gemini/agents/reviewer.md"),
+        "---\nname: reviewer\ndescription: Review\n---\nReview.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync", "--from", "gemini"])
+        .assert()
+        .success();
+
+    assert!(root.join(".claude/agents/reviewer.md").exists());
+    assert!(!root.join(".claude/agents/remote-helper.md").exists());
+    assert!(!root.join(".claude/agents/fleet.md").exists());
+}
