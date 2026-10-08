@@ -96,6 +96,15 @@ impl NormalizedConfig {
             agents: Vec::new(),
         }
     }
+
+    /// Whether the config holds nothing at all to sync.
+    pub fn is_empty(&self) -> bool {
+        self.instructions.trim().is_empty()
+            && self.rules.is_empty()
+            && self.skills.is_empty()
+            && self.mcp_servers.is_empty()
+            && self.agents.is_empty()
+    }
 }
 
 impl Default for NormalizedConfig {

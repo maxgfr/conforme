@@ -2184,6 +2184,30 @@ fn test_migrate_between_tools_sharing_agents_skills_keeps_bundled_files() {
     assert!(skill.join("scripts/run.sh").exists());
 }
 
+#[test]
+fn test_sync_from_an_empty_source_writes_and_cleans_nothing() {
+    // A source tool that reads back as empty (a bare `.roo/`) must neither
+    // write a blank AGENTS.md nor clean every rule of the other tools.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".roo")).unwrap();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    let old = "---\nalwaysApply: true\n---\nOld.\n";
+    fs::write(root.join(".cursor/rules/old.mdc"), old).unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync", "--from", "zoocode"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("nothing to sync"));
+
+    assert!(!root.join("AGENTS.md").exists());
+    assert_eq!(
+        fs::read_to_string(root.join(".cursor/rules/old.mdc")).unwrap(),
+        old
+    );
+}
+
 fn migrate(root: &std::path::Path, source: &str, output: &str) {
     conforme()
         .args([

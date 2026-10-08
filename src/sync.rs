@@ -225,6 +225,18 @@ pub fn run_sync(
         bail!("Validation failed. Fix the errors above before syncing.");
     }
 
+    // A source that reads back as empty (an unconfigured tool, a format
+    // conforme does not read) would blank AGENTS.md and clean every rule,
+    // skill and agent of the other tools: refuse to treat it as a config.
+    if config.is_empty() {
+        eprintln!(
+            "{} {} has no instructions, rules, skills, agents or MCP servers: nothing to sync.",
+            "!".yellow(),
+            source_id
+        );
+        return Ok(());
+    }
+
     let adapters = adapters::all_adapters();
     let mut any_written = false;
 
