@@ -1242,10 +1242,12 @@ pub(crate) fn opencode_model(model: Option<&str>) -> Option<&str> {
 /// The `model` to write for a Claude Code subagent: an alias (`sonnet`,
 /// `opus`, `haiku`, `fable`), `inherit`, or a full `claude-*` id. Another
 /// vendor's id (`gpt-4o`, `gemini-2.5-pro`) is left out, and the subagent
-/// uses Claude Code's default model order.
+/// uses Claude Code's default model order. So is a dotted id such as Kiro's
+/// `claude-sonnet-4.5`: Claude Code spells versions with hyphens.
 pub(crate) fn claude_model(model: Option<&str>) -> Option<&str> {
     model.filter(|m| {
-        matches!(*m, "sonnet" | "opus" | "haiku" | "fable" | "inherit") || m.starts_with("claude-")
+        matches!(*m, "sonnet" | "opus" | "haiku" | "fable" | "inherit")
+            || (m.starts_with("claude-") && !m.contains('.'))
     })
 }
 
@@ -1507,6 +1509,11 @@ mod tests {
         );
         assert_eq!(copilot_model(Some("gpt-4o")), Some("gpt-4o"));
         assert_eq!(gemini_model(Some("gemma-4-27b-it")), Some("gemma-4-27b-it"));
+        assert_eq!(claude_model(Some("claude-sonnet-4.5")), None);
+        assert_eq!(
+            claude_model(Some("claude-sonnet-4-5")),
+            Some("claude-sonnet-4-5")
+        );
         assert_eq!(gemini_model(Some("sonnet")), None);
     }
 

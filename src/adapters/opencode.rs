@@ -12,6 +12,9 @@ use crate::config::NormalizedConfig;
 /// additionally live at `.opencode/agents/<name>.md`.
 pub struct OpenCodeAdapter;
 
+/// OpenCode reads `AGENTS.md`, else `CLAUDE.md`.
+const INSTRUCTION_FILES: &[&str] = &["AGENTS.md", "CLAUDE.md"];
+
 impl AiToolAdapter for OpenCodeAdapter {
     fn name(&self) -> &str {
         "OpenCode"
@@ -39,6 +42,10 @@ impl AiToolAdapter for OpenCodeAdapter {
     /// must never delete the file wholesale.
     fn reads_agents_md(&self, _project_root: &Path) -> bool {
         true
+    }
+
+    fn source_files(&self, project_root: &Path) -> Vec<PathBuf> {
+        crate::adapters::first_existing_file(project_root, INSTRUCTION_FILES)
     }
 
     fn is_shared_file(&self, path: &Path) -> bool {
@@ -82,9 +89,12 @@ impl AiToolAdapter for OpenCodeAdapter {
                 &project_root.join(".opencode").join(dir),
                 true,
             )? {
-                if !agents
-                    .iter()
-                    .any(|a: &crate::config::NormalizedAgent| a.name == agent.name)
+                // `.opencode/agents/build.md` overrides OpenCode's Build agent:
+                // not an agent another tool could load.
+                if !crate::mcp::is_opencode_builtin_agent(&agent.name)
+                    && !agents
+                        .iter()
+                        .any(|a: &crate::config::NormalizedAgent| a.name == agent.name)
                 {
                     agents.push(agent);
                 }
@@ -115,7 +125,7 @@ impl AiToolAdapter for OpenCodeAdapter {
 
         crate::markdown::read_native_agents_md(
             project_root,
-            &["AGENTS.md", "CLAUDE.md"],
+            INSTRUCTION_FILES,
             NormalizedConfig {
                 instructions: String::new(),
                 rules: Vec::new(),
@@ -133,6 +143,19 @@ impl AiToolAdapter for OpenCodeAdapter {
     ) -> Result<Vec<(PathBuf, String)>> {
         // OpenCode reads AGENTS.md natively — no need to re-generate it.
         let mut files = Vec::new();
+
+        // An agent named like a built-in one (`build`, `plan`, …) would
+        // override OpenCode's own agent and demote it to a subagent.
+        let agents: Vec<_> = config
+            .agents
+            .iter()
+            .filter(|a| !crate::mcp::is_opencode_builtin_agent(&a.name))
+            .cloned()
+            .collect();
+        let config = &NormalizedConfig {
+            agents,
+            ..config.clone()
+        };
 
         // Generate skills as .opencode/skills/<name>/SKILL.md
         if !config.skills.is_empty() {

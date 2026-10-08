@@ -10,6 +10,9 @@ use crate::config::NormalizedConfig;
 /// settings, including MCP servers.
 pub struct CodexAdapter;
 
+/// Codex reads the shared `AGENTS.md` (never the personal override).
+const INSTRUCTION_FILES: &[&str] = &["AGENTS.md"];
+
 impl AiToolAdapter for CodexAdapter {
     fn name(&self) -> &str {
         "Codex CLI"
@@ -34,6 +37,10 @@ impl AiToolAdapter for CodexAdapter {
 
     fn reads_agents_md(&self, _project_root: &Path) -> bool {
         true
+    }
+
+    fn source_files(&self, project_root: &Path) -> Vec<PathBuf> {
+        crate::adapters::first_existing_file(project_root, INSTRUCTION_FILES)
     }
 
     /// Skills live in the shared `.agents/skills/` root (also Zed's and
@@ -81,7 +88,7 @@ impl AiToolAdapter for CodexAdapter {
         // deliberately not used as the source of every other tool.
         crate::markdown::read_native_agents_md(
             project_root,
-            &["AGENTS.md"],
+            INSTRUCTION_FILES,
             NormalizedConfig {
                 instructions: String::new(),
                 rules: Vec::new(),

@@ -295,6 +295,14 @@ const CODEX_TUNING_KEYS: &[&str] = &[
     "tools",
     "scopes",
     "oauth_resource",
+    "startup_readiness",
+    "supports_parallel_tool_calls",
+    "tool_input_schema_max_bytes",
+    "omit_tools_from",
+    "name",
+    // Only `"local"` is accepted below: another environment is a remote
+    // executor no other tool has.
+    "environment_id",
 ];
 
 /// The variables a stdio server forwards from Codex's environment
@@ -338,8 +346,9 @@ fn validate_codex_mcp_fields(
     allowed: &[&str],
     server_name: &str,
 ) -> Result<()> {
-    for field in entry.keys() {
-        if !allowed.contains(&field.as_str()) {
+    for (field, value) in entry {
+        let remote_environment = field == "environment_id" && value.as_str() != Some("local");
+        if !allowed.contains(&field.as_str()) || remote_environment {
             bail!(
                 "Codex MCP server `{server_name}` uses `{field}`, which conforme cannot safely migrate without losing its semantics"
             );
@@ -960,6 +969,13 @@ const OPENCODE_BUILTIN_AGENTS: &[&str] = &[
     "summary",
 ];
 
+/// Whether an agent of this name would be one of OpenCode's built-in agents
+/// (in `opencode.json` or as `.opencode/agents/<name>.md`): written there it
+/// would override, and demote to a subagent, OpenCode's own Build or Plan.
+pub fn is_opencode_builtin_agent(name: &str) -> bool {
+    OPENCODE_BUILTIN_AGENTS.contains(&crate::config::sanitize_name(name).as_str())
+}
+
 /// Parse the OpenCode `agent` object from an `opencode.json` value back into
 /// normalized agents (the inverse of [`build_opencode_agent_object`]).
 pub fn parse_opencode_agent_object(
@@ -1539,9 +1555,23 @@ url = "https://example.com/mcp"
 startup_timeout_ms = 20000
 scopes = ["read"]
 oauth_resource = "https://example.com"
+startup_readiness = "lazy"
+supports_parallel_tool_calls = true
+tool_input_schema_max_bytes = 4096
+omit_tools_from = ["review"]
+name = "api"
+environment_id = "local"
 "#;
         let parsed = parse_codex_mcp_toml(content).unwrap();
         assert_eq!(parsed.len(), 2);
+
+        // A server bound to a remote environment has no portable form.
+        let remote = "[mcp_servers.x]\ncommand = \"node\"\nenvironment_id = \"devbox\"\n";
+        let error = parse_codex_mcp_toml(remote).unwrap_err();
+        assert!(
+            error.to_string().contains("cannot safely migrate"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -51,6 +51,7 @@
 - Always/AgentDecision/Manual rules -> inlined in `copilot-instructions.md`
 - GlobMatch rules -> separate `.instructions.md` files
 - Skills -> `.github/skills/<name>/SKILL.md`
+- Detection: `.github/copilot-instructions.md`, or a `.github/instructions/`, `.github/agents/` or `.github/skills/` directory
 - `read()` round-trips instructions/rules plus skills (`.github/skills/*/SKILL.md`), subagents (`.github/agents/*.agent.md`), and MCP (`.vscode/mcp.json`)
 
 ## Notes
@@ -60,7 +61,7 @@
 - MCP: conforme maps every remote server to its HTTP transport, so a `type: "sse"` server is written as `http` (known gap)
 - Agent-decision and manual rules are inlined into `copilot-instructions.md` (deliberate): VS Code can load a `description`-only instructions file on demand, but GitHub.com and Copilot CLI only apply files with `applyTo`. On read, a hand-written file with a `description` and no `applyTo` becomes an agent-decision rule, and one with neither a manual rule
 - `applyTo` is written comma-separated without spaces (the documented form), with brace groups expanded, and read back brace-aware
-- Agent `model` is a string or an array; VS Code expects names such as `GPT-5.2 (copilot)` and its docs do not say what an unknown value does (unverified). conforme leaves out another host's alias (`sonnet`, `opus`, `haiku`, `fable`, `pro`, `flash`, `flash-lite`), any `provider/model` id and `inherit`, and copies other values as they are
+- Agent `model` is a string or an array; VS Code matches it by display name such as `GPT-5.2 (copilot)`, and ignores an unknown value ("Unknown model '{0}' will be ignored", `promptValidator.ts`), so the subagent keeps the parent model. conforme leaves out another host's alias (`sonnet`, `opus`, `haiku`, `fable`, `pro`, `flash`, `flash-lite`), any `provider/model` id and `inherit`, and copies other values as they are
 - VS Code 1.140 (2026-09-30) lists `.vscode/mcp.json` as deprecated in favour of the portable workspace `.mcp.json` (`mcpServers`). VS Code still reads it; conforme keeps writing it until the move can be coordinated with the Claude Code target, which owns `.mcp.json`
 - `.vscode/mcp.json` also holds VS Code's `inputs` (prompted secrets referenced as `${input:…}`) and `sandbox` settings, and VS Code parses it as JSONC. conforme **merges** only the `servers` key: comments, `inputs`, `sandbox`, and per-server keys it never emits (`envFile`, …) survive, a file it cannot parse is left untouched (sync fails), and `remove copilot` / `migrate --source copilot` keep the file
 - Copilot CLI reads MCP servers from `.mcp.json` or `.github/mcp.json` (`mcpServers` key, added 1.0.61), not `.vscode/mcp.json`. conforme does not write a Copilot-specific CLI file; when Claude Code is also a target, its `.mcp.json` covers the CLI

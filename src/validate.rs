@@ -9,6 +9,9 @@ use crate::config::{
 /// them skip the skill.
 const MAX_DESCRIPTION_LEN: usize = 1024;
 
+/// Skill names Claude Code skips.
+const CLAUDE_RESERVED_SKILL_NAMES: &[&str] = &["synced", "anthropic-skills", "claude-ai"];
+
 /// Every rule, skill and agent name becomes a file or folder name: through
 /// [`rule_file_name`] for rules, and [`sanitize_name`] (kebab-case ASCII, the
 /// `name` field too) for skills and agents. A name that sanitizes to nothing
@@ -76,6 +79,20 @@ pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
         rule_file_name,
         &mut errors,
     );
+    // Cursor, Devin and Kiro write the instructions as a `general` rule file:
+    // a rule of that name would overwrite them on every sync.
+    if !config.instructions.trim().is_empty() {
+        for rule in config
+            .rules
+            .iter()
+            .filter(|r| rule_file_name(&r.name) == "general")
+        {
+            errors.push(format!(
+                "Rule '{}' becomes 'general', the file the instructions are written to; rename it",
+                rule.name
+            ));
+        }
+    }
 
     // Check for duplicate skill names
     let mut seen_skills = HashSet::new();
@@ -85,6 +102,12 @@ pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
         }
         if skill.content.trim().is_empty() {
             warnings.push(format!("Skill '{}' has empty content", skill.name));
+        }
+        if CLAUDE_RESERVED_SKILL_NAMES.contains(&sanitize_name(&skill.name).as_str()) {
+            warnings.push(format!(
+                "Skill '{}' uses a name Claude Code reserves; Claude Code skips it",
+                skill.name
+            ));
         }
         if skill.description.chars().count() > MAX_DESCRIPTION_LEN {
             warnings.push(format!(
@@ -278,5 +301,21 @@ mod tests {
         assert!(validate(&rule, false));
         assert_eq!(rule_file_name("部署 Rule"), "部署-rule");
         assert_eq!(rule_file_name("Déployer"), "deployer");
+    }
+
+    #[test]
+    fn test_rule_named_general_collides_with_instructions() {
+        let rule = |instructions: &str| NormalizedConfig {
+            instructions: instructions.to_string(),
+            rules: vec![NormalizedRule {
+                name: "General".to_string(),
+                content: "Body.".to_string(),
+                activation: ActivationMode::Always,
+            }],
+            ..Default::default()
+        };
+        assert!(!validate(&rule("Top instructions."), false));
+        // Without instructions the `general` file is free.
+        assert!(validate(&rule(""), false));
     }
 }

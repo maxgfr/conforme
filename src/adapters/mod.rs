@@ -79,6 +79,18 @@ pub trait AiToolAdapter: Send + Sync {
         false
     }
 
+    /// The files (and fallback directories) `read()` loads in this project
+    /// outside the tool's own managed directories: an `AGENTS.md` or
+    /// `CLAUDE.md` it reads natively or as a fallback, Gemini's context files,
+    /// Devin's `global_rules.md`, DeepSeek's `.agents/skills` fallback, …
+    /// Only paths that exist and that `read()` actually uses are listed.
+    /// When the tool is the source these are its config: no target writes
+    /// them, `remove` and `migrate` never delete them, and `gitignore
+    /// install` never ignores them.
+    fn source_files(&self, _project_root: &Path) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
     /// Write normalized config into this tool's format.
     /// Returns a report of what files were written/unchanged.
     /// Default implementation calls generate() then write_if_changed for each file.
@@ -101,6 +113,17 @@ pub trait AiToolAdapter: Send + Sync {
         project_root: &Path,
         config: &NormalizedConfig,
     ) -> Result<Vec<(PathBuf, String)>>;
+}
+
+/// The first of `candidates` (relative to `project_root`) that is a file: the
+/// one a tool reading "AGENTS.md, else CLAUDE.md, …" actually loads.
+pub fn first_existing_file(project_root: &Path, candidates: &[&str]) -> Vec<PathBuf> {
+    candidates
+        .iter()
+        .map(|name| project_root.join(name))
+        .find(|path| path.is_file())
+        .into_iter()
+        .collect()
 }
 
 /// A directory an adapter writes into.

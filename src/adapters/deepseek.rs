@@ -18,6 +18,22 @@ use crate::config::NormalizedConfig;
 /// is no project-scoped MCP file for conforme to generate.
 pub struct DeepSeekAdapter;
 
+/// dsh reads `AGENTS.md`, else `CLAUDE.md`.
+const INSTRUCTION_FILES: &[&str] = &["AGENTS.md", "CLAUDE.md"];
+
+/// The skills in `.dsh/skills`: `<name>/SKILL.md` bundles and flat `<name>.md`
+/// files, a bundle winning over a flat file of the same name.
+fn dsh_skills(project_root: &Path) -> Result<Vec<crate::config::NormalizedSkill>> {
+    let dsh_skills = project_root.join(".dsh").join("skills");
+    let mut skills = crate::skills::read_skills_from_dir(&dsh_skills)?;
+    for flat in crate::skills::read_flat_skills_from_dir(&dsh_skills)? {
+        if !skills.iter().any(|s| s.name == flat.name) {
+            skills.push(flat);
+        }
+    }
+    Ok(skills)
+}
+
 impl AiToolAdapter for DeepSeekAdapter {
     fn name(&self) -> &str {
         "DeepSeek Harness"
@@ -44,6 +60,16 @@ impl AiToolAdapter for DeepSeekAdapter {
         true
     }
 
+    fn source_files(&self, project_root: &Path) -> Vec<PathBuf> {
+        let mut files = crate::adapters::first_existing_file(project_root, INSTRUCTION_FILES);
+        // The shared `.agents/skills` root is read when `.dsh/skills` has none.
+        let shared = project_root.join(".agents").join("skills");
+        if shared.is_dir() && dsh_skills(project_root).is_ok_and(|s| s.is_empty()) {
+            files.push(shared);
+        }
+        files
+    }
+
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![ManagedDir::subdirs(
             project_root.join(".dsh").join("skills"),
@@ -54,15 +80,7 @@ impl AiToolAdapter for DeepSeekAdapter {
         // `.dsh/skills` is the harness-native project root; `.agents/skills` is
         // the shared root it also scans, used as a fallback when a project only
         // carries the shared layout.
-        // The harness accepts both `<name>/SKILL.md` bundles and flat
-        // `<name>.md` files there; a bundle wins over a flat file of the same name.
-        let dsh_skills = project_root.join(".dsh").join("skills");
-        let mut skills = crate::skills::read_skills_from_dir(&dsh_skills)?;
-        for flat in crate::skills::read_flat_skills_from_dir(&dsh_skills)? {
-            if !skills.iter().any(|s| s.name == flat.name) {
-                skills.push(flat);
-            }
-        }
+        let mut skills = dsh_skills(project_root)?;
         if skills.is_empty() {
             skills =
                 crate::skills::read_skills_from_dir(&project_root.join(".agents").join("skills"))?;
@@ -70,7 +88,7 @@ impl AiToolAdapter for DeepSeekAdapter {
 
         crate::markdown::read_native_agents_md(
             project_root,
-            &["AGENTS.md", "CLAUDE.md"],
+            INSTRUCTION_FILES,
             NormalizedConfig {
                 instructions: String::new(),
                 rules: Vec::new(),

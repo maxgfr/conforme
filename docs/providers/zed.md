@@ -49,7 +49,7 @@ Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` 
   - Zed's remote variant has no `env`, so `env` is written on stdio servers only
   - `context_servers` is a documented project setting (`.zed/settings.json`), not only a user one
   - An extension context server configured only through `settings` (no `command`, no `url`) has no portable form: conforme skips it on read and keeps it untouched on write
-  - Zed expands no variable references (none documented or found in its source): values are copied as they are, so a `${VAR}` from another tool stays literal
+  - Zed expands no variable references (none documented or found in its source): values are copied as they are, so a `${VAR}` from another tool stays literal; conforme writes it without a warning (known gap)
 - Project skills and project MCP servers only take effect in a trusted worktree (project MCP servers auto-start only when the project is trusted)
 - Zed has "Agent Profiles" but configured via settings, not project files
 - The old `zed.dev/docs/ai/rules` page is gone (404): as of Zed v1.4.0 reusable rules were replaced by **Skills** and always-on rules by **Instructions**. `.rules` itself still works as a project instruction file — it is just documented on the Instructions page now

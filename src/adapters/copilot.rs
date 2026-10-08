@@ -24,7 +24,9 @@ impl AiToolAdapter for CopilotAdapter {
             .join(".github")
             .join("copilot-instructions.md")
             .exists()
-            || project_root.join(".github").join("instructions").is_dir()
+            || ["instructions", "agents", "skills"]
+                .iter()
+                .any(|dir| project_root.join(".github").join(dir).is_dir())
     }
 
     fn capabilities(&self) -> crate::adapters::AdapterCapabilities {

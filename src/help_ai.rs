@@ -24,7 +24,7 @@ pub fn print_help_ai() {
             "Commands (.claude/commands/**/*.md) → synced as skills to other tools",
             "Skills synced to .claude/skills/<name>/SKILL.md, agents to .claude/agents/<name>.md (Claude tool names and models only)",
             "MCP merged into .mcp.json (`mcpServers`, ${VAR} references; per-server options kept)",
-            "Reads AGENTS.md (or .claude/AGENTS.md) natively when no CLAUDE.md exists; conforme then reads it as Claude's source and never regenerates it",
+            "Reads AGENTS.md and .claude/AGENTS.md natively when no CLAUDE.md exists; conforme then reads both as Claude's source and never regenerates them",
         ],
     );
     print_tool(
@@ -62,6 +62,7 @@ pub fn print_help_ai() {
             "Glob rules → .github/instructions/{name}.instructions.md",
             "Skills synced to .github/skills/<name>/SKILL.md",
             "Agents synced to .github/agents/<name>.agent.md",
+            "Detected from .github/copilot-instructions.md or a .github/instructions/, agents/ or skills/ directory",
             "MCP merged into .vscode/mcp.json (`servers` key, ${env:VAR} references; VS Code `inputs`/`sandbox` kept)",
             "Reads AGENTS.md, CLAUDE.md, and GEMINI.md natively",
         ],
@@ -85,7 +86,7 @@ pub fn print_help_ai() {
         ".roo/rules/*.md",
         &[
             "Plain Markdown — NO YAML frontmatter",
-            "Files loaded alphabetically (use numeric prefixes: 00-, 01-; stripped on read)",
+            "Files loaded alphabetically (use numeric prefixes: 00-, 01-; a 2-3 digit prefix is stripped on read)",
             "Detected by .roo/ or .roorules (not .clinerules); .roorules is read when .roo/rules/ is empty",
             "Skills synced to .roo/skills/<name>/SKILL.md",
             "Mode-specific rules in .roo/rules-{mode}/",
@@ -119,8 +120,8 @@ pub fn print_help_ai() {
             "Skills synced to .opencode/skills/<name>/SKILL.md (name, description, and manual invocation metadata)",
             "MCP merged into opencode.json under `mcp` key (type:local/remote, command as single array, key `environment`)",
             "Agents merged into opencode.json under `agent` key + per-agent .opencode/agents/<name>.md (model only as provider/model)",
-            "Agents read from .opencode/agents/, .opencode/agent/ and the `agent` key together (markdown wins)",
-            "Also scans .claude/skills/, .agents/skills/",
+            "Agents read from .opencode/agents/, .opencode/agent/ and the `agent` key together (markdown wins); built-in agent names (build, plan, general, …) are neither written nor read",
+            "Skills read from .opencode/skills/ and .opencode/skill/ only; OpenCode also loads .claude/skills/ and .agents/skills/, so a skill synced there too appears twice",
         ],
     );
     print_tool(
@@ -130,6 +131,7 @@ pub fn print_help_ai() {
         &[
             "Hierarchical: ~/.gemini/GEMINI.md → project → subdirs",
             "context.fileName in .gemini/settings.json is honoured on read; when it names AGENTS.md, that file is the source",
+            "Instructions written to the first context.fileName entry other than AGENTS.md (GEMINI.md by default); none when it names only AGENTS.md",
             "Skills synced to .gemini/skills/<name>/SKILL.md (name, description, and manual invocation metadata)",
             "Agents synced to .gemini/agents/<name>.md (kind:local frontmatter, tools translated to Gemini names)",
             "MCP merged into .gemini/settings.json (Gemini format: no type field, httpUrl for HTTP)",
@@ -155,7 +157,7 @@ pub fn print_help_ai() {
             "Default instructionFileCandidates: AGENTS.md then CLAUDE.md",
             "Local overlay candidates: AGENTS.local.md then CLAUDE.local.md",
             "Skills synced to .dsh/skills/<name>/SKILL.md (name + description, kebab-case names); flat <name>.md skills are read and never deleted",
-            "Also scans the shared .agents/skills/ root",
+            "The shared .agents/skills/ root is read only when .dsh/skills/ has no skill",
             "MCP lives in the user-level cordis.patch.yml ($DSH_HOME) — not project-scoped",
         ],
     );

@@ -41,14 +41,14 @@
 - File: `src/adapters/claude.rs`
 - ID: `claude`
 - Capabilities: rules, skills, agents, MCP
-- Read: CLAUDE.md + .claude/rules/ + .claude/skills/ + .claude/commands/ + .claude/agents/ + .mcp.json (and `AGENTS.md` / `.claude/AGENTS.md` when the project has no `CLAUDE.md`)
+- Read: CLAUDE.md + .claude/rules/ + .claude/skills/ + .claude/commands/ + .claude/agents/ + .mcp.json (and both `AGENTS.md` and `.claude/AGENTS.md`, root first, when the project has no `CLAUDE.md` nor `.claude/CLAUDE.md`)
 - Write: CLAUDE.md + .claude/rules/ + .claude/skills/ + .claude/agents/ + .mcp.json
 
 ## Notes
 
 - Claude Code keeps extending both frontmatter blocks beyond what conforme syncs. Subagents now also accept `disallowedTools`, `maxTurns`, `skills`, `mcpServers`, `hooks`, `memory`, `background`, `effort`, `isolation`, `initialPrompt` and `experimental`; skills also accept `when_to_use`, `disallowed-tools`, `argument-hint`, `arguments`, `user-invocable`, `context`, `agent`, `effort`, `paths`, `shell`, `license` and `compatibility`. These are Claude-specific and have no cross-tool equivalent, so conforme neither emits nor maps them — it writes the portable subset and leaves hand-authored extras alone
 
-- Commands (`.claude/commands/**/*.md`) are read as skills when Claude is source, propagated to other tools as SKILL.md. A nested command is namespaced by its folders, as Claude Code invokes it: `frontend/component.md` is the skill `frontend:component` (written elsewhere as `frontend-component`)
+- Commands (`.claude/commands/**/*.md`) are read as skills when Claude is source, propagated to other tools as SKILL.md. A nested command is namespaced by its folders, as Claude Code invokes it: `frontend/component.md` is the skill `frontend:component` (written elsewhere as `frontend-component`). A skill and a command with the same name read as the skill, the one Claude Code runs
 - Hooks and permissions are Claude-specific, not synced to other tools
 - `allowed-tools` accepts a space- or comma-separated string (or a YAML list); conforme writes the space-separated form `"Read Bash Write"` and parses both on read
 - Rules without `paths` frontmatter are always-active (no agent-decision/manual distinction)
@@ -57,12 +57,15 @@
 - `.claude/agents/` is scanned **recursively** as well; conforme reads nested agents and writes them back flat
 - An agent file without `name` is documentation kept beside the agents ("Claude Code treats the file as documentation"), and one without `description` is skipped: conforme reads neither as an agent, and orphan cleanup never deletes a `.md` there that has no `name` (a README survives a sync)
 - Subagent `tools` must resolve to Claude Code tools, or Claude Code refuses to launch the subagent ("would be spawned with zero tools"). Names from other hosts are translated (`read_file` → `Read`, `run_shell_command` → `Bash`, `codebase` → `Grep`, Gemini `mcp_github_list_issues` / Kiro `@github/list_issues` → `mcp__github__list_issues`, …), `Agent(type)` restrictions pass through, Kiro's `*` / `@builtin` become no `tools` (every tool), and a restricted list in which nothing translates becomes `tools: Read` rather than every tool
-- Subagent `model` is an alias (`sonnet`, `opus`, `haiku`, `fable`), `inherit`, or a `claude-*` id; another vendor's id (`gpt-4o`) is left out
+- Subagent `model` is an alias (`sonnet`, `opus`, `haiku`, `fable`), `inherit`, or a `claude-*` id; another vendor's id (`gpt-4o`) and a dotted id from another host (Kiro's `claude-sonnet-4.5`) are left out
 - Boolean frontmatter fields accept `yes`/`no`, `on`/`off` and `1`/`0` besides `true`/`false`; conforme reads all of them (e.g. `disable-model-invocation: yes`)
-- Since 2.1.277 (2026-09-18) Claude Code reads `AGENTS.md` (or `.claude/AGENTS.md`) itself when the project has no `CLAUDE.md`, `.claude/CLAUDE.md` nor `CLAUDE.local.md`. In that case conforme's `read()` takes it too, with the AGENTS.md convention (its `## Rule:` sections join `.claude/rules/`, whose files win on a name clash), and with Claude as the source that `AGENTS.md` is never regenerated nor gitignored (`reads_agents_md`). As a target conforme writes `CLAUDE.md` when there is content, after which Claude Code reads `CLAUDE.md` instead
+- Since 2.1.277 (2026-09-18) Claude Code reads `AGENTS.md` and `.claude/AGENTS.md` itself (every one present) when the project has no `CLAUDE.md`, `.claude/CLAUDE.md` nor `CLAUDE.local.md`. In that case conforme's `read()` takes both too, concatenated root first, with the AGENTS.md convention (their `## Rule:` sections join `.claude/rules/`, whose files win on a name clash), and with Claude as the source those files are never regenerated, written by another target, deleted by `remove`/`migrate` nor gitignored (`reads_agents_md`, `source_files`). As a target conforme writes `CLAUDE.md` when there is content, after which Claude Code reads `CLAUDE.md` instead
+- A personal `CLAUDE.local.md` does not turn that fallback off in conforme (deliberate deviation): Claude Code itself then skips `AGENTS.md`, but conforme never reads `CLAUDE.local.md` and keeps the shared `AGENTS.md` as the source rather than regenerating it
+- Claude Code also counts a `CLAUDE.md` in a parent directory; conforme checks only the project root (known gap)
+- A Claude source with only `.claude/AGENTS.md` (no root `AGENTS.md`) gives the tools that read `AGENTS.md` natively (Codex, OpenCode, Amp, DeepSeek) no instructions: `AGENTS.md` is not generated, since the source reads `AGENTS.md` itself (known gap)
 - A skill or agent is always written with a `description`, falling back to its name when the source has none (other tools skip entries without one)
 - Agent `name` may be up to 256 characters upstream; conforme's `sanitize_name` keeps every tool's names at 64 or fewer
-- Claude Code skips skills named `synced`, `anthropic-skills` or `claude-ai`; conforme does not validate against these names, so such a skill synced from another tool is silently ignored by Claude Code (known gap)
+- Claude Code skips skills named `synced`, `anthropic-skills` or `claude-ai`; conforme's validation warns about such a skill, which Claude Code ignores
 - A project `CLAUDE.md` may live at `./CLAUDE.md` **or** `./.claude/CLAUDE.md`. conforme prefers the root file, and falls back to `./.claude/CLAUDE.md` when only that one exists — for both reading and writing, so a project using the nested location is neither read as empty nor given a competing second instruction file
 - MCP: `.mcp.json` is merged, not owned (`is_shared_file`): per-server keys conforme never writes (`oauth`, `headersHelper`, `timeout`, `alwaysLoad`) survive a sync, and `remove claude` / `migrate --source claude` keep the file (Copilot CLI reads it too). Environment references are `${VAR}` / `${VAR:-default}`, conforme's normalized spelling; `env` is written on stdio servers only
 - MCP: in-process `type: "sdk"` servers have neither a command nor a URL; conforme skips them on read and keeps them untouched on write

@@ -62,6 +62,28 @@ impl AiToolAdapter for DevinAdapter {
         path.ends_with(Path::new(".devin/mcp_config.json"))
     }
 
+    fn source_files(&self, project_root: &Path) -> Vec<PathBuf> {
+        let mut files = crate::adapters::first_existing_file(
+            project_root,
+            &[".devin/global_rules.md", ".windsurf/global_rules.md"],
+        );
+        // `.windsurfrules` is only the fallback when neither a global rules
+        // file nor a `general` rule holds the instructions.
+        let has_general_rule = [devin_dir(project_root), legacy_dir(project_root)]
+            .iter()
+            .flat_map(|dir| {
+                crate::adapters::collect_rule_files(&dir.join("rules"), "md").unwrap_or_default()
+            })
+            .any(|path| path.file_stem().is_some_and(|s| s == "general"));
+        if files.is_empty() && !has_general_rule {
+            files.extend(crate::adapters::first_existing_file(
+                project_root,
+                &[".windsurfrules"],
+            ));
+        }
+        files
+    }
+
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         let mut dirs = vec![
             ManagedDir::files(devin_dir(project_root).join("rules"), ".md"),

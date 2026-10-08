@@ -21,11 +21,12 @@ cargo install --path .
 ## How it works
 
 1. **Write your config** in your preferred tool (Claude Code, Cursor, Devin, etc.) or directly in `AGENTS.md`
-2. **Run `conforme sync`** — it reads from your chosen source and propagates to all detected tools
+2. **Run `conforme sync`** — it reads from your chosen source and propagates to all detected tools (filtered by `only` / `exclude`). `check`, `diff` and `status` use the same set of tools, so an excluded tool is never reported out of sync, and they compare the generated `AGENTS.md` too; `check` also validates the config
 3. **Only changed files are updated** — content is compared using SHA-256 hashes, so unchanged files are never touched
-4. **Orphan files are cleaned** — when you rename or remove a rule, the old generated files are automatically deleted. Only files of the kind conforme writes are touched: files a tool accepts but conforme never generates (Kiro `.json` agents, flat DeepSeek skills, hand-written `.md` Copilot agents) are left alone. A source that reads back empty (no instructions, rules, skills, agents or MCP servers) warns "nothing to sync" and writes and cleans nothing. `migrate` removes the source tool's files under the same rule, and never a file or directory the output or another detected tool still uses (`.agents/skills/` shared by Codex, Amp and Zed included)
+4. **Orphan files are cleaned** — when you rename or remove a rule, the old generated files are automatically deleted. Only files of the kind conforme writes are touched: files a tool accepts but conforme never generates (Kiro `.json` agents, flat DeepSeek skills, hand-written `.md` Copilot agents) are left alone. A source that reads back empty (no instructions, rules, skills, agents or MCP servers) warns "nothing to sync" and writes and cleans nothing. Skills directories are never swept: a skill removed from the source stays in every target until deleted by hand (as does an agent removed from the source in `opencode.json`). `migrate` validates the source and refuses an empty one, removes the source tool's files under the same rule, and never a file or directory the output or another detected tool still uses (`.agents/skills/` shared by Codex, Amp and Zed included), a skill folder that bundles scripts or references, nor skills or agents the output cannot hold. Migrating to a tool that keeps its instructions in `AGENTS.md` (Codex, OpenCode, Amp, DeepSeek, or Gemini CLI loading only `AGENTS.md`) writes `AGENTS.md`, and an existing `AGENTS.md` that differs and that the source does not read is refused before anything changes
 5. **Shared settings are merged, never replaced** — settings and MCP files that also hold your own configuration (`.mcp.json`, `.cursor/mcp.json`, `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`, `.codex/config.toml`) only have conforme's key updated. JSONC comments and trailing commas are kept, per-server options a tool added (Kiro `autoApprove`, Zoo Code approvals, Gemini `trust`, …) survive, a file conforme cannot parse is never overwritten, and `remove`/`migrate` never delete one
 6. **Each tool gets values it accepts** — agent tool names are translated into each tool's vocabulary (Claude Code, Gemini CLI and Kiro reject or ignore names they do not know), a model id another tool cannot use is left out, skill and agent names are written as kebab-case ASCII (rules, which only become files, keep other letters), and environment-variable references in MCP configs are rewritten to each tool's syntax (`${VAR}`, `${env:VAR}`, `{env:VAR}`)
+7. **The source's own files stay the source's** — what the source reads outside its own directories (an `AGENTS.md` or `CLAUDE.md` it reads natively or as a fallback, Gemini CLI's context files, Devin's `global_rules.md` and `.windsurfrules`, Zoo Code's `.roorules`, DeepSeek's `.agents/skills` fallback) is never written by another tool's target, deleted by `remove` or `migrate`, nor ignored by `gitignore install`, which also skips tools left out by `only` / `exclude`
 
 You can set your source tool once in `.conformerc.toml` or pass it on the command line with `--from`. If no source is specified, conforme defaults to `AGENTS.md`.
 
@@ -35,7 +36,7 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 
 | Tool | Config format | Frontmatter | AGENTS.md |
 |------|--------------|-------------|-----------|
-| Claude Code | `CLAUDE.md` + `.claude/rules/**/*.md` | `paths` (glob list or comma-separated string) | Native when no `CLAUDE.md` exists |
+| Claude Code | `CLAUDE.md` + `.claude/rules/**/*.md` | `paths` (glob list or comma-separated string) | Native (`AGENTS.md` and `.claude/AGENTS.md`) when no `CLAUDE.md` exists |
 | Cursor | `.cursor/rules/*.mdc` | `alwaysApply`, `globs`, `description` | Native |
 | Devin Desktop (formerly Windsurf) | `.devin/rules/*.md` (legacy `.windsurf/rules/*.md` is read too) | `trigger`, `description`, `globs` | Native |
 | GitHub Copilot | `.github/copilot-instructions.md` + `.github/instructions/**/*.instructions.md` | `applyTo`, `excludeAgent` | Native |
@@ -48,7 +49,7 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 |------|-------------|-------|
 | OpenAI Codex CLI | `AGENTS.md` | Also supports `AGENTS.override.md` (personal; not used as a conforme source) |
 | OpenCode | `AGENTS.md` | Falls back to `CLAUDE.md` |
-| Gemini CLI | `GEMINI.md` | Reads AGENTS.md when `context.fileName` in `.gemini/settings.json` names it |
+| Gemini CLI | `GEMINI.md` | Reads AGENTS.md when `context.fileName` in `.gemini/settings.json` names it; conforme writes the first other `context.fileName` entry (none when it names only `AGENTS.md`) |
 | Zed AI | `.rules` | First match wins: `.rules` → `.cursorrules` → `.windsurfrules` → `.clinerules` → `.github/copilot-instructions.md` → `AGENT.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` |
 | Amp | `AGENTS.md` | Falls back to `AGENT.md` or `CLAUDE.md` |
 | DeepSeek Harness (`dsh`) | `AGENTS.md` | Also loads `CLAUDE.md` when present; skills in `.dsh/skills/` |
@@ -204,7 +205,7 @@ When using Claude Code as source (`source = "claude"`), conforme also reads **cu
 | Amp | `.agents/skills/<name>/SKILL.md` | `name`, `description` (shared Codex format) |
 | DeepSeek Harness | `.dsh/skills/<name>/SKILL.md` | `name`, `description` (kebab-case name) |
 
-Every supported tool syncs skills.
+Every supported tool syncs skills. Only `SKILL.md` is synced: scripts or references bundled in a skill folder are not copied to the other tools.
 
 ### Agents format equivalence
 
@@ -242,7 +243,7 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | Codex CLI | `.codex/config.toml` (merged) | `[mcp_servers.<name>]` | TOML; no `${VAR}` expansion: `NAME=${NAME}` → `env_vars`, `Authorization: Bearer ${VAR}` → `bearer_token_env_var`, a `${VAR}` header → `env_http_headers`; atomic merge preserves unrelated settings, comments, target-only servers, and Codex-specific options |
 | DeepSeek Harness | _(not project-scoped)_ | — | MCP servers are `@deepseek-ai/dsh-mcp-client` plugin entries in the user-level `cordis.patch.yml` under `$DSH_HOME`, so conforme generates nothing |
 
-The source decides which servers exist: a server only the target lists is dropped (Codex keeps target-only servers), and a synced server is re-enabled (`disabled` / `enabled: false` are reset) so `check` never passes while a tool hides it. Entries conforme cannot express (a Zed extension server configured only through `settings`, a Claude Code `type: "sdk"` server, an OpenCode `{ "enabled": false }` toggle) are skipped on read and kept as they are on write. A source with no MCP server at all leaves every MCP file untouched, so servers kept by hand in a tool survive when conforme only syncs rules. conforme writes environment-variable references in each tool's syntax (Codex, which expands none, through its `env_vars` / `bearer_token_env_var` / `env_http_headers` keys) and reads them back to `${VAR}`.
+The source decides which servers exist: a server only the target lists is dropped (Codex keeps target-only servers), and a synced server is re-enabled (`disabled` / `enabled: false` are reset) so `check` never passes while a tool hides it. Entries conforme cannot express (a Zed extension server configured only through `settings`, a Claude Code `type: "sdk"` server, an OpenCode `{ "enabled": false }` toggle) are skipped on read and kept as they are on write. A source with no MCP server at all leaves every MCP file untouched, so servers kept by hand in a tool survive when conforme only syncs rules. conforme writes environment-variable references in each tool's syntax (Codex, which expands none, through its `env_vars` / `bearer_token_env_var` / `env_http_headers` keys) and reads them back to `${VAR}`. A reference a tool cannot express (a Codex `NAME=${OTHER}`, a `${VAR}` mixed into other text there, any reference for Zed, which expands none) is written literally, without a warning.
 
 ## Examples
 

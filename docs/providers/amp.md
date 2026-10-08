@@ -52,7 +52,7 @@ Also reads `AGENT.md` (singular) as fallback.
 - Workspace settings are "the nearest .amp/settings.json or .amp/settings.jsonc"; conforme merges into `settings.jsonc` when only that one exists (never creating a second file beside it), and treats both names as shared
 - Environment references are `${VAR_NAME}` with no default form; a normalized `${VAR:-default}` is written as `${VAR}`
 - User settings live at `~/.config/amp/settings.json`; workspace settings are the nearest `.amp/settings.json` searched upward
-- Falls back to `AGENT.md` or `CLAUDE.md` if `AGENTS.md` not found
+- Falls back to `AGENT.md` or `CLAUDE.md` if `AGENTS.md` not found; conforme's `read()` takes the first of the three, and with Amp as the source that file (`source_files()`) is never written by another target (the Claude Code target leaves an Amp source's `CLAUDE.md` alone) nor deleted by `remove`/`migrate`
 - Amp's docs moved from `ampcode.com/manual` to `ampcode.com/docs` (the old paths 301-redirect); the manual is now split into per-topic pages under `/docs/customize/`
 - Skill discovery is first-match-by-name across: `~/.config/agents/skills/`, `~/.agents/skills/`, `~/.config/amp/skills/`, the project `.agents/skills/` and `.claude/skills/` (searched in the current directory and its parents), `~/.claude/skills/`, `~/.claude/plugins/cache/`, `amp.skills.path`, built-in skills, plugin-bundled `<plugin>:<skill>` skills, and the personal and workspace skill repositories (added 2026-08-11); `amp.skills.disableClaudeCodeSkills` / `disableGlobalAgentsSkills` turn some roots off. conforme writes the project `.agents/skills/`
 - Each skills root is searched "recursively, up to five directories below"; conforme's `read()` does the same (nested skills are written back flat)

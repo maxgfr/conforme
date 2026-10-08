@@ -1294,6 +1294,35 @@ fn test_add_rule() {
 }
 
 #[test]
+fn test_add_refuses_when_agents_md_is_regenerated_from_a_tool() {
+    // With a Cursor source, AGENTS.md is an output: the next sync would drop
+    // the added rule.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join(".conformerc.toml"), "source = \"cursor\"\n").unwrap();
+    fs::write(root.join("AGENTS.md"), "Generated.\n").unwrap();
+
+    run(
+        root,
+        &["add", "rule", "TypeScript", "--activation", "always"],
+    )
+    .failure()
+    .stderr(predicate::str::contains("cursor"));
+    assert_eq!(
+        fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+        "Generated.\n"
+    );
+
+    // A source reading AGENTS.md itself (Codex) keeps the addition.
+    fs::write(root.join(".conformerc.toml"), "source = \"codex\"\n").unwrap();
+    run(
+        root,
+        &["add", "rule", "TypeScript", "--activation", "always"],
+    )
+    .success();
+}
+
+#[test]
 fn test_add_mcp() {
     let dir = TempDir::new().unwrap();
 
@@ -2257,6 +2286,178 @@ fn test_gemini_source_with_agents_md_context_file_keeps_it() {
     assert!(root.join(".claude/rules/ts.md").exists());
 }
 
+fn run(root: &std::path::Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    let mut full = vec!["-C", root.to_str().unwrap()];
+    full.extend_from_slice(args);
+    conforme().args(full).assert()
+}
+
+const CLAUDE_MD_SOURCE: &str =
+    "Top.\n\n## Rule: ts\n<!-- activation: glob **/*.ts -->\nStrict TS.\n";
+
+#[test]
+fn test_source_reading_claude_md_keeps_it_through_sync_remove_and_gitignore() {
+    // OpenCode reads CLAUDE.md when there is no AGENTS.md: that file is the
+    // source. The Claude Code target must not rewrite it (which moved the rule
+    // out, and the next sync then cleaned it everywhere), `remove claude`
+    // must not delete it and `gitignore install` must not ignore it.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".opencode")).unwrap();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    fs::write(root.join("CLAUDE.md"), CLAUDE_MD_SOURCE).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"opencode\"\n").unwrap();
+
+    run(root, &["sync"]).success();
+    run(root, &["sync"]).success();
+    run(root, &["check"]).success();
+
+    assert_eq!(
+        fs::read_to_string(root.join("CLAUDE.md")).unwrap(),
+        CLAUDE_MD_SOURCE
+    );
+    let cursor = fs::read_to_string(root.join(".cursor/rules/ts.mdc")).unwrap();
+    assert!(cursor.contains("Strict TS."), "{cursor}");
+
+    run(root, &["gitignore", "install"]).success();
+    let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
+    assert!(!gitignore.lines().any(|l| l == "/CLAUDE.md"), "{gitignore}");
+
+    run(root, &["remove", "claude"]).success();
+    assert_eq!(
+        fs::read_to_string(root.join("CLAUDE.md")).unwrap(),
+        CLAUDE_MD_SOURCE
+    );
+}
+
+#[test]
+fn test_deepseek_shared_skills_fallback_is_the_sources() {
+    // dsh reads `.agents/skills` when `.dsh/skills` has none: Codex must not
+    // rewrite those skills, `remove codex` must not delete them, and they
+    // stay tracked.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".dsh")).unwrap();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::write(root.join("AGENTS.md"), "Be helpful.\n").unwrap();
+    let skill = root.join(".agents/skills/lint/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    let text =
+        "---\nname: lint\ndescription: Lint\nlicense: MIT\nallowed-tools: Bash\n---\nLint.\n";
+    fs::write(&skill, text).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"deepseek\"\n").unwrap();
+
+    run(root, &["sync"]).success();
+    assert_eq!(fs::read_to_string(&skill).unwrap(), text);
+
+    run(root, &["gitignore", "install"]).success();
+    let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
+    assert!(!gitignore.contains(".agents/skills/"), "{gitignore}");
+
+    run(root, &["remove", "codex"]).success();
+    assert_eq!(fs::read_to_string(&skill).unwrap(), text);
+}
+
+#[test]
+fn test_check_status_diff_and_gitignore_respect_exclude() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("AGENTS.md"), "Instr.\n").unwrap();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    fs::create_dir_all(root.join(".kiro")).unwrap();
+    fs::write(
+        root.join(".conformerc.toml"),
+        "exclude = [\"kiro\", \"cursor\"]\n",
+    )
+    .unwrap();
+    fs::write(root.join(".cursor/rules/mine.mdc"), "Hand-written.\n").unwrap();
+
+    run(root, &["sync"]).success();
+    // Excluded tools are not "out of sync": the pre-commit hook passes.
+    run(root, &["check"]).success();
+    run(root, &["diff"])
+        .success()
+        .stdout(predicate::str::contains("All configs in sync"));
+    run(root, &["status"])
+        .success()
+        .stdout(predicate::str::contains("Excluded"));
+
+    run(root, &["gitignore", "install"]).success();
+    let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
+    assert!(!gitignore.contains(".cursor/"), "{gitignore}");
+    assert!(!gitignore.contains(".kiro/"), "{gitignore}");
+}
+
+#[test]
+fn test_check_reports_a_stale_generated_agents_md() {
+    // With a Claude Code source, AGENTS.md is generated for Codex, OpenCode,
+    // Amp and DeepSeek: `check` must notice when it is stale.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "First.\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+
+    run(root, &["sync"]).success();
+    run(root, &["check"]).success();
+    fs::write(root.join("CLAUDE.md"), "Second.\n").unwrap();
+    run(root, &["check"])
+        .failure()
+        .stdout(predicate::str::contains("AGENTS.md"));
+}
+
+#[test]
+fn test_gemini_target_writes_the_context_file_it_loads() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("AGENTS.md"), "Instr.\n").unwrap();
+    fs::create_dir_all(root.join(".gemini")).unwrap();
+    fs::write(
+        root.join(".gemini/settings.json"),
+        r#"{"context": {"fileName": "CONTEXT.md"}}"#,
+    )
+    .unwrap();
+
+    run(root, &["sync"]).success();
+    assert_eq!(
+        fs::read_to_string(root.join("CONTEXT.md")).unwrap(),
+        "Instr.\n"
+    );
+    assert!(!root.join("GEMINI.md").exists());
+
+    // Gemini loading AGENTS.md alone already gets everything from it.
+    fs::remove_file(root.join("CONTEXT.md")).unwrap();
+    fs::write(
+        root.join(".gemini/settings.json"),
+        r#"{"context": {"fileName": ["AGENTS.md"]}}"#,
+    )
+    .unwrap();
+    run(root, &["sync"]).success();
+    assert!(!root.join("GEMINI.md").exists());
+    assert!(!root.join("CONTEXT.md").exists());
+}
+
+#[test]
+fn test_claude_local_md_does_not_turn_agents_md_into_an_output() {
+    // A personal CLAUDE.local.md must not make conforme regenerate the shared
+    // AGENTS.md of a Claude Code source on one machine and not on another.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    fs::write(root.join(".claude/rules/style.md"), "Use tabs.\n").unwrap();
+    fs::write(root.join("AGENTS.md"), NATIVE_AGENTS_MD).unwrap();
+    fs::write(root.join("CLAUDE.local.md"), "My notes.\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+
+    run(root, &["sync"]).success();
+    assert_eq!(
+        fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+        NATIVE_AGENTS_MD
+    );
+}
+
 #[test]
 fn test_sync_from_an_empty_source_writes_and_cleans_nothing() {
     // A source tool that reads back as empty (a bare `.roo/`) must neither
@@ -2368,6 +2569,97 @@ fn test_migrate_is_not_blocked_by_another_tools_unreadable_settings() {
         fs::read_to_string(root.join(".gemini/settings.json")).unwrap(),
         "{ not json"
     );
+}
+
+#[test]
+fn test_migrate_to_a_tool_reading_agents_md_writes_it() {
+    // Codex keeps its instructions in AGENTS.md: migrating there must write
+    // it, not delete CLAUDE.md and the rules into nothing.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Precious.\n").unwrap();
+    fs::write(root.join(".claude/rules/style.md"), "Tabs.\n").unwrap();
+
+    migrate(root, "claude", "codex");
+
+    let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+    assert!(agents.contains("Precious."), "{agents}");
+    assert!(agents.contains("## Rule: style"), "{agents}");
+    assert!(agents.contains("Tabs."), "{agents}");
+    assert!(!root.join("CLAUDE.md").exists());
+}
+
+#[test]
+fn test_migrate_refuses_to_overwrite_a_different_agents_md() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Precious.\n").unwrap();
+    fs::write(root.join("AGENTS.md"), "Something else.\n").unwrap();
+
+    run(
+        root,
+        &["migrate", "--source", "claude", "--output", "codex"],
+    )
+    .failure()
+    .stderr(predicate::str::contains("AGENTS.md"));
+
+    assert_eq!(
+        fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+        "Something else.\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("CLAUDE.md")).unwrap(),
+        "Precious.\n"
+    );
+}
+
+#[test]
+fn test_migrate_keeps_what_the_output_cannot_hold() {
+    // Bundled skill files are not copied (only SKILL.md is), and Zed has no
+    // agents: neither may be deleted with the source.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("GEMINI.md"), "Instr.\n").unwrap();
+    let skill = root.join(".gemini/skills/deploy");
+    fs::create_dir_all(skill.join("scripts")).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy\n---\nRun scripts/run.sh.\n",
+    )
+    .unwrap();
+    fs::write(skill.join("scripts/run.sh"), "echo deploy\n").unwrap();
+    fs::create_dir_all(root.join(".gemini/agents")).unwrap();
+    let agent = "---\nname: rev\ndescription: Review\nkind: local\n---\nReview.\n";
+    fs::write(root.join(".gemini/agents/rev.md"), agent).unwrap();
+
+    migrate(root, "gemini", "zed");
+
+    assert_eq!(
+        fs::read_to_string(skill.join("scripts/run.sh")).unwrap(),
+        "echo deploy\n"
+    );
+    assert!(skill.join("SKILL.md").exists());
+    assert_eq!(
+        fs::read_to_string(root.join(".gemini/agents/rev.md")).unwrap(),
+        agent
+    );
+    assert!(!root.join("GEMINI.md").exists());
+}
+
+#[test]
+fn test_migrate_refuses_an_empty_source() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".roo")).unwrap();
+
+    run(
+        root,
+        &["migrate", "--source", "zoocode", "--output", "claude"],
+    )
+    .failure()
+    .stderr(predicate::str::contains("nothing to migrate"));
 }
 
 #[test]
@@ -2497,12 +2789,20 @@ fn test_gemini_remote_agents_survive_a_sync() {
         GEMINI_REMOTE_AGENTS_LIST,
     )
     .unwrap();
+    // `kind` defaults to `remote` on a remote agent: one carrying only an
+    // agent card is remote too.
+    let implicit = "---\nname: card-only\nagent_card_url: https://c.example.com/card.json\n---\n";
+    fs::write(root.join(".gemini/agents/card-only.md"), implicit).unwrap();
 
     conforme()
         .args(["-C", root.to_str().unwrap(), "sync"])
         .assert()
         .success();
 
+    assert_eq!(
+        fs::read_to_string(root.join(".gemini/agents/card-only.md")).unwrap(),
+        implicit
+    );
     assert_eq!(
         fs::read_to_string(root.join(".gemini/agents/remote-helper.md")).unwrap(),
         GEMINI_REMOTE_AGENT

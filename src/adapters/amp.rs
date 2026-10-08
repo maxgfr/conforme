@@ -12,6 +12,9 @@ use crate::config::NormalizedConfig;
 /// MCP in the workspace settings file, under `amp.mcpServers`.
 pub struct AmpAdapter;
 
+/// Amp reads `AGENTS.md`, else `AGENT.md`, else `CLAUDE.md`.
+const INSTRUCTION_FILES: &[&str] = &["AGENTS.md", "AGENT.md", "CLAUDE.md"];
+
 /// Amp's workspace settings file: `.amp/settings.json`, or the JSONC spelling
 /// `.amp/settings.jsonc` when only that one exists, so conforme merges into
 /// the file Amp actually reads instead of creating a second one beside it.
@@ -55,6 +58,10 @@ impl AiToolAdapter for AmpAdapter {
         true
     }
 
+    fn source_files(&self, project_root: &Path) -> Vec<PathBuf> {
+        crate::adapters::first_existing_file(project_root, INSTRUCTION_FILES)
+    }
+
     fn is_shared_file(&self, path: &Path) -> bool {
         path.ends_with(Path::new(".amp/settings.json"))
             || path.ends_with(Path::new(".amp/settings.jsonc"))
@@ -81,7 +88,7 @@ impl AiToolAdapter for AmpAdapter {
 
         crate::markdown::read_native_agents_md(
             project_root,
-            &["AGENTS.md", "AGENT.md", "CLAUDE.md"],
+            INSTRUCTION_FILES,
             NormalizedConfig {
                 instructions: String::new(),
                 rules: Vec::new(),
