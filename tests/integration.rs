@@ -2234,7 +2234,11 @@ fn test_migrate_keeps_skills_another_detected_tool_reads() {
     fs::create_dir_all(root.join(".codex")).unwrap();
     let skill = root.join(".agents/skills/deploy/SKILL.md");
     fs::create_dir_all(skill.parent().unwrap()).unwrap();
-    fs::write(&skill, "---\nname: deploy\ndescription: Deploy\n---\nRun.\n").unwrap();
+    fs::write(
+        &skill,
+        "---\nname: deploy\ndescription: Deploy\n---\nRun.\n",
+    )
+    .unwrap();
 
     migrate(root, "zed", "claude");
 
@@ -2260,7 +2264,11 @@ fn test_migrate_keeps_files_conforme_never_reads() {
         "---\nname: reviewer\ndescription: Review\n---\nReview.\n",
     )
     .unwrap();
-    fs::write(root.join(".kiro/agents/json-agent.json"), "{\"name\": \"j\"}").unwrap();
+    fs::write(
+        root.join(".kiro/agents/json-agent.json"),
+        "{\"name\": \"j\"}",
+    )
+    .unwrap();
 
     migrate(root, "kiro", "claude");
 
@@ -2359,8 +2367,16 @@ fn test_gemini_remote_agents_survive_a_sync() {
     let dir = create_project_with_tools(agents_md, &["gemini"]);
     let root = dir.path();
     fs::create_dir_all(root.join(".gemini/agents")).unwrap();
-    fs::write(root.join(".gemini/agents/remote-helper.md"), GEMINI_REMOTE_AGENT).unwrap();
-    fs::write(root.join(".gemini/agents/fleet.md"), GEMINI_REMOTE_AGENTS_LIST).unwrap();
+    fs::write(
+        root.join(".gemini/agents/remote-helper.md"),
+        GEMINI_REMOTE_AGENT,
+    )
+    .unwrap();
+    fs::write(
+        root.join(".gemini/agents/fleet.md"),
+        GEMINI_REMOTE_AGENTS_LIST,
+    )
+    .unwrap();
 
     conforme()
         .args(["-C", root.to_str().unwrap(), "sync"])
@@ -2385,8 +2401,16 @@ fn test_gemini_remote_agents_are_not_read_as_local_agents() {
     fs::write(root.join("GEMINI.md"), "Be helpful.\n").unwrap();
     fs::create_dir_all(root.join(".gemini/agents")).unwrap();
     fs::create_dir_all(root.join(".claude")).unwrap();
-    fs::write(root.join(".gemini/agents/remote-helper.md"), GEMINI_REMOTE_AGENT).unwrap();
-    fs::write(root.join(".gemini/agents/fleet.md"), GEMINI_REMOTE_AGENTS_LIST).unwrap();
+    fs::write(
+        root.join(".gemini/agents/remote-helper.md"),
+        GEMINI_REMOTE_AGENT,
+    )
+    .unwrap();
+    fs::write(
+        root.join(".gemini/agents/fleet.md"),
+        GEMINI_REMOTE_AGENTS_LIST,
+    )
+    .unwrap();
     fs::write(
         root.join(".gemini/agents/reviewer.md"),
         "---\nname: reviewer\ndescription: Review\n---\nReview.\n",
