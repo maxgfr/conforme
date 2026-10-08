@@ -287,7 +287,8 @@ fn test_roundtrip_copilot_skills_agents_mcp() {
     assert_eq!(read_config.skills[0].name, "deploy");
     assert_eq!(read_config.agents.len(), 1);
     assert_eq!(read_config.agents[0].name, "reviewer");
-    assert_eq!(read_config.agents[0].model.as_deref(), Some("sonnet"));
+    // `sonnet` is a Claude Code alias, not a Copilot model: it is left out.
+    assert_eq!(read_config.agents[0].model, None);
     assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
     assert_eq!(
         find_http_url(&read_config, "api").as_deref(),

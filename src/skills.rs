@@ -503,10 +503,10 @@ pub fn generate_copilot_agents(
             "description".to_string(),
             serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
         );
-        if let Some(model) = &agent.model {
+        if let Some(model) = copilot_model(agent.model.as_deref()) {
             fields.insert(
                 "model".to_string(),
-                serde_yaml_ng::Value::String(model.clone()),
+                serde_yaml_ng::Value::String(model.to_string()),
             );
         }
         if !agent.tools.is_empty() {
@@ -606,10 +606,10 @@ pub fn generate_cursor_agents(
             "description".to_string(),
             serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
         );
-        if let Some(model) = &agent.model {
+        if let Some(model) = cursor_model(agent.model.as_deref()) {
             fields.insert(
                 "model".to_string(),
-                serde_yaml_ng::Value::String(model.clone()),
+                serde_yaml_ng::Value::String(model.to_string()),
             );
         }
 
@@ -637,10 +637,10 @@ pub fn generate_kiro_agents(
             "description".to_string(),
             serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
         );
-        if let Some(model) = &agent.model {
+        if let Some(model) = kiro_model(agent.model.as_deref()) {
             fields.insert(
                 "model".to_string(),
-                serde_yaml_ng::Value::String(model.clone()),
+                serde_yaml_ng::Value::String(model.to_string()),
             );
         }
         insert_tool_list(&mut fields, &kiro_tools(&agent.tools));
@@ -699,10 +699,12 @@ const TOOL_EQUIVALENTS: &[(&str, &str, &str, &str)] = &[
         "WebSearch",
     ),
     ("web", "web_fetch", "web", "WebFetch"),
-    ("todowrite", "write_todos", "todo_list", "TodoWrite"),
-    ("write_todos", "write_todos", "todo_list", "TodoWrite"),
-    ("todo", "write_todos", "todo_list", "TodoWrite"),
-    ("todo_list", "write_todos", "todo_list", "TodoWrite"),
+    // Kiro's `todo_list` tag only applies to engines that provide it; V3's
+    // task-tracking tool is `todo`.
+    ("todowrite", "write_todos", "todo", "TodoWrite"),
+    ("write_todos", "write_todos", "todo", "TodoWrite"),
+    ("todo", "write_todos", "todo", "TodoWrite"),
+    ("todo_list", "write_todos", "todo", "TodoWrite"),
     ("task", "invoke_agent", "subagent", "Agent"),
     ("agent", "invoke_agent", "subagent", "Agent"),
     ("invoke_agent", "invoke_agent", "subagent", "Agent"),
@@ -712,6 +714,10 @@ const TOOL_EQUIVALENTS: &[(&str, &str, &str, &str)] = &[
     ("ask_user", "ask_user", "", "AskUserQuestion"),
     ("skill", "activate_skill", "", "Skill"),
     ("activate_skill", "activate_skill", "", "Skill"),
+    // Every MCP tool: Gemini `mcp_*`, Kiro `@mcp`; Claude Code has no
+    // wildcard for it.
+    ("mcp_*", "mcp_*", "@mcp", ""),
+    ("@mcp", "mcp_*", "@mcp", ""),
 ];
 
 /// Gemini CLI built-in tool names (`ALL_BUILTIN_TOOL_NAMES` plus the legacy
@@ -793,18 +799,21 @@ const KIRO_TOOLS: &[&str] = &[
 /// which nothing resolves makes Claude Code refuse to launch the subagent.
 const CLAUDE_TOOLS: &[&str] = &[
     "Agent",
+    "Artifact",
     "AskUserQuestion",
     "Bash",
     "CronCreate",
     "CronDelete",
     "CronList",
     "Edit",
+    "EndConversation",
     "EnterPlanMode",
     "EnterWorktree",
     "ExitPlanMode",
     "ExitWorktree",
     "Glob",
     "Grep",
+    "ListAgents",
     "ListMcpResourcesTool",
     "LSP",
     "Monitor",
@@ -813,8 +822,15 @@ const CLAUDE_TOOLS: &[&str] = &[
     "PushNotification",
     "Read",
     "ReadMcpResourceTool",
+    "RemoteTrigger",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendFeedback",
     "SendMessage",
+    "SendUserFile",
+    "ShareOnboardingGuide",
     "Skill",
+    "SubagentHandback",
     "Task",
     "TaskCreate",
     "TaskGet",
@@ -824,8 +840,10 @@ const CLAUDE_TOOLS: &[&str] = &[
     "TaskUpdate",
     "TodoWrite",
     "ToolSearch",
+    "WaitForMcpServers",
     "WebFetch",
     "WebSearch",
+    "Workflow",
     "Write",
 ];
 
@@ -1223,6 +1241,34 @@ pub(crate) fn claude_model(model: Option<&str>) -> Option<&str> {
     })
 }
 
+/// A model value that only means something to another host: a Claude Code or
+/// Gemini CLI alias, or an OpenCode `provider/model` id.
+fn is_foreign_model_alias(model: &str) -> bool {
+    matches!(
+        model,
+        "sonnet" | "opus" | "haiku" | "fable" | "pro" | "flash" | "flash-lite"
+    ) || model.contains('/')
+}
+
+/// The `model` to write for a Kiro agent. Kiro CLI V3 keeps an unknown model
+/// selected and fails every request, so another host's alias and `inherit`
+/// (not a Kiro value) are left out and the agent uses Kiro's default.
+pub(crate) fn kiro_model(model: Option<&str>) -> Option<&str> {
+    model.filter(|m| *m != "inherit" && !is_foreign_model_alias(m))
+}
+
+/// The `model` to write for a Copilot custom agent (a model name or id such
+/// as `GPT-5 (copilot)` or `gpt-4o`); another host's alias is left out.
+pub(crate) fn copilot_model(model: Option<&str>) -> Option<&str> {
+    model.filter(|m| *m != "inherit" && !is_foreign_model_alias(m))
+}
+
+/// The `model` to write for a Cursor subagent: `inherit` or a model id;
+/// another host's alias is left out.
+pub(crate) fn cursor_model(model: Option<&str>) -> Option<&str> {
+    model.filter(|m| !is_foreign_model_alias(m))
+}
+
 /// The `model` to write for a Gemini CLI subagent. Gemini passes any other
 /// value to its API unchanged, so a Claude alias such as `sonnet` would load
 /// and then fail on every call; only `inherit`, Gemini's aliases (`auto`,
@@ -1427,5 +1473,75 @@ mod tests {
         assert!(files[0].0.to_string_lossy().ends_with(".agent.md"));
         assert!(files[0].1.contains("name: reviewer"));
         assert!(files[0].1.contains("model: gpt-4o"));
+    }
+
+    #[test]
+    fn test_foreign_model_aliases_are_left_out() {
+        // A Claude alias or an OpenCode `provider/model` id means nothing to
+        // Kiro (whose V3 requests then fail), Copilot or Cursor.
+        for m in ["sonnet", "opus", "flash", "anthropic/claude-sonnet-4-5"] {
+            assert_eq!(kiro_model(Some(m)), None, "{m}");
+            assert_eq!(copilot_model(Some(m)), None, "{m}");
+            assert_eq!(cursor_model(Some(m)), None, "{m}");
+        }
+        assert_eq!(kiro_model(Some("inherit")), None);
+        assert_eq!(cursor_model(Some("inherit")), Some("inherit"));
+        assert_eq!(kiro_model(Some("auto")), Some("auto"));
+        assert_eq!(
+            kiro_model(Some("claude-sonnet-4.5")),
+            Some("claude-sonnet-4.5")
+        );
+        assert_eq!(
+            copilot_model(Some("GPT-5 (copilot)")),
+            Some("GPT-5 (copilot)")
+        );
+        assert_eq!(copilot_model(Some("gpt-4o")), Some("gpt-4o"));
+    }
+
+    #[test]
+    fn test_agent_model_is_filtered_for_kiro_copilot_and_cursor() {
+        let agents = vec![crate::config::NormalizedAgent {
+            name: "reviewer".to_string(),
+            description: "Review".to_string(),
+            content: "Review.".to_string(),
+            model: Some("sonnet".to_string()),
+            ..Default::default()
+        }];
+        let root = Path::new("/tmp/test");
+        for files in [
+            generate_kiro_agents(root, &agents).unwrap(),
+            generate_copilot_agents(root, &agents).unwrap(),
+            generate_cursor_agents(root, &agents).unwrap(),
+        ] {
+            assert!(!files[0].1.contains("model:"), "{}", files[0].1);
+        }
+    }
+
+    #[test]
+    fn test_mcp_wildcard_translates_between_gemini_and_kiro() {
+        assert_eq!(gemini_tools(&["mcp_*".to_string()]), vec!["mcp_*"]);
+        assert_eq!(gemini_tools(&["@mcp".to_string()]), vec!["mcp_*"]);
+        assert_eq!(kiro_tools(&["mcp_*".to_string()]), vec!["@mcp"]);
+    }
+
+    #[test]
+    fn test_kiro_todo_tool_is_todo() {
+        assert_eq!(kiro_tools(&["TodoWrite".to_string()]), vec!["todo"]);
+        assert_eq!(kiro_tools(&["write_todos".to_string()]), vec!["todo"]);
+    }
+
+    #[test]
+    fn test_current_claude_code_tools_pass_through() {
+        let tools: Vec<String> = [
+            "Read",
+            "Workflow",
+            "ListAgents",
+            "ScheduleWakeup",
+            "SendUserFile",
+        ]
+        .iter()
+        .map(|t| t.to_string())
+        .collect();
+        assert_eq!(claude_tools(&tools), tools);
     }
 }
