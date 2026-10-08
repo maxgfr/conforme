@@ -688,6 +688,44 @@ fn test_roundtrip_zoocode_is_stable() {
 }
 
 #[test]
+fn test_opencode_reads_every_agent_location() {
+    // OpenCode loads `.opencode/agents/`, the singular `.opencode/agent/` and
+    // the `agent` key of opencode.json together; built-in overrides
+    // (`build`, `plan`) are not agents.
+    let adapter = conforme::adapters::opencode::OpenCodeAdapter;
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".opencode/agents")).unwrap();
+    fs::create_dir_all(root.join(".opencode/agent")).unwrap();
+    fs::write(
+        root.join(".opencode/agents/docs.md"),
+        "---\ndescription: Docs\nmode: subagent\n---\nWrite docs.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".opencode/agent/legacy.md"),
+        "---\ndescription: Legacy\nmode: subagent\n---\nOld.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("opencode.json"),
+        r#"{"agent": {
+            "build": {"model": "anthropic/claude-sonnet-4-5"},
+            "code-reviewer": {"description": "Review", "prompt": "Review."},
+            "docs": {"description": "JSON docs", "prompt": "Ignored."}
+        }}"#,
+    )
+    .unwrap();
+
+    let config = adapter.read(root).unwrap();
+    let mut names: Vec<&str> = config.agents.iter().map(|a| a.name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, vec!["code-reviewer", "docs", "legacy"]);
+    let docs = config.agents.iter().find(|a| a.name == "docs").unwrap();
+    assert_eq!(docs.description, "Docs");
+}
+
+#[test]
 fn test_zoocode_reads_roorules_when_rules_dir_is_empty() {
     // Zoo Code falls back to `.roorules` when `.roo/rules/` is missing or empty.
     let adapter = conforme::adapters::zoocode::ZooCodeAdapter;

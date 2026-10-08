@@ -883,6 +883,11 @@ pub fn parse_opencode_mcp_object(mcp: &serde_json::Value) -> Vec<NormalizedMcpSe
 
     let mut result = Vec::new();
     for (name, value) in obj {
+        // `{ "enabled": false }` only toggles a server defined elsewhere (the
+        // global config); the merge keeps it as is.
+        if !crate::json_settings::is_expressible_server(value) {
+            continue;
+        }
         let Some(entry) = value.as_object() else {
             continue;
         };
@@ -943,6 +948,18 @@ pub fn parse_opencode_mcp_object(mcp: &serde_json::Value) -> Vec<NormalizedMcpSe
     result
 }
 
+/// OpenCode's built-in agents: an `agent.<name>` entry for one of them
+/// overrides its settings rather than defining a new agent.
+const OPENCODE_BUILTIN_AGENTS: &[&str] = &[
+    "build",
+    "plan",
+    "general",
+    "explore",
+    "compaction",
+    "title",
+    "summary",
+];
+
 /// Parse the OpenCode `agent` object from an `opencode.json` value back into
 /// normalized agents (the inverse of [`build_opencode_agent_object`]).
 pub fn parse_opencode_agent_object(
@@ -957,6 +974,20 @@ pub fn parse_opencode_agent_object(
         let Some(entry) = value.as_object() else {
             continue;
         };
+        // Overrides of OpenCode's built-in agents, and entries that only tune
+        // an agent defined elsewhere (no prompt, no description), are not
+        // agents another tool could load.
+        let has_text = |key: &str| {
+            entry
+                .get(key)
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.trim().is_empty())
+        };
+        if OPENCODE_BUILTIN_AGENTS.contains(&name.as_str())
+            || !(has_text("prompt") || has_text("description"))
+        {
+            continue;
+        }
         result.push(crate::config::NormalizedAgent {
             name: name.clone(),
             description: entry
@@ -1702,6 +1733,32 @@ oauth_resource = "https://example.com"
             McpTransport::Http { url, .. } => assert_eq!(url, "wss://example.com/mcp"),
             other => panic!("expected HTTP transport for ws, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_parse_opencode_mcp_object_skips_toggle_entries() {
+        // `mcp.<name>` may be just `{ "enabled": false }`, toggling a server
+        // defined in the global config.
+        let mcp = serde_json::json!({
+            "github": {"enabled": false},
+            "fs": {"type": "local", "command": ["npx", "-y", "fs"]}
+        });
+        let parsed = parse_opencode_mcp_object(&mcp);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "fs");
+    }
+
+    #[test]
+    fn test_parse_opencode_agent_object_skips_builtin_overrides() {
+        let agent = serde_json::json!({
+            "build": {"model": "anthropic/claude-sonnet-4-5", "permission": {"edit": "ask"}},
+            "plan": {"temperature": 0.1},
+            "tuned": {"temperature": 0.2},
+            "reviewer": {"description": "Review", "prompt": "Review."}
+        });
+        let parsed = parse_opencode_agent_object(&agent);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "reviewer");
     }
 
     #[test]
