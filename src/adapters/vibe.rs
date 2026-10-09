@@ -22,6 +22,23 @@ const INSTRUCTION_FILES: &[&str] = &["AGENTS.md"];
 /// skipped.
 const RESERVED_SKILLS: &[&str] = &["vibe", "skill-creator"];
 
+/// Vibe's built-in agents (`BuiltinAgentName`): a custom file of that name
+/// replaces the built-in one, so a synced subagent there would remove a mode
+/// (and `accept-edits`, the default start agent, would stop Vibe starting).
+const BUILTIN_AGENTS: &[&str] = &[
+    "ask",
+    "plan",
+    "accept-edits",
+    "smart-approve",
+    "auto-approve",
+    "explore",
+    "lean",
+];
+
+fn is_builtin_agent(name: &str) -> bool {
+    BUILTIN_AGENTS.contains(&crate::config::sanitize_name(name).as_str())
+}
+
 fn config_path(project_root: &Path) -> PathBuf {
     project_root.join(".vibe").join("config.toml")
 }
@@ -84,6 +101,14 @@ impl AiToolAdapter for VibeAdapter {
                 ));
             }
         }
+        for agent in &config.agents {
+            if is_builtin_agent(&agent.name) {
+                warnings.push(format!(
+                    "agent {} is not written: a file of that name would replace Vibe's built-in agent",
+                    crate::config::sanitize_name(&agent.name)
+                ));
+            }
+        }
         for server in &config.mcp_servers {
             // A stdio server gets only the variables its `env` sets, verbatim;
             // only a bearer token is read from a variable (`api_key_env`).
@@ -116,9 +141,13 @@ impl AiToolAdapter for VibeAdapter {
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
             ManagedDir::subdirs(project_root.join(".vibe").join("skills")),
-            // An agent file that is not a subagent is a mode the user defined.
+            // An agent file that is not a subagent is a mode the user defined,
+            // and one named like a built-in agent overrides it on purpose.
             ManagedDir::files_except(project_root.join(".vibe").join("agents"), ".toml", |path| {
                 !crate::skills::is_vibe_subagent_file(path)
+                    || path
+                        .file_stem()
+                        .is_some_and(|stem| is_builtin_agent(&stem.to_string_lossy()))
             }),
         ]
     }
@@ -155,7 +184,11 @@ impl AiToolAdapter for VibeAdapter {
             INSTRUCTION_FILES,
             NormalizedConfig {
                 skills,
-                agents: crate::skills::read_vibe_agents(project_root)?,
+                // A built-in override is not an agent another tool could load.
+                agents: crate::skills::read_vibe_agents(project_root)?
+                    .into_iter()
+                    .filter(|a| !is_builtin_agent(&a.name))
+                    .collect(),
                 mcp_servers,
                 ..Default::default()
             },
@@ -169,10 +202,13 @@ impl AiToolAdapter for VibeAdapter {
     ) -> Result<Vec<(PathBuf, String)>> {
         // Vibe reads AGENTS.md itself: no instruction file is written.
         let mut files = crate::skills::generate_vibe_skills(project_root, &config.skills)?;
-        files.extend(crate::skills::generate_vibe_agents(
-            project_root,
-            &config.agents,
-        )?);
+        let agents: Vec<_> = config
+            .agents
+            .iter()
+            .filter(|a| !is_builtin_agent(&a.name))
+            .cloned()
+            .collect();
+        files.extend(crate::skills::generate_vibe_agents(project_root, &agents)?);
         // A source with no MCP server leaves the user's config untouched.
         if !config.mcp_servers.is_empty() {
             let path = config_path(project_root);

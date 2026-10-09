@@ -67,20 +67,10 @@ impl AiToolAdapter for DevinAdapter {
             project_root,
             &[".devin/global_rules.md", ".windsurf/global_rules.md"],
         );
-        // `.windsurfrules` is only the fallback when neither a global rules
-        // file nor a `general` rule holds the instructions.
-        let has_general_rule = [devin_dir(project_root), legacy_dir(project_root)]
-            .iter()
-            .flat_map(|dir| {
-                crate::adapters::collect_rule_files(&dir.join("rules"), "md").unwrap_or_default()
-            })
-            .any(|path| path.file_stem().is_some_and(|s| s == "general"));
-        if files.is_empty() && !has_general_rule {
-            files.extend(crate::adapters::first_existing_file(
-                project_root,
-                &[".windsurfrules"],
-            ));
-        }
+        files.extend(crate::adapters::first_existing_file(
+            project_root,
+            &[".windsurfrules"],
+        ));
         files
     }
 
@@ -159,11 +149,19 @@ impl AiToolAdapter for DevinAdapter {
             }
         }
 
-        // The legacy root `.windsurfrules` is still read as workspace rules.
-        if instructions.is_none() {
-            let windsurfrules = project_root.join(".windsurfrules");
-            if windsurfrules.is_file() {
-                instructions = Some(std::fs::read_to_string(&windsurfrules)?.trim().to_string());
+        // The legacy root `.windsurfrules` is one of Devin's standard rule
+        // files, always on and loaded next to the others.
+        let windsurfrules = project_root.join(".windsurfrules");
+        if windsurfrules.is_file() {
+            let legacy = std::fs::read_to_string(&windsurfrules)
+                .with_context(|| format!("failed to read {}", windsurfrules.display()))?
+                .trim()
+                .to_string();
+            if !legacy.is_empty() {
+                instructions = Some(match instructions.take() {
+                    Some(previous) if !previous.is_empty() => format!("{previous}\n\n{legacy}"),
+                    _ => legacy,
+                });
             }
         }
 
@@ -455,6 +453,30 @@ mod tests {
             DevinAdapter.read(tmp.path()).unwrap().instructions,
             "Old rules."
         );
+    }
+
+    #[test]
+    fn test_read_windsurfrules_adds_to_general_and_global_rules() {
+        // "Standard project rules from `AGENTS.md`, `AGENTS.local.md`,
+        // `AGENT.md`, and `.windsurfrules` are read by default." / "All of
+        // these are treated identically — their contents are loaded as
+        // always-on rules." (docs.devin.ai/cli/extensibility/rules)
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".devin/rules")).unwrap();
+        std::fs::write(
+            tmp.path().join(".devin/rules/general.md"),
+            "---\ntrigger: always_on\n---\nGeneral.\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join(".devin/global_rules.md"), "Global.\n").unwrap();
+        std::fs::write(tmp.path().join(".windsurfrules"), "Legacy.\n").unwrap();
+        assert_eq!(
+            DevinAdapter.read(tmp.path()).unwrap().instructions,
+            "General.\n\nGlobal.\n\nLegacy."
+        );
+        assert!(DevinAdapter
+            .source_files(tmp.path())
+            .contains(&tmp.path().join(".windsurfrules")));
     }
 
     #[test]

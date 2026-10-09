@@ -569,6 +569,208 @@ fn test_kilo_scout_agent_is_left_to_kilo() {
     assert!(adapter.generate(dir.path(), &config).unwrap().is_empty());
 }
 
+/// A variable reference a tool will not resolve is written as is: the
+/// adapter must say so (`warnings`), never lose it silently.
+#[test]
+fn test_unresolved_variable_references_are_warned_about() {
+    let server = |name: &str, transport: McpTransport, env: &[(&str, &str)]| NormalizedMcpServer {
+        name: name.to_string(),
+        transport,
+        env: env
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    };
+    let stdio = |command: &str, args: &[&str]| McpTransport::Stdio {
+        command: command.to_string(),
+        args: args.iter().map(|a| a.to_string()).collect(),
+    };
+    let http = |url: &str, headers: &[(&str, &str)]| McpTransport::Http {
+        url: url.to_string(),
+        headers: headers
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    };
+    let config = |servers: Vec<NormalizedMcpServer>| NormalizedConfig {
+        mcp_servers: servers,
+        ..Default::default()
+    };
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+
+    // Codex forwards `NAME=${NAME}`, `Bearer ${VAR}` and an exact `${VAR}`
+    // header by name (codex-rs/config/src/mcp_types.rs); nothing else.
+    let codex = conforme::adapters::codex::CodexAdapter;
+    let forwarded = config(vec![
+        server("fs", stdio("npx", &["fs"]), &[("TOKEN", "${TOKEN}")]),
+        server(
+            "api",
+            http(
+                "https://x.dev/mcp",
+                &[("Authorization", "Bearer ${API}"), ("X-Key", "${KEY}")],
+            ),
+            &[],
+        ),
+    ]);
+    assert!(codex.warnings(root, &forwarded).is_empty());
+    for literal in [
+        server("a", stdio("npx", &["--root", "${HOME}/src"]), &[]),
+        server("b", stdio("npx", &[]), &[("TOKEN", "${OTHER}")]),
+        server(
+            "c",
+            http("https://x.dev/mcp", &[("X-Key", "key=${KEY}")]),
+            &[],
+        ),
+    ] {
+        let name = literal.name.clone();
+        assert_eq!(
+            codex.warnings(root, &config(vec![literal])).len(),
+            1,
+            "{name}"
+        );
+    }
+
+    // Zed expands no variable at all.
+    let zed = conforme::adapters::zed::ZedAdapter;
+    assert_eq!(zed.warnings(root, &forwarded).len(), 2);
+    assert!(zed
+        .warnings(root, &config(vec![server("p", stdio("npx", &["fs"]), &[])]))
+        .is_empty());
+
+    // Zoo Code resolves only `${env:VAR}` and `${workspaceFolder}`.
+    let zoo = conforme::adapters::zoocode::ZooCodeAdapter;
+    assert!(zoo.warnings(root, &forwarded).is_empty());
+    assert!(zoo
+        .warnings(
+            root,
+            &config(vec![server(
+                "w",
+                stdio("npx", &["${workspaceFolder}"]),
+                &[]
+            )])
+        )
+        .is_empty());
+    assert_eq!(
+        zoo.warnings(
+            root,
+            &config(vec![server("h", stdio("npx", &["${userHome}/x"]), &[])])
+        )
+        .len(),
+        1
+    );
+}
+
+#[test]
+fn test_kilo_reads_the_opencode_files_kilo_loads() {
+    // Kilo loads `kilo` then `opencode` config files at the root and in each
+    // `.kilocode`/`.kilo` directory (config/config.ts `["kilo", "opencode"]`,
+    // kilocode/config/config.ts `ALL_CONFIG_FILES`), later ones winning.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    let server = |url: &str| {
+        format!("{{\"mcp\":{{\"api\":{{\"type\":\"remote\",\"url\":\"{url}\"}},\"only-{}\":{{\"type\":\"remote\",\"url\":\"{url}\"}}}}}}", url.len())
+    };
+    fs::create_dir_all(root.join(".kilo")).unwrap();
+    fs::write(
+        root.join("opencode.json"),
+        server("https://root.example/mcp"),
+    )
+    .unwrap();
+    fs::write(
+        root.join(".kilo/opencode.json"),
+        server("https://kilo-dir.example/mcp"),
+    )
+    .unwrap();
+    let config = conforme::adapters::kilo::KiloAdapter.read(root).unwrap();
+    assert_eq!(
+        find_http_url(&config, "api").as_deref(),
+        Some("https://kilo-dir.example/mcp")
+    );
+    assert_eq!(config.mcp_servers.len(), 3, "{:?}", mcp_names(&config));
+}
+
+#[test]
+fn test_hand_written_builtin_agent_overrides_are_never_swept() {
+    // conforme never writes an agent named like OpenCode's or Kilo's built-in
+    // ones, so such a file is the user's override and no orphan.
+    let cases: [(Box<dyn conforme::adapters::AiToolAdapter>, &str); 2] = [
+        (
+            Box::new(conforme::adapters::opencode::OpenCodeAdapter),
+            ".opencode/agents/build.md",
+        ),
+        (
+            Box::new(conforme::adapters::kilo::KiloAdapter),
+            ".kilo/agents/debug.md",
+        ),
+    ];
+    for (adapter, file) in cases {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "---\ndescription: Mine\n---\nBuild.\n").unwrap();
+        let config = NormalizedConfig {
+            instructions: "Hi.".into(),
+            ..Default::default()
+        };
+        let orphans = conforme::adapters::find_orphans(
+            &adapter.managed_directories(dir.path()),
+            &adapter.generate(dir.path(), &config).unwrap(),
+        )
+        .unwrap();
+        assert!(orphans.is_empty(), "{}: {orphans:?}", adapter.id());
+    }
+}
+
+#[test]
+fn test_vibe_builtin_agent_names_are_left_to_vibe() {
+    // Vibe lets a custom agent file replace a built-in one ("Custom agent '%s'
+    // overrides builtin agent", agents/registry.py): a synced `plan` subagent
+    // would remove the Plan mode, and `accept-edits`, the default start
+    // agent, would make Vibe refuse to start.
+    let adapter = conforme::adapters::vibe::VibeAdapter;
+    let dir = TempDir::new().unwrap();
+    let agent = |name: &str| conforme::config::NormalizedAgent {
+        name: name.to_string(),
+        description: "Mine".to_string(),
+        content: "Do it.".to_string(),
+        ..Default::default()
+    };
+    let config = NormalizedConfig {
+        agents: [
+            "ask",
+            "plan",
+            "accept-edits",
+            "smart-approve",
+            "auto-approve",
+            "explore",
+            "lean",
+        ]
+        .into_iter()
+        .map(agent)
+        .collect(),
+        ..Default::default()
+    };
+    assert!(adapter.generate(dir.path(), &config).unwrap().is_empty());
+    assert!(!adapter.warnings(dir.path(), &config).is_empty());
+
+    // A built-in override written by hand is not read as a portable agent.
+    fs::create_dir_all(dir.path().join(".vibe/agents")).unwrap();
+    fs::write(
+        dir.path().join(".vibe/agents/plan.toml"),
+        "agent_type = \"subagent\"\ndescription = \"Mine\"\ninstructions = \"Plan.\"\n",
+    )
+    .unwrap();
+    assert!(adapter.read(dir.path()).unwrap().agents.is_empty());
+    // Nor is it swept as an orphan: conforme never writes that file.
+    let orphans = conforme::adapters::find_orphans(
+        &adapter.managed_directories(dir.path()),
+        &adapter.generate(dir.path(), &config).unwrap(),
+    )
+    .unwrap();
+    assert!(orphans.is_empty(), "{orphans:?}");
+}
+
 #[test]
 fn test_roundtrip_vibe_skills_agents_mcp() {
     let adapter = conforme::adapters::vibe::VibeAdapter;
@@ -1143,6 +1345,48 @@ fn codex_policy_import_and_explicit_reenable_preserve_other_fields() {
     );
     assert_eq!(value["interface"]["display_name"].as_str(), Some("Review"));
     assert!(!adapter.read(dir.path()).unwrap().skills[0].manual_invocation);
+}
+
+/// Codex and Mistral Vibe (skills/manager.py `_openai_allows_implicit_invocation`)
+/// both honour an `agents/openai.yaml` beside `SKILL.md`: an existing one must
+/// follow the source, or a stale `false` keeps the skill manual there.
+#[test]
+fn existing_policy_sidecar_follows_the_source_in_every_skills_root() {
+    for adapter in conforme::adapters::all_adapters() {
+        if !adapter.capabilities().skills {
+            continue;
+        }
+        let dir = TempDir::new().unwrap();
+        let config = NormalizedConfig {
+            skills: vec![NormalizedSkill {
+                name: "review".into(),
+                description: "Review a change".into(),
+                content: "Review.".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let files = adapter.generate(dir.path(), &config).unwrap();
+        let skill_md = files
+            .iter()
+            .map(|(p, _)| p)
+            .find(|p| p.ends_with("review/SKILL.md"))
+            .unwrap_or_else(|| panic!("{}: no SKILL.md", adapter.id()));
+        let policy = skill_md.parent().unwrap().join("agents/openai.yaml");
+        fs::create_dir_all(policy.parent().unwrap()).unwrap();
+        fs::write(&policy, "policy:\n  allow_implicit_invocation: false\n").unwrap();
+
+        adapter.write(dir.path(), &config).unwrap();
+
+        let value: serde_yaml_ng::Value =
+            serde_yaml_ng::from_str(&fs::read_to_string(&policy).unwrap()).unwrap();
+        assert_eq!(
+            value["policy"]["allow_implicit_invocation"].as_bool(),
+            Some(true),
+            "{}",
+            adapter.id()
+        );
+    }
 }
 
 /// No adapter may drop an empty or whitespace-only file into a project: an

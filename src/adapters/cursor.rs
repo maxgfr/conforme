@@ -38,6 +38,10 @@ impl AiToolAdapter for CursorAdapter {
         path.ends_with(Path::new(".cursor/mcp.json"))
     }
 
+    fn source_files(&self, project_root: &Path) -> Vec<std::path::PathBuf> {
+        crate::adapters::first_existing_file(project_root, &[".cursorrules"])
+    }
+
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
             ManagedDir::files(project_root.join(".cursor").join("rules"), ".mdc"),
@@ -73,6 +77,23 @@ impl AiToolAdapter for CursorAdapter {
                     content: body.trim().to_string(),
                     activation,
                 });
+            }
+        }
+
+        // Cursor still loads the legacy root `.cursorrules` as an
+        // always-applied rule next to `.cursor/rules/`.
+        let cursorrules = project_root.join(".cursorrules");
+        if cursorrules.is_file() {
+            let legacy = std::fs::read_to_string(&cursorrules)
+                .with_context(|| format!("failed to read {}", cursorrules.display()))?
+                .trim()
+                .to_string();
+            if !legacy.is_empty() {
+                instructions = if instructions.is_empty() {
+                    legacy
+                } else {
+                    format!("{instructions}\n\n{legacy}")
+                };
             }
         }
 
@@ -266,6 +287,29 @@ mod tests {
         NormalizedRule,
     };
     use std::collections::BTreeMap;
+
+    #[test]
+    fn test_read_cursorrules_adds_to_the_instructions() {
+        // Cursor CLI 2026.10.01 still loads the root `.cursorrules` as an
+        // always-applied rule next to `.cursor/rules` (`loadCursorRulesRule`:
+        // `frontmatter:{alwaysApply:!0}` in its shipped index.js).
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".cursor/rules")).unwrap();
+        std::fs::write(
+            tmp.path().join(".cursor/rules/general.mdc"),
+            "---\nalwaysApply: true\n---\nGeneral.\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join(".cursorrules"), "Legacy.\n").unwrap();
+        assert_eq!(
+            CursorAdapter.read(tmp.path()).unwrap().instructions,
+            "General.\n\nLegacy."
+        );
+        assert_eq!(
+            CursorAdapter.source_files(tmp.path()),
+            vec![tmp.path().join(".cursorrules")]
+        );
+    }
     use std::path::Path;
 
     fn test_config() -> NormalizedConfig {

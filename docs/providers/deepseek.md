@@ -2,7 +2,7 @@
 
 > DeepSeek's open-source agent harness (`dsh`), in preview. Source: `--from deepseek`
 
-**Last verified online:** 2026-10-09, against dsh-v0.2.1-alpha.1 (https://github.com/deepseek-ai/deepseek-harness/releases)
+**Last verified online:** 2026-10-09, against dsh-v0.2.1-alpha.2 (https://github.com/deepseek-ai/deepseek-harness/releases)
 
 ## Official docs
 
@@ -15,6 +15,8 @@
 - MCP client plugin: https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md
 - Boot / profiles (user config layers): https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/boot/app-boot/README.md
 - DeepSeek API docs: https://api-docs.deepseek.com/
+- Skills reference (catalog, `catalogDescriptionMaxLength`): https://deepseek-harness.github.io/deepseek-harness/en/reference/subsystems/skills
+- Subagents reference (subagents come from providers, not files): https://deepseek-harness.github.io/deepseek-harness/en/reference/subsystems/subagent
 - Instruction discovery (`AGENTS.md` / `CLAUDE.md` chain, root markers): https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/context/agent-instructions/README.md
 - Home paths (`$DSH_HOME`, `$DSH_AGENTS_HOME`): https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/util/home-paths/README.md
 - MCP and memory guide (`cordis.patch.yml` layers): https://deepseek-harness.github.io/deepseek-harness/en/guide/mcp-memory
@@ -142,3 +144,4 @@ Because this configuration is user-level and not project-scoped, conforme does
   not user-defined markdown files, so conforme does not sync agents here
 - The project `.dsh/` directory is used for skills only; settings and
   credentials live in the harness home (`settings.yaml`, `.credentials.yaml`)
+- The skill catalog shown to the model bounds each description by `catalogDescriptionMaxLength` ("default `500`", skills reference above); the page does not say whether a longer one is cut or the skill dropped (unconfirmed)

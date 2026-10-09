@@ -383,10 +383,11 @@ fn add_invocation_fields(
     fields.insert("metadata".into(), serde_yaml_ng::Value::Mapping(metadata));
 }
 
-/// The Codex `agents/openai.yaml` policy sidecar of a skill. Only Codex reads
-/// it, so it is created (`create`) only in `.agents/skills/`, the root Codex
-/// scans; elsewhere an existing sidecar is kept in step with the skill but
-/// never added, since no tool there would consume it.
+/// The Codex `agents/openai.yaml` policy sidecar of a skill. Codex reads it,
+/// and so does Mistral Vibe beside its own skills; it is created (`create`)
+/// only in `.agents/skills/`, the root Codex scans. Elsewhere an existing
+/// sidecar is kept in step with the skill but never added, since the tool's
+/// own frontmatter (`disable-model-invocation`) already says it.
 fn invocation_policy(
     skill_dir: &Path,
     skill: &NormalizedSkill,
@@ -550,6 +551,9 @@ pub fn generate_vibe_skills(
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
         files.extend(bundled_outputs(&skill_dir, skill));
+        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
+            files.push(policy);
+        }
     }
 
     Ok(files)

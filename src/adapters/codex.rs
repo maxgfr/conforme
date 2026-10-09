@@ -55,6 +55,23 @@ impl AiToolAdapter for CodexAdapter {
         path.ends_with(Path::new(".codex/config.toml"))
     }
 
+    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+        config
+            .mcp_servers
+            .iter()
+            .filter(|server| crate::mcp::codex_keeps_literal(server))
+            .map(|server| {
+                format!(
+                    "MCP server {}: Codex expands no ${{VAR}} and forwards only `NAME=${{NAME}}`, \
+                     `Authorization: Bearer ${{VAR}}` and a header that is exactly `${{VAR}}`; \
+                     any other reference is sent as written. Use one of those forms, or put the \
+                     real value in ~/.codex/config.toml under another server name",
+                    server.name
+                )
+            })
+            .collect()
+    }
+
     fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport> {
         let generated = self.generate(project_root, config)?;
         let mut report = WriteReport {

@@ -26,6 +26,25 @@ const CONFIG_FILES: &[&str] = &[
     ".kilo/kilo.jsonc",
 ];
 
+/// Every project config file Kilo loads, lowest precedence first: `kilo`
+/// then `opencode` at the root (config/config.ts), then each of
+/// `ALL_CONFIG_FILES` in `.kilocode/` and `.kilo/`. conforme writes only the
+/// `kilo` ones (`CONFIG_FILES`); the `opencode` ones are read too.
+const LOADED_CONFIG_FILES: &[&str] = &[
+    "kilo.json",
+    "kilo.jsonc",
+    "opencode.json",
+    "opencode.jsonc",
+    ".kilocode/kilo.jsonc",
+    ".kilocode/kilo.json",
+    ".kilocode/opencode.jsonc",
+    ".kilocode/opencode.json",
+    ".kilo/kilo.jsonc",
+    ".kilo/kilo.json",
+    ".kilo/opencode.jsonc",
+    ".kilo/opencode.json",
+];
+
 /// The rule directories Kilo reads (top-level `*.md` files only).
 const RULE_DIRS: &[&str] = &[".kilocode/rules", ".kilo/rules"];
 
@@ -197,7 +216,7 @@ impl AiToolAdapter for KiloAdapter {
 
         // Later config files override earlier ones, server by server.
         let mut mcp_servers: Vec<crate::config::NormalizedMcpServer> = Vec::new();
-        for name in CONFIG_FILES {
+        for name in LOADED_CONFIG_FILES {
             let Some(root) = crate::json_settings::load(&project_root.join(name))? else {
                 continue;
             };

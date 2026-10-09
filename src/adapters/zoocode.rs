@@ -71,6 +71,34 @@ impl AiToolAdapter for ZooCodeAdapter {
         path.ends_with(Path::new(".roo/mcp.json"))
     }
 
+    /// Zoo resolves only `${env:VAR}` and `${workspaceFolder}` in
+    /// `.roo/mcp.json` (`McpHub.ts`, `injectVariables`); the other VS Code
+    /// variables conforme passes through stay literal.
+    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+        const LITERAL: &[&str] = &[
+            "${userHome}",
+            "${workspaceFolderBasename}",
+            "${pathSeparator}",
+        ];
+        config
+            .mcp_servers
+            .iter()
+            .filter(|server| {
+                crate::mcp::server_strings(server)
+                    .iter()
+                    .any(|(_, value)| LITERAL.iter().any(|var| value.contains(var)))
+            })
+            .map(|server| {
+                format!(
+                    "MCP server {}: Zoo Code resolves only ${{env:VAR}} and ${{workspaceFolder}}, \
+                     so ${{userHome}}, ${{workspaceFolderBasename}} or ${{pathSeparator}} is sent \
+                     as written; use an absolute path or an environment variable",
+                    server.name
+                )
+            })
+            .collect()
+    }
+
     fn source_files(&self, project_root: &Path) -> Vec<PathBuf> {
         // `.roorules` is only read when `.roo/rules/` holds no rule.
         let rules_dir = project_root.join(".roo").join("rules");

@@ -10,6 +10,10 @@ pub fn print_help_ai() {
         "conforme reads config from your preferred tool (or AGENTS.md) and syncs to all others."
     );
     println!("AGENTS.md is governed by the Agentic AI Foundation (Linux Foundation).");
+    println!(
+        "Generated from a tool source, AGENTS.md holds only instructions and rules: the tools \
+         that load it get skills, agents and MCP servers in their own files."
+    );
     println!();
     println!("{}", "Tools with per-rule config files:".bold());
     println!();
@@ -47,7 +51,7 @@ pub fn print_help_ai() {
         &[
             "Frontmatter: trigger (always_on|glob|model_decision|manual; `agent` is read as model_decision), description, globs",
             "Legacy .windsurf/rules/ and .windsurf/skills/ are read too, and conforme's old copies there are cleaned",
-            "global_rules.md (.devin/, else .windsurf/) is read into the instructions",
+            "global_rules.md (.devin/, else .windsurf/) and the root .windsurfrules are read into the instructions",
             "Skills synced to .devin/skills/<name>/SKILL.md (`triggers: [user]` for manual skills)",
             "MCP merged into .devin/mcp_config.json (no `type`, ${env:VAR} references)",
             "Reads AGENTS.md natively",
@@ -168,8 +172,8 @@ pub fn print_help_ai() {
         &[
             "Project files load only in a folder trusted in ~/.vibe/trusted_folders.toml",
             "Skills synced to .vibe/skills/<name>/SKILL.md (the shared .agents/skills/ is read only when .vibe/skills/ has none); `vibe` and `skill-creator` are reserved names",
-            "Subagents synced to .vibe/agents/<name>.toml (agent_type = \"subagent\", enabled_tools translated to Vibe tools); other agent files are the user's modes and are kept",
-            "MCP merged into .vibe/config.toml as [[mcp_servers]] (stdio / streamable-http); `Authorization: Bearer ${VAR}` becomes a static auth reading VAR, any other ${VAR} is passed as written",
+            "Subagents synced to .vibe/agents/<name>.toml (agent_type = \"subagent\", enabled_tools translated to Vibe tools); other agent files are the user's modes and are kept; a built-in name (ask, plan, accept-edits, smart-approve, auto-approve, explore, lean) is never written",
+            "MCP merged into .vibe/config.toml as [[mcp_servers]] (stdio / streamable-http); `Authorization: Bearer ${VAR}` becomes a static auth reading VAR, any other ${VAR} is passed as written; a command Vibe would shell-split wrongly is written as a list",
         ],
     );
     print_tool(

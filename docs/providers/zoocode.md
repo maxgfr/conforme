@@ -65,7 +65,7 @@ Mode-specific rules go in `.roo/rules-{modeSlug}/` directories (e.g., `.roo/rule
 - Zoo's skill loader also reads `mode` / `modeSlugs` (restrict a skill to some modes); conforme does not carry them, so a Zoo skill synced back is available in every mode (known gap)
 - Zoo loads a root `AGENTS.md` next to `.roo/rules/` unless `useAgentRules` is off, so in a project that keeps an `AGENTS.md` the instructions reach the model twice
 - conforme maps every remote server to its normalized HTTP transport and writes `streamable-http`; an SSE-only server read from another tool is therefore written with the wrong transport (known gap)
-- Environment references are written `${env:VAR}` (Zoo's syntax) and read back as `${VAR}`
+- Environment references are written `${env:VAR}` (Zoo's syntax) and read back as `${VAR}`. Zoo resolves only `${env:VAR}` and `${workspaceFolder}` in `.roo/mcp.json` (`src/services/mcp/McpHub.ts`, `injectVariables`); another VS Code variable conforme passes through (`${userHome}`, `${pathSeparator}`) stays literal there, and `sync`/`migrate` warn about that server
 - Skill manual-invocation keys conforme writes (`disable-model-invocation`, `metadata`, `agents/openai.yaml`) are ignored by Zoo, which has no manual-only mechanism
-- Reads AGENTS.md natively
+- Reads AGENTS.md natively, else `AGENT.md`, plus a personal `AGENTS.local.md` (`src/core/prompts/sections/custom-instructions.ts`); `enableSubfolderRules` (off by default) also loads `.roo/rules` and `AGENTS.md` from subfolders
 - Detection: `.roo/` or a root `.roorules`. `.clinerules` is Cline's file, which Zoo reads only as a legacy fallback, so it does not make conforme detect Zoo Code (the legacy `.roorules-{modeSlug}` mode-specific files are not read either)

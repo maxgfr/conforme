@@ -5,8 +5,8 @@ use crate::config::{
     rule_file_name, sanitize_name, ActivationMode, McpTransport, NormalizedConfig,
 };
 
-/// Longest skill description Codex and Zoo Code accept; a longer one makes
-/// them skip the skill.
+/// Longest skill description Zoo Code and Mistral Vibe accept; a longer one
+/// makes them skip the skill (Codex 0.162.0 checks only the name length).
 const MAX_DESCRIPTION_LEN: usize = 1024;
 
 /// Skill names Claude Code skips (`claude-ai`, reserved in 2.1.282 only,
@@ -155,7 +155,7 @@ pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
         }
         if skill.description.chars().count() > MAX_DESCRIPTION_LEN {
             warnings.push(format!(
-                "Skill '{}' has a description over {MAX_DESCRIPTION_LEN} characters; Codex and Zoo Code skip it",
+                "Skill '{}' has a description over {MAX_DESCRIPTION_LEN} characters; Zoo Code and Mistral Vibe skip it",
                 skill.name
             ));
         }
