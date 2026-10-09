@@ -421,7 +421,7 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - Tools with their own tool vocabulary (Claude Code, Gemini CLI, Kiro, Mistral Vibe) get translated `tools` lists (`TOOL_EQUIVALENTS`, MCP names respelled), never names copied verbatim from another host; a `model` another tool cannot use is left out (`claude_model`, `gemini_model`, `opencode_model`, `kiro_model`, `copilot_model`, `cursor_model`)
 - Skill and agent names go through `sanitize_name` (kebab-case ASCII, at most 64 characters), rule file names through `rule_file_name`, and MCP strings through `EnvRefStyle` so `${VAR}` becomes each tool's own reference syntax
 - A tool that reads `AGENTS.md` itself in a project returns `true` from `reads_agents_md(project_root)` (always for Codex, OpenCode, DeepSeek, Mistral Vibe, Kilo Code; Claude Code without `CLAUDE.md`; Gemini CLI when `context.fileName` names it) and reads it with `markdown::read_native_agents_md`; renaming a tool id adds it to `sync::RENAMED_IDS`
-- A file or directory `read()` loads outside the tool's managed directories (a native or fallback `AGENTS.md` / `CLAUDE.md`, Gemini's context files, Devin's `global_rules.md` / `.windsurfrules`, Zoo's `.roorules`, DeepSeek's `.agents/skills` fallback) MUST be returned by `source_files(project_root)` when it exists and is used, so that with the tool as source no target writes it, `remove`/`migrate` never delete it and `gitignore install` never ignores it; a new read location also goes into `watch::source_locations`
+- A file or directory `read()` loads outside the tool's managed directories (a native or fallback `AGENTS.md` / `CLAUDE.md`, Gemini's context files, Devin's `global_rules.md` / `.windsurfrules`, Zoo's `.roorules`, DeepSeek's and Vibe's `.agents/skills` fallback, Kilo's rule directories) MUST be returned by `source_files(project_root)` when it exists and is used, so that with the tool as source no target writes it, `remove`/`migrate` never delete it and `gitignore install` never ignores it; a new read location also goes into `watch::source_locations`
 - A server entry conforme cannot express (no `command`, no URL, or Claude `type: "sdk"`) is skipped on read and kept on write (`json_settings::is_expressible_server`)
 
 ## Rule: rust-conventions
@@ -582,6 +582,10 @@ Add these checks, which the fact sheet alone does not cover:
   does not write (nested directories, flat files, alternate spellings).
 - **Blank output**: an empty config yields no file, and a full config yields
   no blank file (`test_no_adapter_writes_blank_files` guards it).
+- **Warnings**: a value conforme writes that the tool will not use as written
+  (a `${VAR}` it does not expand, a reserved skill name, a project file it
+  refuses) is named by the adapter's `warnings()`, which `sync` and `migrate`
+  print; a silent loss is drift.
 
 Done when: the audit table has a finding for each fact-sheet line and each
 check above, for every adapter.
@@ -617,9 +621,16 @@ Every tool installed here reads the fixture and says what it loads, following
 their env and headers, skills and agents accepted, a manual skill kept out of
 automatic use. A witness file proves each validator actually checked.
 
+Then check switching, conforme's other job: set up the full fixture in each
+tool's own format (`migrate --source claude --output <tool>`), migrate it
+into every installed tool, and ask that tool's CLI the same questions.
+`tests/migrate_matrix.rs` covers every pair offline; this run proves each
+output is what the real tool loads.
+
 Done when: each adapter is **verified** (with the command), **not installed**
-or **needs login**, and every rejection or warning the tools print is a
-finding.
+or **needs login**, every source migrated into each installed tool loads its
+MCP servers, skills and agents there, and every rejection or warning the
+tools print is a finding.
 
 ## 7. Run every command, then a second pass
 

@@ -138,6 +138,10 @@ Add these checks, which the fact sheet alone does not cover:
   does not write (nested directories, flat files, alternate spellings).
 - **Blank output**: an empty config yields no file, and a full config yields
   no blank file (`test_no_adapter_writes_blank_files` guards it).
+- **Warnings**: a value conforme writes that the tool will not use as written
+  (a `${VAR}` it does not expand, a reserved skill name, a project file it
+  refuses) is named by the adapter's `warnings()`, which `sync` and `migrate`
+  print; a silent loss is drift.
 
 Done when: the audit table has a finding for each fact-sheet line and each
 check above, for every adapter.
@@ -173,9 +177,16 @@ Every tool installed here reads the fixture and says what it loads, following
 their env and headers, skills and agents accepted, a manual skill kept out of
 automatic use. A witness file proves each validator actually checked.
 
+Then check switching, conforme's other job: set up the full fixture in each
+tool's own format (`migrate --source claude --output <tool>`), migrate it
+into every installed tool, and ask that tool's CLI the same questions.
+`tests/migrate_matrix.rs` covers every pair offline; this run proves each
+output is what the real tool loads.
+
 Done when: each adapter is **verified** (with the command), **not installed**
-or **needs login**, and every rejection or warning the tools print is a
-finding.
+or **needs login**, every source migrated into each installed tool loads its
+MCP servers, skills and agents there, and every rejection or warning the
+tools print is a finding.
 
 ## 7. Run every command, then a second pass
 

@@ -1,5 +1,5 @@
 //! Switching tools: every `migrate --source X --output Y` pair, X and Y among
-//! the 12 adapters. The source tool holds a full config in its own format;
+//! the registered adapters. The source tool holds a full config in its own format;
 //! after the migration the output tool must read back everything it can hold.
 
 use assert_cmd::Command;
@@ -255,7 +255,7 @@ fn test_switching_around_and_back_changes_nothing() {
     assert_eq!(end.mcp_servers.len(), start.mcp_servers.len());
 }
 
-/// Through all 12 tools and back, the instructions, rule texts and skills
+/// Through every tool and back, the instructions, rule texts and skills
 /// (bodies, bundled files, manual invocation) survive every hop; only what a
 /// tool cannot hold (a rule's scope, agents, MCP) may be dropped on the way.
 #[test]
