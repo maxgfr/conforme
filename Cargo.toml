@@ -1,6 +1,6 @@
 [package]
 name = "conforme"
-version = "5.0.2"
+version = "5.1.0"
 edition = "2021"
 description = "Universal AI coding agent config synchronization"
 license = "MIT"
