@@ -50,6 +50,7 @@ None: `AGENTS.md` is always loaded.
 ## Notes
 
 - **No `${VAR}` expansion.** A stdio server gets its `env`, verbatim, on top of `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM` and `USER` only (Vibe passes `env` to the MCP SDK's `StdioServerParameters`, whose `get_default_environment()` keeps just those, `mcp/client/stdio/__init__.py`), so `TOKEN = "${TOKEN}"` passes the literal text; only a bearer token is read from a variable (`api_key_env`). `sync` and `migrate` warn for each server with such a reference. A project `[[mcp_servers]]` entry replaces a user entry of the same name as a whole, so declare the server with its real value in `~/.vibe/config.toml` under another name
+- A legacy SSE server is written as `transport = "streamable-http"` with a warning: Vibe's `http` and `streamable-http` are the same transport (Mistral Vibe 2.26.1 `vibe/core/tools/mcp/registry.py:309-312`), and conforme writes no SSE one, so it connects only if the server also speaks streamable HTTP
 - `vibe` and `skill-creator` are the names of Vibe's built-in skills: a project skill with either name is skipped by Vibe (`sync` warns)
 - Skill `description` is 1 to 1024 characters (`vibe/core/skills/models.py`, `max_length=1024`): a longer one makes Vibe skip the skill, and `validate` warns
 - Vibe honours the Codex sidecar `agents/openai.yaml` beside a skill (`allow_implicit_invocation`, `vibe/core/skills/manager.py`): an existing one in `.vibe/skills/<name>/` is kept in step with the source, never created

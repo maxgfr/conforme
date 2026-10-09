@@ -3137,9 +3137,33 @@ fn test_generated_agents_md_holds_only_instructions_and_rules() {
 
 #[test]
 fn test_migrated_agents_md_keeps_only_what_the_output_cannot_hold() {
-    // Codex holds skills (`.agents/skills`) and MCP (`.codex/config.toml`)
-    // but no agent: the agent section stays in AGENTS.md so a later switch
-    // still has it.
+    // DeepSeek holds skills (`.dsh/skills`) but neither agents nor project
+    // MCP servers: those sections stay in AGENTS.md so a later switch still
+    // has them.
+    let dir = claude_source_with_everything(&[]);
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "claude",
+            "--output",
+            "deepseek",
+        ])
+        .assert()
+        .success();
+
+    let agents_md = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(agents_md.contains("Use pnpm."), "{agents_md}");
+    assert!(agents_md.contains("## Agent: reviewer"), "{agents_md}");
+    assert!(agents_md.contains("## MCP: fs"), "{agents_md}");
+    assert!(!agents_md.contains("## Skill:"), "{agents_md}");
+    assert!(dir.path().join(".dsh/skills/notes/SKILL.md").exists());
+}
+
+#[test]
+fn test_migrate_to_codex_writes_codex_agents() {
     let dir = claude_source_with_everything(&[]);
     conforme()
         .args([
@@ -3156,13 +3180,83 @@ fn test_migrated_agents_md_keeps_only_what_the_output_cannot_hold() {
 
     let agents_md = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
     assert!(agents_md.contains("Use pnpm."), "{agents_md}");
-    assert!(agents_md.contains("## Agent: reviewer"), "{agents_md}");
-    assert!(!agents_md.contains("## Skill:"), "{agents_md}");
-    assert!(!agents_md.contains("## MCP:"), "{agents_md}");
+    assert!(!agents_md.contains("## Agent:"), "{agents_md}");
+    assert!(dir.path().join(".codex/agents/reviewer.toml").exists());
     assert!(dir.path().join(".agents/skills/notes/SKILL.md").exists());
     assert!(fs::read_to_string(dir.path().join(".codex/config.toml"))
         .unwrap()
         .contains("[mcp_servers.fs]"));
+}
+
+#[test]
+fn test_migrate_to_codex_writes_the_agents_an_earlier_switch_left_in_agents_md() {
+    // Codex, then Zed: Zed holds no agents, so the reviewer stayed in the
+    // AGENTS.md the earlier switch left. Back to Codex, the agent must reach
+    // `.codex/agents/` (or stay in AGENTS.md), never vanish from both.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".zed")).unwrap();
+    fs::write(root.join(".rules"), "Use pnpm.\n").unwrap();
+    fs::write(
+        root.join("AGENTS.md"),
+        "Use pnpm.\n\n## Agent: reviewer\n<!-- description: Code review -->\nReview for bugs.\n",
+    )
+    .unwrap();
+
+    migrate(root, "zed", "codex");
+
+    let agents_md = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+    assert!(agents_md.contains("Use pnpm."), "{agents_md}");
+    let codex_agent = root.join(".codex/agents/reviewer.toml");
+    assert!(
+        codex_agent.exists() || agents_md.contains("## Agent: reviewer"),
+        "reviewer lost: {agents_md}"
+    );
+    assert!(codex_agent.exists(), "{agents_md}");
+    assert!(fs::read_to_string(&codex_agent)
+        .unwrap()
+        .contains("Review for bugs."));
+    assert!(!agents_md.contains("## Agent:"), "{agents_md}");
+}
+
+/// Codex finds an agent by its `name` key anywhere under `.codex/agents/`,
+/// while conforme only writes `.codex/agents/<sanitize_name(name)>.toml`.
+/// Migrating to a tool without agents keeps the agent at that path only, so
+/// a hand-written agent stored elsewhere must never be counted as
+/// conforme's and deleted.
+#[test]
+fn test_migrate_from_codex_keeps_hand_written_agents_conforme_did_not_write() {
+    let agent = |name: &str| {
+        format!(
+            "name = \"{name}\"\ndescription = \"Code review\"\ndeveloper_instructions = \"Review for bugs.\"\n"
+        )
+    };
+    let cases = [
+        ("code-reviewer.toml", "reviewer", "zed"),
+        ("reviewer.toml", "Code Reviewer", "zed"),
+        ("team/reviewer.toml", "reviewer", "zed"),
+        ("code-reviewer.toml", "reviewer", "deepseek"),
+    ];
+    for (file, name, output) in cases {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        fs::write(root.join("AGENTS.md"), "Use pnpm.\n").unwrap();
+        match output {
+            "zed" => fs::create_dir_all(root.join(".zed")).unwrap(),
+            _ => fs::create_dir_all(root.join(".dsh")).unwrap(),
+        }
+        let agent_file = root.join(".codex/agents").join(file);
+        fs::create_dir_all(agent_file.parent().unwrap()).unwrap();
+        fs::write(&agent_file, agent(name)).unwrap();
+
+        migrate(root, "codex", output);
+
+        assert!(
+            agent_file.exists(),
+            "{file} (name = {name:?}) deleted migrating to {output}"
+        );
+        assert_eq!(fs::read_to_string(&agent_file).unwrap(), agent(name));
+    }
 }
 
 /// Changing `source` by hand would rewrite every tool from a source that
@@ -3310,4 +3404,31 @@ fn test_long_skill_description_warning_names_the_tools_that_skip_it() {
             "Zoo Code and Mistral Vibe skip it",
         ))
         .stderr(predicate::str::contains("Codex").not());
+}
+
+#[test]
+fn test_migrate_keeps_an_agent_the_output_skips_as_a_built_in() {
+    // Codex writes no agent named like one of its built-ins (`worker`): the
+    // agent must survive the migration, in the source file or in AGENTS.md.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    let agent = root.join(".claude/agents/worker.md");
+    fs::create_dir_all(agent.parent().unwrap()).unwrap();
+    fs::write(
+        &agent,
+        "---\nname: worker\ndescription: Does the work\n---\nDo it.\n",
+    )
+    .unwrap();
+
+    migrate(root, "claude", "codex");
+
+    let in_agents_md = fs::read_to_string(root.join("AGENTS.md"))
+        .map(|text| text.contains("## Agent: worker"))
+        .unwrap_or(false);
+    assert!(
+        agent.exists() || in_agents_md,
+        "the worker agent was lost by the migration"
+    );
+    assert!(!root.join(".codex/agents/worker.toml").exists());
 }

@@ -198,7 +198,7 @@ Review all changes for correctness and security.
 | Gemini CLI | `GEMINI.md` | `.gemini/skills/` | `.gemini/agents/*.md` | `.gemini/settings.json` (merged) |
 | OpenCode | native (AGENTS.md) | `.opencode/skills/` | `opencode.json#agent` (merged) + `.opencode/agents/*.md` | `.opencode/opencode.json#mcp` or an existing root `opencode.json` (merged) |
 | Zed AI | `.rules` | `.agents/skills/` | - | `.zed/settings.json` (merged) |
-| Codex CLI | native (AGENTS.md) | `.agents/skills/` | - | `.codex/config.toml` (merged) |
+| Codex CLI | native (AGENTS.md) | `.agents/skills/` | `.codex/agents/*.toml` | `.codex/config.toml` (merged) |
 | DeepSeek Harness | native (AGENTS.md) | `.dsh/skills/` | - | - (user-level `cordis.patch.yml`) |
 | Mistral Vibe | native (AGENTS.md) | `.vibe/skills/` | `.vibe/agents/*.toml` | `.vibe/config.toml` (merged) |
 | Kilo Code | native (AGENTS.md) | `.kilo/skills/` | `.kilo/agents/*.md` | `.kilo/kilo.jsonc` (merged) |
@@ -238,10 +238,11 @@ Agents (sub-agents) are custom AI assistants with a model, tools, and system pro
 | Kiro | `.kiro/agents/<name>.md` | YAML frontmatter: `description`, `model` (no other host's alias, no `inherit`), `tools` (Kiro tools and tags: `read`, `grep`, `shell`, `@server/tool`, …; name from the file) |
 | Gemini CLI | `.gemini/agents/<name>.md` | YAML frontmatter: `name`, `description`, `kind: local`, `model` (Gemini ids only), `tools` (Gemini tool names) |
 | OpenCode | `opencode.json` (`agent` key) + `.opencode/agents/<name>.md` | JSON merged into `opencode.json`; markdown for per-project agents; `model` only when written as `provider/model` |
+| Codex CLI | `.codex/agents/<name>.toml` | TOML: `name`, `description`, `developer_instructions` (no `model` or tools; loaded only in a trusted project; the built-in `default`, `worker` and `explorer` are skipped) |
 | Mistral Vibe | `.vibe/agents/<name>.toml` | TOML: `agent_type = "subagent"`, `description`, `instructions`, `enabled_tools` (Vibe tool names) |
 | Kilo Code | `.kilo/agents/<name>.md` | OpenCode format (`description`, `mode: subagent`, `provider/model`); Kilo's built-in names (`code`, `ask`, `debug`, `orchestrator`, …) are skipped |
 
-Tools without agents support: Devin Desktop, Zoo Code, Codex CLI, Zed AI, DeepSeek Harness.
+Tools without agents support: Devin Desktop, Zoo Code, Zed AI, DeepSeek Harness.
 
 Claude Code, Gemini CLI, Kiro and Mistral Vibe only accept their own tool names, so common names are translated (`Read` / `read_file` / `read`, `Bash` / `run_shell_command` / `shell`, `WebFetch` / `web_fetch`, …), MCP tools are respelled (`mcp__github__list_issues` / `mcp_github_list_issues` / `@github/list_issues`, and every MCP tool as Gemini `mcp_*` / Kiro `@mcp`), and names with no equivalent are dropped; a restricted list in which nothing translates becomes read-only access (`Read` / `read_file` / `read`) rather than every tool. A skill or agent without a description gets its name as description, since several tools skip one that has none.
 
@@ -265,7 +266,7 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | DeepSeek Harness | _(not project-scoped)_ | — | MCP servers are `@deepseek-ai/dsh-mcp-client` plugin entries in the user-level `cordis.patch.yml` under `$DSH_HOME`, so conforme generates nothing |
 | Mistral Vibe | `.vibe/config.toml` (merged) | `[[mcp_servers]]` | TOML array; `transport = "stdio"` / `"streamable-http"`; `Authorization: Bearer ${VAR}` → static `auth` with `api_key_env`; any other `${VAR}` is written as is, with a warning; OAuth `auth` and other settings preserved |
 
-The source decides which servers exist: a server only the target lists is dropped (Codex keeps target-only servers), and a synced server is re-enabled (`disabled` / `enabled: false` are reset) so `check` never passes while a tool hides it. Entries conforme cannot express (a Zed extension server configured only through `settings`, a Claude Code `type: "sdk"` server, an OpenCode `{ "enabled": false }` toggle) are skipped on read and kept as they are on write. A source with no MCP server at all leaves every MCP file untouched, so servers kept by hand in a tool survive when conforme only syncs rules. conforme writes environment-variable references in each tool's syntax (Codex, which expands none, through its `env_vars` / `bearer_token_env_var` / `env_http_headers` keys) and reads them back to `${VAR}`. A reference a tool cannot express (a Codex `NAME=${OTHER}`, a `${VAR}` mixed into other text there, any reference for Zed, which expands none) is written literally; for Kilo Code and Mistral Vibe, `sync` and `migrate` print a warning naming the server.
+The source decides which servers exist: a server only the target lists is dropped (Codex keeps target-only servers), and a synced server is re-enabled (`disabled` / `enabled: false` are reset) so `check` never passes while a tool hides it. Entries conforme cannot express (a Zed extension server configured only through `settings`, a Claude Code `type: "sdk"` server, an OpenCode `{ "enabled": false }` toggle) are skipped on read and kept as they are on write. A source with no MCP server at all leaves every MCP file untouched, so servers kept by hand in a tool survive when conforme only syncs rules. conforme writes environment-variable references in each tool's syntax (Codex, which expands none, through its `env_vars` / `bearer_token_env_var` / `env_http_headers` keys) and reads them back to `${VAR}`. A reference a tool cannot express (a Codex `NAME=${OTHER}`, a `${VAR}` mixed into other text there, any reference for Zed, which expands none) is written literally; for Kilo Code and Mistral Vibe, `sync` and `migrate` print a warning naming the server. A legacy SSE server (`type: "sse"`, or `<!-- transport: sse -->` in AGENTS.md) stays SSE in Claude Code, Cursor, Copilot, Zoo Code, Gemini CLI and Devin, is written as a bare `url` for Kiro (which reads it back as streamable HTTP), as `type: "remote"` for OpenCode and Kilo Code (which try SSE themselves), and as streamable HTTP with a warning for Codex, Zed AI and Mistral Vibe.
 
 ## Examples
 

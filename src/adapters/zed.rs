@@ -58,6 +58,21 @@ impl AiToolAdapter for ZedAdapter {
                     server.name
                 )
             })
+            .chain(
+                config
+                    .mcp_servers
+                    .iter()
+                    .filter(|server| {
+                        matches!(server.transport, crate::config::McpTransport::Sse { .. })
+                    })
+                    .map(|server| {
+                        format!(
+                            "MCP server {}: Zed has no SSE transport, so it is written as \
+                             streamable HTTP and connects only if the server speaks that too",
+                            server.name
+                        )
+                    }),
+            )
             .collect()
     }
 

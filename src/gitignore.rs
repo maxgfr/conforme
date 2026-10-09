@@ -56,7 +56,7 @@ fn static_patterns(id: &str) -> Vec<&'static str> {
             ".github/skills/",
             ".github/agents/*.agent.md",
         ],
-        "codex" => vec![".agents/skills/"],
+        "codex" => vec![".agents/skills/", ".codex/agents/*.toml"],
         "opencode" => vec![".opencode/skills/", ".opencode/agents/*.md"],
         "zoocode" => vec![".roo/rules/*.md", ".roo/skills/"],
         "zed" => vec!["/.rules", ".agents/skills/"],

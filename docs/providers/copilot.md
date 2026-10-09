@@ -70,7 +70,7 @@
 
 - MCP uses `"servers"` key (NOT `"mcpServers"`) -- unique among all tools
 - MCP: `env` on stdio servers and `headers` on HTTP ones (VS Code's remote fields are `type`, `url`, `headers`, `oauth`), which is what conforme writes. Environment references are written `${env:VAR}` (VS Code's predefined-variable syntax) and read back as `${VAR}`; `${input:…}` references are kept as they are
-- MCP: conforme maps every remote server to its HTTP transport, so a `type: "sse"` server is written as `http` (known gap)
+- MCP: a legacy SSE server is written as `type: "sse"` with `url` and `headers` in both `.vscode/mcp.json` and `.github/mcp.json`, and read back as SSE (VS Code `"type": "sse"`, https://code.visualstudio.com/docs/copilot/reference/mcp-configuration)
 - Agent-decision and manual rules are inlined into `copilot-instructions.md` (deliberate): VS Code can load a `description`-only instructions file on demand, but GitHub.com and Copilot CLI only apply files with `applyTo`. On read, a hand-written file with a `description` and no `applyTo` becomes an agent-decision rule, and one with neither a manual rule
 - `applyTo` is written comma-separated without spaces (the documented form), with brace groups expanded, and read back brace-aware
 - Agent `model` is a string or an array; VS Code matches it by display name such as `GPT-5.2 (copilot)`, and ignores an unknown value ("Unknown model '{0}' will be ignored", `promptValidator.ts`), so the subagent keeps the parent model. conforme leaves out another host's alias (`sonnet`, `opus`, `haiku`, `fable`, `pro`, `flash`, `flash-lite`), any `provider/model` id and `inherit`, and copies other values as they are

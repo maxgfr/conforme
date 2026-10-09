@@ -56,6 +56,11 @@ pub enum McpTransport {
         url: String,
         headers: BTreeMap<String, String>,
     },
+    /// A remote server on the legacy HTTP+SSE transport (MCP 2024-11-05).
+    Sse {
+        url: String,
+        headers: BTreeMap<String, String>,
+    },
 }
 
 /// A normalized custom agent definition.

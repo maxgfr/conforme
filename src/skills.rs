@@ -628,6 +628,94 @@ pub fn generate_vibe_agents(
     Ok(files)
 }
 
+/// Agent names Codex defines itself; a project file of that name would override
+/// a built-in role, so conforme never writes one.
+const CODEX_BUILTIN_AGENTS: &[&str] = &["default", "worker", "explorer"];
+
+/// Whether `name` is one of Codex's built-in agent roles.
+pub(crate) fn is_codex_builtin_agent(name: &str) -> bool {
+    let name = sanitize_name(name);
+    CODEX_BUILTIN_AGENTS.contains(&name.as_str())
+}
+
+/// Generate Codex custom agents as `.codex/agents/<name>.toml` (`name`,
+/// `description`, `developer_instructions`). Built-in role names are skipped.
+pub fn generate_codex_agents(
+    project_root: &Path,
+    agents: &[NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
+    let agents_dir = project_root.join(".codex").join("agents");
+    let mut files = Vec::new();
+    for agent in agents {
+        if is_codex_builtin_agent(&agent.name) {
+            continue;
+        }
+        let name = sanitize_name(&agent.name);
+        let mut document = toml_edit::DocumentMut::new();
+        document["name"] = toml_edit::value(name.as_str());
+        document["description"] =
+            toml_edit::value(description_or_name(&agent.description, &agent.name));
+        document["developer_instructions"] = toml_edit::value(agent.content.trim());
+        files.push((
+            agents_dir.join(format!("{name}.toml")),
+            document.to_string(),
+        ));
+    }
+    Ok(files)
+}
+
+/// Whether a `.codex/agents/*.toml` file has the shape conforme writes: it
+/// parses as TOML and holds only `name`, `description` and
+/// `developer_instructions` (any other key is the user's own setting).
+pub(crate) fn is_conforme_codex_agent_file(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|content| content.parse::<toml::Table>().ok())
+        .is_some_and(|table| {
+            table.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "name" | "description" | "developer_instructions"
+                )
+            })
+        })
+}
+
+/// Read Codex custom agents back from `.codex/agents/**/*.toml`. A file
+/// without a non-empty `name` or `developer_instructions`, and a built-in
+/// role name, is skipped.
+pub(crate) fn read_codex_agents(project_root: &Path) -> Result<Vec<NormalizedAgent>> {
+    let agents_dir = project_root.join(".codex").join("agents");
+    let mut agents = Vec::new();
+    for path in crate::adapters::collect_rule_files(&agents_dir, "toml")? {
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(table) = content.parse::<toml::Table>() else {
+            continue;
+        };
+        let text = |key: &str| {
+            table
+                .get(key)
+                .and_then(toml::Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default()
+        };
+        let name = text("name");
+        let instructions = text("developer_instructions");
+        if name.is_empty() || instructions.is_empty() || is_codex_builtin_agent(name) {
+            continue;
+        }
+        agents.push(NormalizedAgent {
+            name: name.to_string(),
+            description: text("description").to_string(),
+            content: instructions.to_string(),
+            ..Default::default()
+        });
+    }
+    Ok(agents)
+}
+
 /// Whether a `.vibe/agents/*.toml` file is a subagent (`agent_type =
 /// "subagent"`), the kind conforme writes; anything else is a mode the user
 /// defined.
@@ -1716,6 +1804,58 @@ pub fn generate_gemini_skills(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_codex_agent_file_round_trips() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let agents = vec![NormalizedAgent {
+            name: "reviewer".to_string(),
+            description: "Code review".to_string(),
+            content: "Review for bugs.\n".to_string(),
+            ..Default::default()
+        }];
+        let files = generate_codex_agents(dir.path(), &agents).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, dir.path().join(".codex/agents/reviewer.toml"));
+        std::fs::create_dir_all(files[0].0.parent().unwrap()).unwrap();
+        std::fs::write(&files[0].0, &files[0].1).unwrap();
+        assert!(is_conforme_codex_agent_file(&files[0].0));
+        let read = read_codex_agents(dir.path()).unwrap();
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].name, "reviewer");
+        assert_eq!(read[0].description, "Code review");
+        assert_eq!(read[0].content, "Review for bugs.");
+    }
+
+    #[test]
+    fn test_codex_builtin_agent_names_are_not_written() {
+        let agents: Vec<NormalizedAgent> = ["default", "Worker", "explorer", "custom"]
+            .iter()
+            .map(|name| NormalizedAgent {
+                name: name.to_string(),
+                description: "d".to_string(),
+                content: "c".to_string(),
+                ..Default::default()
+            })
+            .collect();
+        let files = generate_codex_agents(Path::new("/tmp/test"), &agents).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].0.ends_with("custom.toml"));
+        assert!(is_codex_builtin_agent("Explorer"));
+        assert!(!is_codex_builtin_agent("custom"));
+    }
+
+    #[test]
+    fn test_codex_agent_with_other_keys_is_not_conforme_shaped() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("mine.toml");
+        std::fs::write(
+            &path,
+            "name = \"mine\"\ndescription = \"d\"\ndeveloper_instructions = \"x\"\nmodel = \"gpt-5\"\n",
+        )
+        .unwrap();
+        assert!(!is_conforme_codex_agent_file(&path));
+    }
 
     #[test]
     fn test_empty_description_falls_back_to_name_for_every_host() {

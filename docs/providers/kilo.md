@@ -59,6 +59,7 @@ None: every rule file and the instruction file are always loaded.
 - Kilo also discovers skills in `.claude/skills/` and `.agents/skills/`: when Claude Code or Codex is synced too, the same skill exists in several roots, and Kilo keeps one copy per name (`kilo debug skill` lists each once, checked with 7.8.8). Kilo ships a built-in `kilo-config` skill that a synced skill of that name would override
 - Kilo loads the legacy `.kilocoderules`, `.kilocoderules-<mode>` and the mode rule directories `.kilo/rules-<mode>/` and `.kilocode/rules-<mode>/` (`packages/opencode/src/kilocode/rules-migrator.ts`); conforme reads none of them (known gap)
 - A local MCP server accepts `env` as an alias of `environment` but has no `cwd` (`packages/core/src/v1/config/mcp.ts`); conforme writes `environment` and no `cwd`
+- A legacy SSE server is written as `type: "remote"`: OpenCode and Kilo Code try streamable HTTP and then SSE on a `remote` URL (opencode v1.18.35 `packages/opencode/src/mcp/index.ts:269-289`), and the server reads back as streamable HTTP, since there is no SSE marker (documented, not modelled)
 
 ## Live check
 

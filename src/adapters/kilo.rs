@@ -148,7 +148,8 @@ impl AiToolAdapter for KiloAdapter {
                 crate::config::McpTransport::Stdio { command, args } => {
                     std::iter::once(command).chain(args).collect()
                 }
-                crate::config::McpTransport::Http { url, headers } => {
+                crate::config::McpTransport::Http { url, headers }
+                | crate::config::McpTransport::Sse { url, headers } => {
                     std::iter::once(url).chain(headers.values()).collect()
                 }
             };

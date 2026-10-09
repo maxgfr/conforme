@@ -117,7 +117,8 @@ impl AiToolAdapter for VibeAdapter {
                     .chain(args)
                     .chain(server.env.values())
                     .any(|s| s.contains("${")),
-                crate::config::McpTransport::Http { url, headers } => {
+                crate::config::McpTransport::Http { url, headers }
+                | crate::config::McpTransport::Sse { url, headers } => {
                     url.contains("${")
                         || headers.iter().any(|(key, value)| {
                             value.contains("${")
@@ -131,6 +132,13 @@ impl AiToolAdapter for VibeAdapter {
                     "MCP server {}: Vibe resolves no ${{VAR}} there and passes it as written; \
                      declare the server with its real value under another name in \
                      ~/.vibe/config.toml (the project entry replaces one of the same name)",
+                    server.name
+                ));
+            }
+            if matches!(server.transport, crate::config::McpTransport::Sse { .. }) {
+                warnings.push(format!(
+                    "MCP server {}: Mistral Vibe has no SSE transport, so it is written as \
+                     streamable HTTP and connects only if the server speaks that too",
                     server.name
                 ));
             }
