@@ -82,7 +82,9 @@ src/
                        - Amp: "amp.mcpServers" key merged into .amp/settings.json(c) — build_amp_mcp_object
                        - parse_mcp_json reads back mcpServers / servers / context_servers / amp.mcpServers
                        - OpenCode needs its own inverse (parse_opencode_mcp_object / parse_opencode_agent_object)
-  skills.rs         — Skills (SKILL.md) and agents generation per tool; shared read helpers
+  skills.rs         — Skills (SKILL.md plus the text files bundled beside it: read_bundled_files,
+                       written next to SKILL.md in every tool, stale ones found by stale_bundled_files)
+                       and agents generation per tool; shared read helpers
                        preserve manual_invocation (and Codex policy sidecars, created only in
                        .agents/skills) across sync (read_skills_from_dir, read_skills_recursive,
                        read_agents_from_dir, parse_frontmatter_tool_list) used by adapters to
@@ -96,7 +98,8 @@ src/
   adapters/
     mod.rs          — AiToolAdapter trait + registry + shared write_if_changed +
                        collect_rule_files (recursive rules-dir scan, sorted by base name) +
-                       ManagedDir / clean_orphans + source_files() (what read() loads outside the
+                       ManagedDir / find_orphans (what sync would remove; check, diff and status report it) /
+                       clean_orphans + source_files() (what read() loads outside the
                        managed dirs; see Orphan cleanup below)
     claude.rs       — Claude Code: CLAUDE.md (or .claude/CLAUDE.md when only that exists)
                        + .claude/rules/**/*.md, read recursively (paths: frontmatter); with no CLAUDE.md
@@ -345,13 +348,14 @@ conforme migrate --source X --output Y    # Migrate config between tools
 
 This project uses Claude Code skills in `.claude/skills/`:
 
-- **verify-providers** — Audit all 12 provider adapters: upstream product alive, renamed, forked or retired; official docs vs adapter code; required fields and value vocabularies (tool names, models, names, env-var syntax); safety invariants (orphan suffixes, JSONC-safe shared settings, gitignore, round-trip, blank output); link check; then fix with regression tests
+- **verify-providers** — Audit all 12 provider adapters against the tools as they ship today (upstream alive, docs and source read on the web, fact sheet vs adapter code, safety invariants), prove every tool's copy of every skill matches the source (`scripts/skills_conformity.py`), check with the tools' own CLIs (`references/live-cli.md`), run every command with every tool as source plus a second pass by concern, keep secrets out of the copies, check links, then fix with regression tests
 
-## MCP servers (.mcp.json)
+## Upstream documentation
 
-This project has a `.mcp.json` with **Context7** configured. Use it to get up-to-date documentation for any library or framework when working on adapter logic.
-
-**When verifying or updating adapter formats**, use Context7 to check the latest docs for any AI coding tool.
+The project configures no MCP server. Upstream formats are checked against the
+vendors' own pages (the URLs in `docs/providers/<tool>.md`) with the
+`verify-providers` skill. An MCP server added to `.mcp.json` is synced into
+tracked files of every tool: reference secrets as `${VAR}`, never as values.
 
 ## Dogfooding
 
@@ -391,6 +395,7 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - Copilot skills: `.github/skills/<name>/SKILL.md` (NOT `.github/prompts/*.prompt.md` — prompt files are a separate VS Code feature)
 - Any adapter whose `generate()` writes skills, agents, or MCP MUST read them back in `read()`, or `--from <tool>` silently drops them
 - Skills and agents always carry a `description` (`description_or_name`): Codex, Copilot, Gemini, OpenCode and Zoo Code skip one without it
+- A skill is its whole folder: every reader fills `NormalizedSkill::files` (`read_bundled_files`) and every `generate_*_skills` writes them beside `SKILL.md` (`bundled_outputs`); its skills directory is a `ManagedDir::subdirs`, so the copies are kept in step (`stale_bundled_files`) and `verify-providers`' `skills_conformity.py` passes
 - Tools with their own tool vocabulary (Claude Code, Gemini CLI, Kiro) get translated `tools` lists (`TOOL_EQUIVALENTS`, MCP names respelled), never names copied verbatim from another host; a `model` another tool cannot use is left out (`claude_model`, `gemini_model`, `opencode_model`, `kiro_model`, `copilot_model`, `cursor_model`)
 - Skill and agent names go through `sanitize_name` (kebab-case ASCII, at most 64 characters), rule file names through `rule_file_name`, and MCP strings through `EnvRefStyle` so `${VAR}` becomes each tool's own reference syntax
 - A tool that reads `AGENTS.md` itself in a project returns `true` from `reads_agents_md(project_root)` (always for Codex, OpenCode, Amp, DeepSeek; Claude Code without `CLAUDE.md`; Gemini CLI when `context.fileName` names it) and reads it with `markdown::read_native_agents_md`; renaming a tool id adds it to `sync::RENAMED_IDS`
