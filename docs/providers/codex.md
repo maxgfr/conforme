@@ -39,7 +39,7 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - Preserves the shared `.codex/config.toml` during `remove codex` and `migrate --source codex` instead of deleting unrelated settings
 - Watches the `.codex/` directory when Codex is configured as the source, including atomic saves and late creation of `config.toml`
 - Reads AGENTS.md natively
-- Skills in `.agents/skills/` (shared format used by Amp and others)
+- Skills in `.agents/skills/` (shared format, also read by Zed, Gemini CLI, OpenCode, Kilo Code and Mistral Vibe)
 - `read()` round-trips AGENTS.md, skills (`.agents/skills/`), and MCP servers (`.codex/config.toml`); the file is parsed with conforme's AGENTS.md convention (instructions plus `## Rule:` sections), and its `## Skill:`/`## Agent:`/`## MCP:` sections are added to what this tool's own files hold (which win on a name clash). With this tool as the source, AGENTS.md *is* the source: sync never regenerates it (`generate_agents_md` does not apply), `gitignore install` keeps it tracked, and `remove`/`migrate` never delete it (`source_files()`)
 
 ## Notes

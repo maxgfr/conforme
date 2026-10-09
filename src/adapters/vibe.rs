@@ -18,12 +18,16 @@ pub struct VibeAdapter;
 /// Vibe reads `AGENTS.md` and no other instruction file.
 const INSTRUCTION_FILES: &[&str] = &["AGENTS.md"];
 
+/// Skill names Vibe's built-in skills occupy: a project skill of that name is
+/// skipped.
+const RESERVED_SKILLS: &[&str] = &["vibe", "skill-creator"];
+
 fn config_path(project_root: &Path) -> PathBuf {
     project_root.join(".vibe").join("config.toml")
 }
 
 /// The skills in `.vibe/skills`; the shared `.agents/skills` root is read
-/// only when there are none (as for DeepSeek), so a Codex, Zed or Amp copy
+/// only when there are none (as for DeepSeek), so a Codex or Zed copy
 /// there is not taken for the source's own.
 fn own_skills(project_root: &Path) -> Result<Vec<crate::config::NormalizedSkill>> {
     crate::skills::read_skills_from_dir(&project_root.join(".vibe").join("skills"))
@@ -68,6 +72,44 @@ impl AiToolAdapter for VibeAdapter {
     /// theme; conforme only merges `[[mcp_servers]]` into it.
     fn is_shared_file(&self, path: &Path) -> bool {
         path.ends_with(Path::new(".vibe/config.toml"))
+    }
+
+    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for skill in &config.skills {
+            let name = crate::config::sanitize_name(&skill.name);
+            if RESERVED_SKILLS.contains(&name.as_str()) {
+                warnings.push(format!(
+                    "skill {name} is skipped: Vibe reserves that name for a built-in skill"
+                ));
+            }
+        }
+        for server in &config.mcp_servers {
+            // A stdio server gets only the variables its `env` sets, verbatim;
+            // only a bearer token is read from a variable (`api_key_env`).
+            let unresolved = match &server.transport {
+                crate::config::McpTransport::Stdio { command, args } => std::iter::once(command)
+                    .chain(args)
+                    .chain(server.env.values())
+                    .any(|s| s.contains("${")),
+                crate::config::McpTransport::Http { url, headers } => {
+                    url.contains("${")
+                        || headers.iter().any(|(key, value)| {
+                            value.contains("${")
+                                && !(key.eq_ignore_ascii_case("authorization")
+                                    && crate::mcp::bearer_env_var(value).is_some())
+                        })
+                }
+            };
+            if unresolved {
+                warnings.push(format!(
+                    "MCP server {}: Vibe resolves no ${{VAR}} there and passes it as written; \
+                     set the value in ~/.vibe/config.toml",
+                    server.name
+                ));
+            }
+        }
+        warnings
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
@@ -158,6 +200,44 @@ mod tests {
             .generate(Path::new("/tmp/test"), &NormalizedConfig::default())
             .unwrap();
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_warnings_name_what_vibe_will_not_load() {
+        use crate::config::{McpTransport, NormalizedMcpServer};
+        use std::collections::BTreeMap;
+        let config = NormalizedConfig {
+            skills: vec![NormalizedSkill {
+                name: "skill-creator".to_string(),
+                ..Default::default()
+            }],
+            mcp_servers: vec![
+                NormalizedMcpServer {
+                    name: "files".to_string(),
+                    transport: McpTransport::Stdio {
+                        command: "npx".to_string(),
+                        args: vec![],
+                    },
+                    env: BTreeMap::from([("TOKEN".to_string(), "${TOKEN}".to_string())]),
+                },
+                NormalizedMcpServer {
+                    name: "remote".to_string(),
+                    transport: McpTransport::Http {
+                        url: "https://example.com/mcp".to_string(),
+                        headers: BTreeMap::from([(
+                            "Authorization".to_string(),
+                            "Bearer ${API_TOKEN}".to_string(),
+                        )]),
+                    },
+                    env: BTreeMap::new(),
+                },
+            ],
+            ..Default::default()
+        };
+        let warnings = VibeAdapter.warnings(Path::new("/tmp/test"), &config);
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(warnings[0].starts_with("skill skill-creator is skipped"));
+        assert!(warnings[1].starts_with("MCP server files:"));
     }
 
     #[test]

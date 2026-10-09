@@ -189,6 +189,14 @@ fn compare(
     }
     if caps.mcp {
         for server in &source.mcp_servers {
+            // Kilo has no variable references in a project config: its local
+            // servers inherit the environment, so `TOKEN=${TOKEN}` is left out.
+            let mut server = server.clone();
+            if out.id() == "kilo" {
+                server
+                    .env
+                    .retain(|key, value| *value != format!("${{{key}}}"));
+            }
             match output.mcp_servers.iter().find(|s| s.name == server.name) {
                 None => problems.push(format!("MCP server lost: {}", server.name)),
                 Some(found) if found.transport != server.transport => problems.push(format!(
@@ -253,8 +261,8 @@ fn test_switching_around_and_back_changes_nothing() {
 #[test]
 fn test_switching_through_every_tool_keeps_text_and_skills() {
     let chain = [
-        "claude", "gemini", "opencode", "codex", "zed", "amp", "deepseek", "zoocode", "devin",
-        "copilot", "kiro", "cursor", "claude",
+        "claude", "gemini", "opencode", "codex", "zed", "deepseek", "vibe", "kilo", "zoocode",
+        "devin", "copilot", "kiro", "cursor", "claude",
     ];
     let (start, end) = switch_along(&chain);
     let text_and_skills = |c: &NormalizedConfig| NormalizedConfig {

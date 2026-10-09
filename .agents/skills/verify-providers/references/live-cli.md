@@ -52,8 +52,29 @@ folder trust, so the user's own configuration is never touched.
   - `gemini skills list`: each skill and the root it loads from; an
     "Agent loading error" line names an agent Gemini rejects; "Skill conflict
     detected" names a skill present in two roots.
-- **Amp** (`npx -y @sourcegraph/amp@latest`, `HOME=<tmp>`): `amp mcp list`
-  lists workspace servers. `amp skill list` needs a login.
-- **Not scriptable without an install or a login**: Kiro (`kiro-cli`), Cursor
-  (`cursor-agent`), Devin, Zed, Copilot CLI. Name them as not verified in the
-  report.
+- **Copilot CLI** (`copilot`): with `HOME=<tmp>` holding `.copilot/config.json`
+  (`{"trusted_folders": ["<abs path>"]}`), and the Claude `.mcp.json` removed
+  so it is not what makes a server appear:
+  - `copilot mcp list`: the servers of `.github/mcp.json` (Copilot CLI ignores
+    `.vscode/mcp.json`).
+  - `copilot skill list` (under "Project skills") and `copilot instruction list`.
+- **Cursor** (`cursor-agent`): `cursor-agent mcp list` lists the project
+  servers (a new one waits for approval, which is fine). Skills and agents have
+  no listing command: check the files.
+- **Mistral Vibe** (`vibe`): project files load only in a trusted folder. Load
+  the project with Vibe's own loaders, in the Python of the installed package,
+  run isolated (`-I`), with `VIBE_HOME=<tmp>` holding `trusted_folders.toml`
+  (`trusted = ["<abs path>"]`): `ConfigOrchestrator` for `mcp_servers`,
+  `SkillManager` for skills (and their model-invocation flag and parse
+  issues), `AgentRegistry` for subagents, `HarnessFilesManager.load_project_docs`
+  for `AGENTS.md`.
+- **Kilo Code** (`kilo`): with `HOME` and `XDG_*` pointing at a temporary
+  directory:
+  - `kilo config check`: exit 1, naming the file, when Kilo refuses a project
+    config (a `{env:VAR}` in `kilo.jsonc` or the root `opencode.json`).
+  - `kilo debug config`: resolved `mcp` and `agent` entries.
+  - `kilo debug skill`: each skill with its `location`.
+  - `kilo agent list`: a synced agent as `<name> (subagent)`.
+  `kilo mcp list` connects to every server; leave it out.
+- **Needs a login**: Kiro (`kiro-cli`). **No CLI**: Devin, Zed. Name them as
+  not verified in the report.

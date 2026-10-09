@@ -179,9 +179,9 @@ finding.
 ## 7. Run every command, then a second pass
 
 Unit tests cover what their author thought of. Run the CLI against the
-fixture with each of the 12 tools as source in turn: `sync` twice (the second
+fixture with each of the 13 tools as source in turn: `sync` twice (the second
 changes nothing), `check`, `status`, `diff`, `migrate` to tools that share a
-directory (Codex, Zed, Amp) and to one that keeps its instructions in
+directory (Codex, Zed) and to one that keeps its instructions in
 `AGENTS.md`, `remove`, `gitignore install`. Look for lost files, blank files,
 a source file rewritten, and commands that disagree with `sync`.
 

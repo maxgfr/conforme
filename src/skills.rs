@@ -216,7 +216,7 @@ pub(crate) const UNBOUNDED_SKILL_DEPTH: usize = 16;
 
 /// Read skills from every `SKILL.md` folder under `skills_dir`, up to
 /// `max_depth` levels below it, for the tools that search their skills root
-/// recursively (Codex: 6 levels, Amp: 5, Cursor and OpenCode: unbounded). A
+/// recursively (Codex: 6 levels, Cursor and OpenCode: unbounded). A
 /// folder holding a `SKILL.md` is one skill; its sub-folders are not
 /// searched. A skill nested deeper than one level is written back flat.
 pub(crate) fn read_skills_recursive(
@@ -1484,7 +1484,22 @@ pub fn generate_opencode_skills(
     project_root: &Path,
     skills: &[NormalizedSkill],
 ) -> Result<Vec<(PathBuf, String)>> {
-    let skills_dir = project_root.join(".opencode").join("skills");
+    generate_opencode_style_skills(&project_root.join(".opencode").join("skills"), skills)
+}
+
+/// Generate Kilo Code skill files in `.kilo/skills/<name>/SKILL.md`. Kilo is
+/// an OpenCode fork and reads the same `name` and `description` frontmatter.
+pub fn generate_kilo_skills(
+    project_root: &Path,
+    skills: &[NormalizedSkill],
+) -> Result<Vec<(PathBuf, String)>> {
+    generate_opencode_style_skills(&project_root.join(".kilo").join("skills"), skills)
+}
+
+fn generate_opencode_style_skills(
+    skills_dir: &Path,
+    skills: &[NormalizedSkill],
+) -> Result<Vec<(PathBuf, String)>> {
     let mut files = Vec::new();
 
     for skill in skills {
@@ -1517,7 +1532,22 @@ pub fn generate_opencode_agents_md(
     project_root: &Path,
     agents: &[NormalizedAgent],
 ) -> Result<Vec<(PathBuf, String)>> {
-    let agents_dir = project_root.join(".opencode").join("agents");
+    generate_opencode_style_agents(&project_root.join(".opencode").join("agents"), agents)
+}
+
+/// Generate Kilo Code subagent markdown files in `.kilo/agents/<name>.md`,
+/// in OpenCode's format (`description`, `mode: subagent`, `provider/model`).
+pub fn generate_kilo_agents_md(
+    project_root: &Path,
+    agents: &[NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
+    generate_opencode_style_agents(&project_root.join(".kilo").join("agents"), agents)
+}
+
+fn generate_opencode_style_agents(
+    agents_dir: &Path,
+    agents: &[NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
     let mut files = Vec::new();
 
     for agent in agents {

@@ -41,7 +41,7 @@ impl AiToolAdapter for ZedAdapter {
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         // Zed reads skills from the shared `.agents/skills/` location (same as
-        // Codex/Amp), so track it for orphan cleanup.
+        // Codex), so track it for orphan cleanup.
         vec![ManagedDir::subdirs(
             project_root.join(".agents").join("skills"),
         )]

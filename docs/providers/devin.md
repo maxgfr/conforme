@@ -63,7 +63,7 @@ conforme's tool id was `windsurf` until 4.0.0 and is now `devin`.
 - MCP: "The MCP config file location changed in v3000.3 … newer versions store them in dedicated files". conforme writes `transport: "http"` for remote servers (its normalized remote transport is streamable HTTP), `env` only on stdio servers, and `${env:VAR}` for environment references (read back as `${VAR}`)
 - The Devin Local page still shows `.devin/config.json` for MCP; the MCP configuration page (newer) gives `.devin/mcp_config.json`, which conforme follows
 - Devin Local also reads `CLAUDE.md`, `.cursor/rules/` and `AGENTS.md`; AGENTS.md at the root is always-on, and in a subdirectory it applies to `<dir>/**`
-- Devin also loads skills from `.agents/skills/`, `.claude/skills/` and `.cursor/skills/`, so a skill can appear twice when Codex/Amp/Zed, Claude Code or Cursor are synced too
+- Devin also loads skills from `.agents/skills/`, `.claude/skills/` and `.cursor/skills/`, so a skill can appear twice when Codex/Zed, Claude Code or Cursor are synced too
 - `globs` is written as one comma-separated string, the historical Windsurf form, with brace groups expanded (`src/*.{ts,tsx}` → `src/*.ts, src/*.tsx`); a YAML list is also read. Whether the current agent splits a comma-separated string is not documented (unverified)
 - Subagents (`.devin/agents/`, also `.agents/agents/`) are marked experimental upstream and are not generated yet (known gap)
 - Hooks and workflows are Devin-specific and not synced

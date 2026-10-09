@@ -29,6 +29,8 @@ fn create_project_with_tools(agents_md: &str, tools: &[&str]) -> TempDir {
             "zoocode" => fs::create_dir_all(dir.path().join(".roo")).unwrap(),
             "gemini" => fs::create_dir_all(dir.path().join(".gemini")).unwrap(),
             "opencode" => fs::create_dir_all(dir.path().join(".opencode")).unwrap(),
+            "kilo" => fs::create_dir_all(dir.path().join(".kilo")).unwrap(),
+            "vibe" => fs::create_dir_all(dir.path().join(".vibe")).unwrap(),
             _ => {}
         }
     }
@@ -432,8 +434,10 @@ Be helpful.
         .assert()
         .success();
 
-    // OpenCode reads MCP from opencode.json under the `mcp` key (not a standalone file).
-    let opencode_json = dir.path().join("opencode.json");
+    // OpenCode reads MCP from opencode.json under the `mcp` key (not a
+    // standalone file); a new one goes to `.opencode/`, which Kilo never reads.
+    let opencode_json = dir.path().join(".opencode/opencode.json");
+    assert!(!dir.path().join("opencode.json").exists());
     assert!(opencode_json.exists());
     let content = fs::read_to_string(&opencode_json).unwrap();
     assert!(content.contains("\"mcp\""));
@@ -442,6 +446,63 @@ Be helpful.
     // command is a single combined array, not separate command+args.
     assert!(content.contains("\"command\": [\n"));
     assert!(!content.contains("\"args\""));
+}
+
+#[test]
+fn test_opencode_and_kilo_both_load_their_mcp_servers() {
+    // Kilo loads the root opencode.json and refuses a project file holding
+    // `{env:VAR}`: OpenCode's servers go to `.opencode/`, Kilo's carry none.
+    let agents_md = r#"# Instructions
+Be helpful.
+
+## MCP: files
+<!-- command: npx -->
+<!-- args: -y, @test/server -->
+<!-- env: TOKEN=${TOKEN} -->
+
+## MCP: remote
+<!-- url: https://example.com/mcp -->
+<!-- headers: Authorization=Bearer ${API_TOKEN} -->
+"#;
+    let dir = create_project_with_tools(agents_md, &["opencode", "kilo"]);
+
+    let output = conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8_lossy(&output);
+
+    let opencode = fs::read_to_string(dir.path().join(".opencode/opencode.json")).unwrap();
+    assert!(opencode.contains("{env:TOKEN}"), "{opencode}");
+    assert!(!dir.path().join("opencode.json").exists());
+    let kilo = fs::read_to_string(dir.path().join(".kilo/kilo.jsonc")).unwrap();
+    assert!(!kilo.contains("{env:"), "{kilo}");
+    assert!(!kilo.contains("TOKEN\""), "an inherited variable: {kilo}");
+    assert!(
+        stderr.contains("MCP server remote: Kilo resolves no variable"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn test_kilo_warns_about_a_root_opencode_json_it_refuses() {
+    let dir = create_project_with_tools("# Instructions\nBe helpful.\n", &["kilo"]);
+    fs::write(
+        dir.path().join("opencode.json"),
+        r#"{"mcp":{"files":{"type":"local","command":["npx"],"environment":{"TOKEN":"{env:TOKEN}"}}}}"#,
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync", "--only", "kilo"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "opencode.json holds {env:VAR} references, and Kilo refuses that file",
+        ));
 }
 
 #[test]
@@ -463,7 +524,7 @@ Review all changes for bugs.
         .success();
 
     // Agents go into opencode.json under the `agent` key AND per-project markdown.
-    let opencode_json = dir.path().join("opencode.json");
+    let opencode_json = dir.path().join(".opencode/opencode.json");
     assert!(opencode_json.exists());
     let json_content = fs::read_to_string(&opencode_json).unwrap();
     assert!(json_content.contains("\"agent\""));

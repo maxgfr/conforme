@@ -15,6 +15,26 @@ pub struct OpenCodeAdapter;
 /// OpenCode reads `AGENTS.md`, else `CLAUDE.md`.
 const INSTRUCTION_FILES: &[&str] = &["AGENTS.md", "CLAUDE.md"];
 
+/// The project config files OpenCode merges, lowest precedence first.
+const CONFIG_FILES: &[&str] = &[
+    "opencode.json",
+    "opencode.jsonc",
+    ".opencode/opencode.json",
+    ".opencode/opencode.jsonc",
+];
+
+/// The config file conforme merges into: the first that exists, else
+/// `.opencode/opencode.json`. Kilo Code also loads the root `opencode.json`
+/// and refuses a project file holding `{env:VAR}`, which it never sees in
+/// `.opencode/`.
+fn config_path(project_root: &Path) -> PathBuf {
+    CONFIG_FILES
+        .iter()
+        .map(|name| project_root.join(name))
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| project_root.join(".opencode").join("opencode.json"))
+}
+
 impl AiToolAdapter for OpenCodeAdapter {
     fn name(&self) -> &str {
         "OpenCode"
@@ -49,7 +69,8 @@ impl AiToolAdapter for OpenCodeAdapter {
     }
 
     fn is_shared_file(&self, path: &Path) -> bool {
-        path.file_name().is_some_and(|name| name == "opencode.json")
+        path.file_name()
+            .is_some_and(|name| name == "opencode.json" || name == "opencode.jsonc")
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
@@ -107,14 +128,20 @@ impl AiToolAdapter for OpenCodeAdapter {
         // OpenCode's own shape (`type: local/remote`, `command` array,
         // `environment`) — not the standard `mcpServers` layout.
         // OpenCode parses the file as JSONC, so comments are accepted here too.
-        let mut mcp_servers = Vec::new();
-        let config_path = project_root.join("opencode.json");
-        if let Some(root) = crate::json_settings::load(&config_path)? {
+        // Later files override earlier ones, server by server.
+        let mut mcp_servers: Vec<crate::config::NormalizedMcpServer> = Vec::new();
+        for name in CONFIG_FILES {
+            let Some(root) = crate::json_settings::load(&project_root.join(name))? else {
+                continue;
+            };
             if let Some(mcp) = root.get("mcp") {
-                mcp_servers = crate::mcp::canonicalize_env_refs(
+                for server in crate::mcp::canonicalize_env_refs(
                     crate::mcp::parse_opencode_mcp_object(mcp),
                     crate::mcp::EnvRefStyle::OpenCode,
-                );
+                ) {
+                    mcp_servers.retain(|s| s.name != server.name);
+                    mcp_servers.push(server);
+                }
             }
             if let Some(agent) = root.get("agent") {
                 for agent in crate::mcp::parse_opencode_agent_object(agent) {
@@ -175,15 +202,15 @@ impl AiToolAdapter for OpenCodeAdapter {
             )?);
         }
 
-        // Merge MCP + agent objects into opencode.json at the project root.
-        // OpenCode reads MCP from opencode.json under the `mcp` key (not from a
-        // standalone .opencode/mcp.json). We read any existing opencode.json
-        // to preserve user-authored keys (and JSONC comments), then replace
+        // Merge MCP + agent objects into the project's opencode.json (see
+        // `config_path`). OpenCode reads MCP under the `mcp` key (not from a
+        // standalone .opencode/mcp.json). We read any existing file to
+        // preserve user-authored keys (and JSONC comments), then replace
         // only our managed keys.
         // A key the source has nothing for is left alone, like every other
         // MCP target: it may hold what the user keeps there by hand.
         if !config.mcp_servers.is_empty() || !config.agents.is_empty() {
-            let config_path = project_root.join("opencode.json");
+            let config_path = config_path(project_root);
             let existing = crate::json_settings::load(&config_path)?;
 
             let mut set = Vec::new();
@@ -291,7 +318,8 @@ mod tests {
         };
         let files = adapter.generate(tmp.path(), &config).unwrap();
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].0, tmp.path().join("opencode.json"));
+        // A new file goes to `.opencode/`, where Kilo Code never reads it.
+        assert_eq!(files[0].0, tmp.path().join(".opencode/opencode.json"));
         assert!(files[0].1.contains("\"$schema\""));
         assert!(files[0].1.contains("\"mcp\""));
         assert!(files[0].1.contains("\"type\": \"local\""));

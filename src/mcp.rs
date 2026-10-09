@@ -153,6 +153,11 @@ fn env_ref_name(text: &str) -> Option<&str> {
         .then_some(name)
 }
 
+/// `VAR` for a header value that is exactly `Bearer ${VAR}`.
+pub(crate) fn bearer_env_var(value: &str) -> Option<&str> {
+    value.strip_prefix("Bearer ").and_then(env_ref_name)
+}
+
 /// Write `map` as the string table `key` of a Codex server entry (inline when
 /// the entry is), or remove the key when `map` is empty.
 fn set_string_map(
@@ -654,7 +659,7 @@ pub enum EnvRefStyle {
     Dollar,
     /// `$VAR`, `${VAR}` and `${VAR:-default}` (Gemini CLI).
     DollarOrBare,
-    /// `${VAR}` with no default form (Kiro, Amp); a default is dropped.
+    /// `${VAR}` with no default form (Kiro); a default is dropped.
     DollarNoDefault,
     /// `${env:VAR}` (Cursor, VS Code / Copilot, Zoo Code, Devin); a default is
     /// dropped, and predefined variables such as `${workspaceFolder}` are kept.
@@ -915,17 +920,6 @@ const ZED_SHAPE: ServerShape = ServerShape {
     env_refs: EnvRefStyle::Literal,
 };
 
-/// Amp `amp.mcpServers`: transport inferred from the shape (`command`/`args`/
-/// `env` locally, `url`/`headers` remotely), no `type`.
-const AMP_SHAPE: ServerShape = ServerShape {
-    stdio_type: None,
-    http_type: None,
-    url_key: "url",
-    http_extra: None,
-    env_on_http: false,
-    env_refs: EnvRefStyle::DollarNoDefault,
-};
-
 /// Gemini CLI `mcpServers`: no `type`, streamable HTTP servers use `httpUrl`.
 const GEMINI_SHAPE: ServerShape = ServerShape {
     stdio_type: None,
@@ -1078,10 +1072,38 @@ pub fn build_copilot_servers_object(
 pub fn build_opencode_mcp_object(
     servers: &[NormalizedMcpServer],
 ) -> serde_json::Map<String, serde_json::Value> {
+    build_opencode_style_object(servers, EnvRefStyle::OpenCode)
+}
+
+/// Build the Kilo Code `mcp` object: OpenCode's shape, with no variable
+/// references. Kilo refuses a project config holding `{env:VAR}`, so strings
+/// are copied verbatim; a local server inherits Kilo's environment, so an
+/// `env` entry that only passes a variable through (`TOKEN=${TOKEN}`) is left
+/// out instead of being set to the literal text.
+pub fn build_kilo_mcp_object(
+    servers: &[NormalizedMcpServer],
+) -> serde_json::Map<String, serde_json::Value> {
+    let servers: Vec<NormalizedMcpServer> = servers
+        .iter()
+        .map(|server| {
+            let mut server = server.clone();
+            server
+                .env
+                .retain(|key, value| value.trim() != format!("${{{key}}}"));
+            server
+        })
+        .collect();
+    build_opencode_style_object(&servers, EnvRefStyle::Literal)
+}
+
+fn build_opencode_style_object(
+    servers: &[NormalizedMcpServer],
+    style: EnvRefStyle,
+) -> serde_json::Map<String, serde_json::Value> {
     let mut mcp = serde_json::Map::new();
 
     for server in servers {
-        let server = map_server_strings(server, |s| env_refs_to_tool(s, EnvRefStyle::OpenCode));
+        let server = map_server_strings(server, |s| env_refs_to_tool(s, style));
         let mut entry = serde_json::Map::new();
 
         match &server.transport {
@@ -1212,6 +1234,13 @@ pub fn is_opencode_builtin_agent(name: &str) -> bool {
     OPENCODE_BUILTIN_AGENTS.contains(&crate::config::sanitize_name(name).as_str())
 }
 
+/// Kilo Code's built-in agents: OpenCode's, plus its own modes.
+pub fn is_kilo_builtin_agent(name: &str) -> bool {
+    is_opencode_builtin_agent(name)
+        || ["code", "ask", "debug", "orchestrator"]
+            .contains(&crate::config::sanitize_name(name).as_str())
+}
+
 /// Parse the OpenCode `agent` object from an `opencode.json` value back into
 /// normalized agents (the inverse of [`build_opencode_agent_object`]).
 pub fn parse_opencode_agent_object(
@@ -1276,7 +1305,6 @@ pub const KIRO_OWNED_SERVER_KEYS: &[&str] = &[
     "type", "command", "args", "env", "url", "headers", "disabled",
 ];
 pub const ZED_OWNED_SERVER_KEYS: &[&str] = &["command", "args", "env", "url", "headers", "enabled"];
-pub const AMP_OWNED_SERVER_KEYS: &[&str] = &["command", "args", "env", "url", "headers"];
 // `type` is listed because `gemini mcp add -t http|sse` writes one next to
 // `url`; left in place it would contradict the `httpUrl` conforme writes.
 pub const GEMINI_OWNED_SERVER_KEYS: &[&str] = &[
@@ -1317,16 +1345,6 @@ pub fn build_zed_context_servers_object(
     servers: &[NormalizedMcpServer],
 ) -> serde_json::Map<String, serde_json::Value> {
     build_servers_object(servers, &ZED_SHAPE)
-}
-
-/// Build the Amp `amp.mcpServers` object (not a full file — `.amp/settings.json`
-/// is merged by the adapter so user-authored workspace settings are preserved).
-/// Amp infers the transport from the entry's shape: stdio uses `command`/`args`,
-/// remote uses `url` (+ optional `headers`). No `type` field is emitted.
-pub fn build_amp_mcp_object(
-    servers: &[NormalizedMcpServer],
-) -> serde_json::Map<String, serde_json::Value> {
-    build_servers_object(servers, &AMP_SHAPE)
 }
 
 /// Build the Gemini CLI `mcpServers` object (not a full file — `.gemini/settings.json`
@@ -1426,9 +1444,9 @@ pub fn merge_opencode_agents(
 
 /// Parse an MCP config file into normalized servers. Handles every key conforme
 /// emits — `mcpServers` (standard), `servers` (Copilot/VS Code),
-/// `context_servers` (Zed) and `amp.mcpServers` (Amp) — and infers the transport
+/// and `context_servers` (Zed) — and infers the transport
 /// from the entry's shape when there is no explicit `type` field (Gemini
-/// `httpUrl`, Zed/Amp remote `url`; a Devin Desktop-style `serverUrl` is also
+/// `httpUrl`, Zed remote `url`; a Devin Desktop-style `serverUrl` is also
 /// accepted for hand-written files).
 pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
     // JSONC-tolerant: Zed, VS Code and Zoo Code settings may hold comments
@@ -1441,8 +1459,6 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
         "servers"
     } else if root.get("context_servers").is_some() {
         "context_servers"
-    } else if root.get("amp.mcpServers").is_some() {
-        "amp.mcpServers"
     } else {
         return Ok(Vec::new());
     };
@@ -2384,33 +2400,6 @@ environment_id = "local"
     }
 
     #[test]
-    fn test_parse_mcp_json_amp_key() {
-        // Amp keys its servers under the dotted `amp.mcpServers` and emits no
-        // `type` field — both must survive the read path.
-        let servers = vec![NormalizedMcpServer {
-            name: "linear".to_string(),
-            transport: McpTransport::Http {
-                url: "https://mcp.linear.app/mcp".to_string(),
-                headers: BTreeMap::new(),
-            },
-            env: BTreeMap::new(),
-        }];
-        let json = serde_json::to_string_pretty(
-            &serde_json::json!({ "amp.mcpServers": build_amp_mcp_object(&servers) }),
-        )
-        .unwrap();
-        assert!(!json.contains("\"type\""));
-
-        let parsed = parse_mcp_json(&json).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].name, "linear");
-        match &parsed[0].transport {
-            McpTransport::Http { url, .. } => assert_eq!(url, "https://mcp.linear.app/mcp"),
-            other => panic!("expected http, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn test_build_opencode_agent_object() {
         let agents = vec![crate::config::NormalizedAgent {
             name: "reviewer".to_string(),
@@ -2477,7 +2466,6 @@ environment_id = "local"
             ("copilot", build_copilot_servers_object(&servers)),
             ("zoocode", build_zoocode_servers_object(&servers)),
             ("zed", build_zed_context_servers_object(&servers)),
-            ("amp", build_amp_mcp_object(&servers)),
             ("devin", build_devin_servers_object(&servers)),
         ] {
             assert!(map["remote"].get("env").is_none(), "{tool}: {map:?}");

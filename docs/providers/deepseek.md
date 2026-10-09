@@ -116,7 +116,7 @@ Because this configuration is user-level and not project-scoped, conforme does
   it, and `gitignore install` keeps it tracked. What `read()` loads outside
   `.dsh/skills` (`source_files()`: the first of `AGENTS.md` / `CLAUDE.md`, and
   `.agents/skills` when it is the fallback) is never written by another
-  target nor deleted by `remove`/`migrate`; the Codex, Zed and Amp targets
+  target nor deleted by `remove`/`migrate`; the Codex and Zed targets
   leave a fallback `.agents/skills` to the source, as for a shared root
 - The harness loads *every* existing file among `AGENTS.md` and `CLAUDE.md`;
   `read()` takes only the first one found. This is a deliberate
