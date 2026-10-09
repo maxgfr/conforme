@@ -536,6 +536,40 @@ fn test_kilo_reads_rules_legacy_locations_and_keeps_its_settings() {
 }
 
 #[test]
+fn test_opencode_falls_back_to_context_md() {
+    // OpenCode reads AGENTS.md, else CLAUDE.md, else the deprecated CONTEXT.md.
+    let adapter = conforme::adapters::opencode::OpenCodeAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".opencode")).unwrap();
+    fs::write(dir.path().join("CONTEXT.md"), "Legacy context.\n").unwrap();
+
+    let config = adapter.read(dir.path()).unwrap();
+    assert_eq!(config.instructions, "Legacy context.");
+    assert_eq!(
+        adapter.source_files(dir.path()),
+        vec![dir.path().join("CONTEXT.md")]
+    );
+}
+
+#[test]
+fn test_kilo_scout_agent_is_left_to_kilo() {
+    // Kilo's experimental `scout` subagent is built in: a synced agent of
+    // that name would clash with it.
+    let adapter = conforme::adapters::kilo::KiloAdapter;
+    let dir = TempDir::new().unwrap();
+    let config = NormalizedConfig {
+        agents: vec![conforme::config::NormalizedAgent {
+            name: "scout".to_string(),
+            description: "Mine".to_string(),
+            content: "Scout.".to_string(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    assert!(adapter.generate(dir.path(), &config).unwrap().is_empty());
+}
+
+#[test]
 fn test_roundtrip_vibe_skills_agents_mcp() {
     let adapter = conforme::adapters::vibe::VibeAdapter;
     let dir = TempDir::new().unwrap();

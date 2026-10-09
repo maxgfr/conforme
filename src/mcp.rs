@@ -535,6 +535,7 @@ const CODEX_TUNING_KEYS: &[&str] = &[
     "default_tools_approval_mode",
     "tools",
     "scopes",
+    "oauth",
     "oauth_resource",
     "startup_readiness",
     "supports_parallel_tool_calls",
@@ -1234,10 +1235,11 @@ pub fn is_opencode_builtin_agent(name: &str) -> bool {
     OPENCODE_BUILTIN_AGENTS.contains(&crate::config::sanitize_name(name).as_str())
 }
 
-/// Kilo Code's built-in agents: OpenCode's, plus its own modes.
+/// Kilo Code's built-in agents: OpenCode's, plus its own modes and the
+/// `scout` subagent (behind its `experimentalScout` flag).
 pub fn is_kilo_builtin_agent(name: &str) -> bool {
     is_opencode_builtin_agent(name)
-        || ["code", "ask", "debug", "orchestrator"]
+        || ["code", "ask", "debug", "orchestrator", "scout"]
             .contains(&crate::config::sanitize_name(name).as_str())
 }
 
@@ -1928,9 +1930,16 @@ tool_input_schema_max_bytes = 4096
 omit_tools_from = ["review"]
 name = "api"
 environment_id = "local"
+
+[mcp_servers.api.oauth]
+client_id = "conforme"
+callback_port = 5555
 "#;
         let parsed = parse_codex_mcp_toml(content).unwrap();
         assert_eq!(parsed.len(), 2);
+        // The OAuth client settings stay Codex's: the merge keeps them.
+        let merged = merge_codex_mcp_toml(content, &parsed).unwrap();
+        assert!(merged.contains("client_id = \"conforme\""), "{merged}");
 
         // A server bound to a remote environment has no portable form.
         let remote = "[mcp_servers.x]\ncommand = \"node\"\nenvironment_id = \"devbox\"\n";

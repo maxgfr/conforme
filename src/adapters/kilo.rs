@@ -143,7 +143,9 @@ impl AiToolAdapter for KiloAdapter {
             if strings.iter().any(|s| s.contains("${")) {
                 warnings.push(format!(
                     "MCP server {}: Kilo resolves no variable in a project config, so ${{VAR}} is \
-                     sent as written; set the value in ~/.config/kilo/kilo.jsonc with {{env:VAR}}",
+                     sent as written; declare the server under another name in \
+                     ~/.config/kilo/kilo.jsonc, where {{env:VAR}} works (the project entry \
+                     overrides one of the same name)",
                     server.name
                 ));
             }

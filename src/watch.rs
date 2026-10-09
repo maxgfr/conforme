@@ -204,6 +204,7 @@ fn source_locations(id: &str) -> &'static [&'static str] {
         "opencode" => &[
             "AGENTS.md",
             "CLAUDE.md",
+            "CONTEXT.md",
             "opencode.json",
             "opencode.jsonc",
             ".opencode/opencode.json",

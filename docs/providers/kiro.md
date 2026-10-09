@@ -48,7 +48,7 @@
 
 ## Notes
 
-- Kiro has a rich hook system (preToolUse, postToolUse, agentSpawn, userPromptSubmit). As of Kiro CLI 3.0 hooks are standalone `.kiro/hooks/*.json` files rather than blocks embedded in an agent config
+- Kiro has a rich hook system. As of Kiro CLI 3.0 hooks are standalone `.kiro/hooks/*.json` files rather than blocks embedded in an agent config, and the triggers are PascalCase (`agentSpawn` became `SessionStart`, see https://kiro.dev/docs/cli/v3/); hooks are not synced
 - "Powers" now follow the Agent Plugins spec: a `plugin.json` plus `skills/` and `mcp.json` (steering under `dev.kiro/`)
 - `.kiro/agents/` accepts a Markdown **or** a JSON file, and the filename becomes the agent name. conforme writes Markdown. `name` is a recognized frontmatter key, but since the filename already supplies it conforme omits it to avoid two competing sources of truth
 - JSON agents (`.kiro/agents/<name>.json`) are neither read nor written by conforme, and orphan cleanup and `migrate --source kiro` only remove `.md` files there, so they are never deleted
@@ -61,7 +61,7 @@
 - `auto` (agent-decision) rules must include both `name` and `description`; conforme falls back to the rule name when the source has no description
 - `.kiro/settings/mcp.json` is merged, not owned: Kiro's own per-server state survives, `disabled` is reset so a synced server runs, a file conforme cannot parse is left untouched, and `remove kiro` / `migrate --source kiro` keep the file. Environment references are `${VAR}` (only variables approved in Kiro's settings expand); a `:-default` is dropped
 - Kiro documents no manual-only skill switch: the `disable-model-invocation` and `metadata` keys conforme writes for a manual skill are ignored, and Kiro may still load it on its own
-- Kiro always includes a root `AGENTS.md`, without inclusion modes, so in a project that keeps `AGENTS.md` its rules reach Kiro twice and glob/manual rules are always on there. Kiro CLI V3 supports all four steering inclusion modes; CLI V1/V2 load only `always` steering
+- Kiro always includes a root `AGENTS.md` (and discovers more in subdirectories), without inclusion modes, so in a project that keeps `AGENTS.md` its rules reach Kiro twice and glob/manual rules are always on there. Kiro CLI V3 supports all four steering inclusion modes; CLI V1/V2 load only `always` steering
 - When Kiro is a target, orphan cleanup removes every top-level `.md` in `.kiro/steering/` that the source did not generate, including the `product.md`/`tech.md`/`structure.md` Kiro's "Generate Steering Docs" creates; keep those in the source or set `clean = false`
 - Kiro reads AGENTS.md natively
 - CLI agent JSON format differs from IDE markdown format

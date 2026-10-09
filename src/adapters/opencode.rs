@@ -5,15 +5,16 @@ use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::NormalizedConfig;
 
 /// OpenCode adapter.
-/// OpenCode reads AGENTS.md as primary, falls back to CLAUDE.md.
+/// OpenCode reads AGENTS.md as primary, falls back to CLAUDE.md, then CONTEXT.md.
 /// It also scans skills from .opencode/skills/, .claude/skills/, .agents/skills/.
 /// MCP servers and agent definitions live inside `opencode.json` under
 /// the `mcp` and `agent` keys respectively; per-project markdown agents
 /// additionally live at `.opencode/agents/<name>.md`.
 pub struct OpenCodeAdapter;
 
-/// OpenCode reads `AGENTS.md`, else `CLAUDE.md`.
-const INSTRUCTION_FILES: &[&str] = &["AGENTS.md", "CLAUDE.md"];
+/// OpenCode reads `AGENTS.md`, else `CLAUDE.md`, else the deprecated
+/// `CONTEXT.md`.
+const INSTRUCTION_FILES: &[&str] = &["AGENTS.md", "CLAUDE.md", "CONTEXT.md"];
 
 /// The project config files OpenCode merges, lowest precedence first.
 const CONFIG_FILES: &[&str] = &[

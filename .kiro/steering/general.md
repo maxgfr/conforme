@@ -57,7 +57,7 @@ src/
                        names that sanitize to nothing or collide, over-long skill descriptions,
                        a rule whose file name becomes `general` while there are instructions — Cursor,
                        Devin and Kiro write the instructions there; warns on skills Claude Code reserves:
-                       synced, anthropic-skills, claude-ai)
+                       synced, anthropic-skills)
   watch.rs           — File watcher for auto-sync (notify + debounce): watches every location the
                        source reads (per-tool source_locations + source_files()), .conformerc.toml and
                        AGENTS.md; an existing directory recursively, a file or missing path through its
@@ -233,7 +233,7 @@ Review for bugs.
 | Claude, Kiro | `mcpServers` (`.mcp.json`, `.kiro/settings/mcp.json`) | `type: stdio/http`; merged (keeps `oauth`, Kiro `autoApprove`/`disabledTools`, Claude `type: "sdk"` entries) |
 | Cursor | `mcpServers` (`.cursor/mcp.json`) | `type: stdio` locally, no `type` on remote entries; `${env:VAR}`; merged |
 | Zoo Code | `mcpServers` (inside `.roo/mcp.json`) | HTTP uses `type: streamable-http` (not `http`), no `env` on remote servers; merged (keeps Zoo's `alwaysAllow`/`disabledTools`) |
-| Copilot | `servers` (inside `.vscode/mcp.json`) + `mcpServers` (inside `.github/mcp.json`) | VS Code reads the first (`env` on stdio, `headers` on HTTP; keeps `inputs`/`sandbox`), Copilot CLI and the cloud agent only the second (Claude Code shape); both merged |
+| Copilot | `servers` (inside `.vscode/mcp.json`) + `mcpServers` (inside `.github/mcp.json`) | VS Code reads the first (`env` on stdio, `headers` on HTTP; keeps `inputs`/`sandbox`), Copilot CLI only the second (Claude Code shape); both merged. The cloud agent reads no file: its servers are set in the repository settings |
 | Devin | `mcpServers` (inside `.devin/mcp_config.json`) | No type field; remote `url` + `transport: http`; `${env:VAR}`; merged |
 | OpenCode | `mcp` (inside `opencode.json`: an existing root one, else `.opencode/opencode.json`) | `type: local/remote`; `command` is a single array; env key is `environment` (local only); `{env:VAR}`; merged (preserves user keys and `{ "enabled": false }` toggles) |
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; merged into existing settings (preserves theme/keybindings/etc. and extension servers configured only via `settings`) |
@@ -289,7 +289,7 @@ exists that the source does not read. `--dry-run` reports identical files as
 `AiToolAdapter::source_files(project_root)` lists what `read()` loads outside
 the tool's managed directories, only paths that exist and are used: Claude Code
 `CLAUDE.md` (or `AGENTS.md` + `.claude/AGENTS.md` in the fallback), Codex
-`AGENTS.md`, OpenCode the first of `AGENTS.md` / `CLAUDE.md`, Kilo the first of
+`AGENTS.md`, OpenCode the first of `AGENTS.md` / `CLAUDE.md` / `CONTEXT.md`, Kilo the first of
 `AGENTS.md` / `CLAUDE.md` / `CONTEXT.md` plus its rule directories, Vibe
 `AGENTS.md` plus `.agents/skills` when `.vibe/skills` has none, DeepSeek the first of `AGENTS.md` /
 `CLAUDE.md` plus `.agents/skills` when `.dsh/skills` has none, Gemini CLI its
