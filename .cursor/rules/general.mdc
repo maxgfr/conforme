@@ -102,7 +102,8 @@ src/
   adapters/
     mod.rs          — AiToolAdapter trait + registry + shared write_if_changed +
                        collect_rule_files (recursive rules-dir scan, sorted by base name) +
-                       ManagedDir / find_orphans (what sync would remove; check, diff and status report it) /
+                       ManagedDir / find_orphans (what sync would remove, including skill folders that hold the
+                       `.conforme` marker but left the source; check, diff and status report it) /
                        clean_orphans + source_files() (what read() loads outside the
                        managed dirs; see Orphan cleanup below)
     claude.rs       — Claude Code: CLAUDE.md (or .claude/CLAUDE.md when only that exists)

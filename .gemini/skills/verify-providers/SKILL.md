@@ -156,14 +156,15 @@ The script compares each copy root (`.agents/skills`, `.cursor/skills`,
 `.gemini/skills`, …) with `.claude/skills`, the dogfooded source: missing
 copies, a `name` that is not the folder, a missing or over-long
 `description`, different instructions, bundled files missing, different or
-extra. Then build a fixture whose source skills cover a bundled script, a
+extra, a copy without conforme's `.conforme` marker, and a marked copy whose
+skill left the source. Then build a fixture whose source skills cover a bundled script, a
 manual skill, a nested skill and a long description, sync it to every tool,
 run the script with `--source <its skills dir>`, and repeat after editing a
 skill body, deleting a bundled file and deleting a whole skill.
 
 Done when: the script exits 0 on the repository and on the fixture after
-each edit, and every STALE line (a skill the source no longer has) is either
-explained or reported as a finding.
+each edit and sync, and every UNMANAGED line (a skill written by hand in one
+tool) is explained.
 
 ## 6. Check with the tools' own CLIs
 

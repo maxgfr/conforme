@@ -98,7 +98,8 @@ src/
   adapters/
     mod.rs          — AiToolAdapter trait + registry + shared write_if_changed +
                        collect_rule_files (recursive rules-dir scan, sorted by base name) +
-                       ManagedDir / find_orphans (what sync would remove; check, diff and status report it) /
+                       ManagedDir / find_orphans (what sync would remove, including skill folders that hold the
+                       `.conforme` marker but left the source; check, diff and status report it) /
                        clean_orphans + source_files() (what read() loads outside the
                        managed dirs; see Orphan cleanup below)
     claude.rs       — Claude Code: CLAUDE.md (or .claude/CLAUDE.md when only that exists)
@@ -396,7 +397,7 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - Copilot skills: `.github/skills/<name>/SKILL.md` (NOT `.github/prompts/*.prompt.md` — prompt files are a separate VS Code feature)
 - Any adapter whose `generate()` writes skills, agents, or MCP MUST read them back in `read()`, or `--from <tool>` silently drops them
 - Skills and agents always carry a `description` (`description_or_name`): Codex, Copilot, Gemini, OpenCode and Zoo Code skip one without it
-- A skill is its whole folder: every reader fills `NormalizedSkill::files` (`read_bundled_files`) and every `generate_*_skills` writes them beside `SKILL.md` (`bundled_outputs`); its skills directory is a `ManagedDir::subdirs`, so the copies are kept in step (`stale_bundled_files`) and `verify-providers`' `skills_conformity.py` passes
+- A skill is its whole folder: every reader fills `NormalizedSkill::files` (`read_bundled_files`) and every `generate_*_skills` writes them beside `SKILL.md` (`bundled_outputs`); each generated skill folder holds the `.conforme` marker (`SKILL_MARKER`); its skills directory is a `ManagedDir::subdirs`, so the copies are kept in step (`stale_bundled_files`, and a marked folder whose skill left the source is deleted by `stale_skill_folder_files`, never in a directory the source reads) and `verify-providers`' `skills_conformity.py` passes
 - Tools with their own tool vocabulary (Claude Code, Gemini CLI, Kiro) get translated `tools` lists (`TOOL_EQUIVALENTS`, MCP names respelled), never names copied verbatim from another host; a `model` another tool cannot use is left out (`claude_model`, `gemini_model`, `opencode_model`, `kiro_model`, `copilot_model`, `cursor_model`)
 - Skill and agent names go through `sanitize_name` (kebab-case ASCII, at most 64 characters), rule file names through `rule_file_name`, and MCP strings through `EnvRefStyle` so `${VAR}` becomes each tool's own reference syntax
 - A tool that reads `AGENTS.md` itself in a project returns `true` from `reads_agents_md(project_root)` (always for Codex, OpenCode, Amp, DeepSeek; Claude Code without `CLAUDE.md`; Gemini CLI when `context.fileName` names it) and reads it with `markdown::read_native_agents_md`; renaming a tool id adds it to `sync::RENAMED_IDS`
@@ -579,14 +580,15 @@ The script compares each copy root (`.agents/skills`, `.cursor/skills`,
 `.gemini/skills`, …) with `.claude/skills`, the dogfooded source: missing
 copies, a `name` that is not the folder, a missing or over-long
 `description`, different instructions, bundled files missing, different or
-extra. Then build a fixture whose source skills cover a bundled script, a
+extra, a copy without conforme's `.conforme` marker, and a marked copy whose
+skill left the source. Then build a fixture whose source skills cover a bundled script, a
 manual skill, a nested skill and a long description, sync it to every tool,
 run the script with `--source <its skills dir>`, and repeat after editing a
 skill body, deleting a bundled file and deleting a whole skill.
 
 Done when: the script exits 0 on the repository and on the fixture after
-each edit, and every STALE line (a skill the source no longer has) is either
-explained or reported as a finding.
+each edit and sync, and every UNMANAGED line (a skill written by hand in one
+tool) is explained.
 
 ## 6. Check with the tools' own CLIs
 

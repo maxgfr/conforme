@@ -39,7 +39,9 @@ folder trust, so the user's own configuration is never touched.
     `env_http_headers`.
   - `… debug prompt-input`: the model-visible skills list (a manual skill is
     absent from it) and the loaded `AGENTS.md`.
-- **OpenCode** (`opencode`):
+- **OpenCode** (`opencode`): its output includes every global skill and
+  plugin, megabytes that take a minute: redirect it to a file and grep the
+  file, with no short `timeout` (a cut-off pipe reads as "nothing loaded").
   - `opencode debug config`: resolved `mcp` (command array, `environment`,
     `{env:VAR}`) and `agent` entries.
   - `opencode debug skill`: each skill with its `location`.
