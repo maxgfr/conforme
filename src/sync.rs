@@ -267,31 +267,71 @@ fn instructions_and_rules(config: &NormalizedConfig) -> NormalizedConfig {
     }
 }
 
-/// [`instructions_and_rules`] plus the skills, agents and MCP servers a tool
-/// cannot hold in files of its own (Codex agents, DeepSeek agents and MCP):
-/// after `migrate`, AGENTS.md is the only place left to keep them.
-fn instructions_rules_and_unheld(
+/// The skills and agents `output` writes no file for: all of them when it has
+/// no such capability, and any single one it skips (an agent named like one of
+/// its built-ins, a name it reserves). Each item is tried on its own, so one
+/// the output drops is never counted as held.
+fn unheld_skills_and_agents(
+    project_root: &Path,
+    output: &dyn AiToolAdapter,
     config: &NormalizedConfig,
-    caps: &adapters::AdapterCapabilities,
-) -> NormalizedConfig {
-    NormalizedConfig {
-        skills: if caps.skills {
-            Vec::new()
-        } else {
-            config.skills.clone()
-        },
-        agents: if caps.agents {
-            Vec::new()
-        } else {
-            config.agents.clone()
-        },
-        mcp_servers: if caps.mcp {
+) -> Result<NormalizedConfig> {
+    let caps = output.capabilities();
+    let baseline: std::collections::HashSet<std::path::PathBuf> = output
+        .generate(project_root, &NormalizedConfig::default())?
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    let writes_a_file = |only: NormalizedConfig| -> Result<bool> {
+        Ok(output
+            .generate(project_root, &only)?
+            .iter()
+            .any(|(path, _)| !baseline.contains(path)))
+    };
+    let mut unheld = NormalizedConfig::default();
+    for skill in &config.skills {
+        let held = caps.skills
+            && writes_a_file(NormalizedConfig {
+                skills: vec![skill.clone()],
+                ..Default::default()
+            })?;
+        if !held {
+            unheld.skills.push(skill.clone());
+        }
+    }
+    for agent in &config.agents {
+        let held = caps.agents
+            && writes_a_file(NormalizedConfig {
+                agents: vec![agent.clone()],
+                ..Default::default()
+            })?;
+        if !held {
+            unheld.agents.push(agent.clone());
+        }
+    }
+    Ok(unheld)
+}
+
+/// [`instructions_and_rules`] plus the skills, agents and MCP servers a tool
+/// cannot hold in files of its own (Codex agents named like a built-in,
+/// DeepSeek agents and MCP): after `migrate`, AGENTS.md is the only place left
+/// to keep them.
+fn instructions_rules_and_unheld(
+    project_root: &Path,
+    output: &dyn AiToolAdapter,
+    config: &NormalizedConfig,
+) -> Result<NormalizedConfig> {
+    let unheld = unheld_skills_and_agents(project_root, output, config)?;
+    Ok(NormalizedConfig {
+        skills: unheld.skills,
+        agents: unheld.agents,
+        mcp_servers: if output.capabilities().mcp {
             Vec::new()
         } else {
             config.mcp_servers.clone()
         },
         ..instructions_and_rules(config)
-    }
+    })
 }
 
 /// Resolve the source config: reads from the configured source tool or AGENTS.md.
@@ -1208,17 +1248,24 @@ pub fn run_migrate(
     // (`.agents/skills/` for Codex and Zed) alone, as `sync` does: the
     // skills there are already the output's, and regenerating them would drop
     // frontmatter conforme does not model and flatten nested skills.
-    let output_config = target_config(project_root, source, output_adapter.as_ref(), &config);
+    let mut output_config =
+        target_config(project_root, source, output_adapter.as_ref(), &config).into_owned();
 
     // Codex, OpenCode, DeepSeek, Vibe and Kilo (and Gemini CLI when it only loads
     // AGENTS.md) keep their instructions in AGENTS.md: generating nothing
     // for them would delete the source's instructions and rules into nothing.
-    let agents_md = migrated_agents_md(
+    let (agents_md, carried) = migrated_agents_md(
         project_root,
         source_adapter.as_ref(),
         output_adapter.as_ref(),
         &config,
     )?;
+    // The sections carried from an earlier switch's AGENTS.md that the output
+    // holds in its own files are written there: the new AGENTS.md leaves them
+    // out, keeping only those the output cannot hold.
+    output_config.skills.extend(carried.skills);
+    output_config.agents.extend(carried.agents);
+    output_config.mcp_servers.extend(carried.mcp_servers);
 
     // Collect source files to delete (generated files for the source adapter)
     let source_files = source_adapter.generate(project_root, &config)?;
@@ -1249,20 +1296,7 @@ pub fn run_migrate(
     }
     // What the output cannot hold stays where it is: skills or agents for a
     // tool without them (`sync` warned about it above).
-    let caps = output_adapter.capabilities();
-    let lost = NormalizedConfig {
-        skills: if caps.skills {
-            Vec::new()
-        } else {
-            config.skills.clone()
-        },
-        agents: if caps.agents {
-            Vec::new()
-        } else {
-            config.agents.clone()
-        },
-        ..Default::default()
-    };
+    let lost = unheld_skills_and_agents(project_root, output_adapter.as_ref(), &config)?;
     if !lost.skills.is_empty() || !lost.agents.is_empty() {
         kept_paths.extend(
             source_adapter
@@ -1548,16 +1582,20 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
 
 /// The AGENTS.md `migrate` writes when the output keeps its instructions
 /// there (it reads AGENTS.md and generates nothing for instructions or
-/// rules), or `None`. An existing AGENTS.md whose text the source lacks, and
-/// that the source does not read itself, is refused rather than overwritten.
+/// rules), or `None`, with the skill, agent and MCP sections it carries over
+/// from an existing AGENTS.md (see [`sections_missing_from`]): the output must
+/// write those it holds, since the new AGENTS.md leaves them out. An existing
+/// AGENTS.md whose text the source lacks, and that the source does not read
+/// itself, is refused rather than overwritten.
 fn migrated_agents_md(
     project_root: &Path,
     source: &dyn AiToolAdapter,
     output: &dyn AiToolAdapter,
     config: &NormalizedConfig,
-) -> Result<Option<(std::path::PathBuf, String)>> {
+) -> Result<(Option<(std::path::PathBuf, String)>, NormalizedConfig)> {
+    let none = || (None, NormalizedConfig::default());
     if config.instructions.trim().is_empty() && config.rules.is_empty() {
-        return Ok(None);
+        return Ok(none());
     }
     let instructions_only = NormalizedConfig {
         instructions: config.instructions.clone(),
@@ -1568,32 +1606,47 @@ fn migrated_agents_md(
         .generate(project_root, &instructions_only)?
         .is_empty();
     if !output.reads_agents_md(project_root) || output_holds_instructions {
-        return Ok(None);
+        return Ok(none());
     }
     let path = project_root.join("AGENTS.md");
     if source.source_files(project_root).contains(&path) {
         // The source already keeps its instructions there.
-        return Ok(None);
+        return Ok(none());
     }
-    let caps = output.capabilities();
     let Some(existing) = path
         .exists()
         .then(|| std::fs::read_to_string(&path))
         .transpose()?
     else {
-        let content = markdown::export_as_agents_md(&instructions_rules_and_unheld(config, &caps));
-        return Ok(Some((path, content)));
+        let content = markdown::export_as_agents_md(&instructions_rules_and_unheld(
+            project_root,
+            output,
+            config,
+        )?);
+        return Ok((Some((path, content)), NormalizedConfig::default()));
     };
     // An AGENTS.md left by an earlier switch (Codex, then Zed) is rewritten
     // when its instructions and rules are already in the source (only the
     // layout differs); its skill, agent and MCP sections the source lacks
     // (an agent Zed cannot hold) are carried into the new one, unless the
-    // output holds them in its own files. Text the source lacks is the
-    // user's: refused.
+    // output holds them in its own files, where the caller writes them. Text
+    // the source lacks is the user's: refused.
     let old = markdown::parse_agents_md(&existing).ok();
-    let carried = old.as_ref().map(|old| with_sections_of(config, old));
-    let merged = carried.as_ref().unwrap_or(config);
-    let content = markdown::export_as_agents_md(&instructions_rules_and_unheld(merged, &caps));
+    let carried = old
+        .as_ref()
+        .map(|old| sections_missing_from(config, old))
+        .unwrap_or_default();
+    let mut merged = config.clone();
+    merged.skills.extend(carried.skills.iter().cloned());
+    merged.agents.extend(carried.agents.iter().cloned());
+    merged
+        .mcp_servers
+        .extend(carried.mcp_servers.iter().cloned());
+    let content = markdown::export_as_agents_md(&instructions_rules_and_unheld(
+        project_root,
+        output,
+        &merged,
+    )?);
     let text_kept = crate::hash::contents_match(&existing, &content)
         || old.as_ref().is_some_and(|old| text_is_covered(old, config));
     if !text_kept {
@@ -1604,7 +1657,7 @@ fn migrated_agents_md(
             source.name()
         );
     }
-    Ok(Some((path, content)))
+    Ok((Some((path, content)), carried))
 }
 
 /// Whether the instructions and every rule body of an existing AGENTS.md
@@ -1624,27 +1677,27 @@ fn text_is_covered(old: &NormalizedConfig, config: &NormalizedConfig) -> bool {
         .all(|piece| text.contains(&piece))
 }
 
-/// `config` plus the skill, agent and MCP sections of `old` it lacks.
-fn with_sections_of(config: &NormalizedConfig, old: &NormalizedConfig) -> NormalizedConfig {
+/// The skill, agent and MCP sections of `old` that `config` lacks.
+fn sections_missing_from(config: &NormalizedConfig, old: &NormalizedConfig) -> NormalizedConfig {
     let same =
         |a: &str, b: &str| crate::config::sanitize_name(a) == crate::config::sanitize_name(b);
-    let mut merged = config.clone();
+    let mut missing = NormalizedConfig::default();
     for skill in &old.skills {
-        if !merged.skills.iter().any(|s| same(&s.name, &skill.name)) {
-            merged.skills.push(skill.clone());
+        if !config.skills.iter().any(|s| same(&s.name, &skill.name)) {
+            missing.skills.push(skill.clone());
         }
     }
     for agent in &old.agents {
-        if !merged.agents.iter().any(|a| same(&a.name, &agent.name)) {
-            merged.agents.push(agent.clone());
+        if !config.agents.iter().any(|a| same(&a.name, &agent.name)) {
+            missing.agents.push(agent.clone());
         }
     }
     for server in &old.mcp_servers {
-        if !merged.mcp_servers.iter().any(|s| s.name == server.name) {
-            merged.mcp_servers.push(server.clone());
+        if !config.mcp_servers.iter().any(|s| s.name == server.name) {
+            missing.mcp_servers.push(server.clone());
         }
     }
-    merged
+    missing
 }
 
 /// Skill folders of a skills directory that bundle a file conforme cannot

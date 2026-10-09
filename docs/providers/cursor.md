@@ -28,7 +28,7 @@
 | Rules | `.cursor/rules/*.mdc` | YAML frontmatter: `alwaysApply`, `globs`, `description` |
 | Skills | `.cursor/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` |
 | Agents | `.cursor/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model` (`tools` not recognized; tool access inherited) |
-| MCP | `.cursor/mcp.json` (merged) | JSON: `{ "mcpServers": { "<name>": { "type": "stdio", "command", "args" } } }`; remote: `url` + `headers`, no `type` |
+| MCP | `.cursor/mcp.json` (merged) | JSON: `{ "mcpServers": { "<name>": { "type": "stdio", "command", "args" } } }`; remote: `url` + `headers`, no `type` (a legacy SSE server has `type: "sse"`) |
 
 ## Activation modes
 
@@ -67,5 +67,6 @@
 - Cursor walks the skills root recursively; conforme reads nested skill folders too (written back flat)
 - Cursor reads `AGENTS.md` natively at the root and in subdirectories, combined with the parent ones; it is loaded alongside rules, not as a fallback
 - MCP uses the standard `mcpServers` JSON format. Local servers use `type: "stdio"` + `command`/`args`; per Cursor's MCP docs, remote servers need only `url` (+ optional `headers`/`auth`) and omit `type`, which is what conforme writes. `env` is written on stdio servers only
+- A legacy SSE server is written as `type: "sse"` with `url` and `headers`, and read back as SSE: the Cursor CLI parser accepts "sse", while the IDE ignores `type` (Cursor forum, reply from Cursor staff)
 - `.cursor/mcp.json` is merged, not owned: per-server keys conforme never writes (`auth`, `envFile`) survive, and `remove`/`migrate` keep the file
 - Cursor's interpolation is `${env:NAME}` (plus `${workspaceFolder}`, `${userHome}`, …). conforme writes `${env:VAR}` for a normalized `${VAR}` (a `:-default` is dropped) and reads `${env:VAR}` back as `${VAR}`; Cursor's predefined variables are left as they are

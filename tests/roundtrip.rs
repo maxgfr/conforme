@@ -661,6 +661,91 @@ fn test_unresolved_variable_references_are_warned_about() {
     );
 }
 
+/// Codex, Zed and Vibe write an SSE server as streamable HTTP and must say so;
+/// Claude is not warned.
+#[test]
+fn test_sse_is_warned_about_where_it_cannot_be_written() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    let config = NormalizedConfig {
+        mcp_servers: vec![NormalizedMcpServer {
+            name: "s".to_string(),
+            transport: McpTransport::Sse {
+                url: "https://x.dev/sse".to_string(),
+                headers: Default::default(),
+            },
+            env: Default::default(),
+        }],
+        ..Default::default()
+    };
+    let warning = |tool: &str| {
+        format!(
+            "MCP server s: {tool} has no SSE transport, so it is written as streamable \
+             HTTP and connects only if the server speaks that too"
+        )
+    };
+    let codex = conforme::adapters::codex::CodexAdapter;
+    let zed = conforme::adapters::zed::ZedAdapter;
+    let vibe = conforme::adapters::vibe::VibeAdapter;
+    let claude = conforme::adapters::claude::ClaudeAdapter;
+    assert_eq!(codex.warnings(root, &config), vec![warning("Codex")]);
+    assert_eq!(zed.warnings(root, &config), vec![warning("Zed")]);
+    assert_eq!(vibe.warnings(root, &config), vec![warning("Mistral Vibe")]);
+    assert!(claude.warnings(root, &config).is_empty());
+}
+
+/// One SSE server written by every MCP-capable adapter and read back. Claude,
+/// Cursor, Copilot, Zoo Code, Gemini and Devin keep the SSE transport. Kiro
+/// writes no marker, so it reads back as HTTP: the loss is asserted, not hidden.
+/// The other adapters write it as streamable HTTP.
+#[test]
+fn test_sse_survives_where_the_tool_can_hold_it() {
+    const URL: &str = "https://x.dev/sse";
+    let config = NormalizedConfig {
+        mcp_servers: vec![NormalizedMcpServer {
+            name: "s".to_string(),
+            transport: McpTransport::Sse {
+                url: URL.to_string(),
+                headers: Default::default(),
+            },
+            env: Default::default(),
+        }],
+        ..Default::default()
+    };
+    for adapter in conforme::adapters::all_adapters() {
+        if !adapter.capabilities().mcp {
+            continue;
+        }
+        let dir = TempDir::new().unwrap();
+        adapter.write(dir.path(), &config).unwrap();
+        let read_config = adapter.read(dir.path()).unwrap();
+        let server = read_config
+            .mcp_servers
+            .iter()
+            .find(|s| s.name == "s")
+            .unwrap_or_else(|| panic!("{}: server s was not read back", adapter.id()));
+        match adapter.id() {
+            "claude" | "cursor" | "copilot" | "zoocode" | "gemini" | "devin" => {
+                assert!(
+                    matches!(&server.transport, McpTransport::Sse { url, .. } if url == URL),
+                    "{}: expected SSE, got {:?}",
+                    adapter.id(),
+                    server.transport
+                );
+            }
+            "kiro" | "opencode" | "kilo" | "codex" | "zed" | "vibe" => {
+                assert!(
+                    matches!(&server.transport, McpTransport::Http { url, .. } if url == URL),
+                    "{}: expected HTTP, got {:?}",
+                    adapter.id(),
+                    server.transport
+                );
+            }
+            other => panic!("{other} has MCP but no expected SSE transport"),
+        }
+    }
+}
+
 #[test]
 fn test_kilo_reads_the_opencode_files_kilo_loads() {
     // Kilo loads `kilo` then `opencode` config files at the root and in each
@@ -790,6 +875,35 @@ fn test_roundtrip_vibe_skills_agents_mcp() {
         find_http_url(&read_config, "api").as_deref(),
         Some("https://example.com/mcp")
     );
+}
+
+#[test]
+fn test_roundtrip_codex_agents() {
+    let adapter = conforme::adapters::codex::CodexAdapter;
+    let dir = TempDir::new().unwrap();
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    assert!(dir.path().join(".codex/agents/reviewer.toml").exists());
+
+    let read_config = adapter.read(dir.path()).unwrap();
+    assert_eq!(read_config.agents.len(), 1);
+    assert_eq!(read_config.agents[0].name, "reviewer");
+    assert_eq!(read_config.agents[0].description, "Review code");
+    assert_eq!(read_config.agents[0].content, "Look for bugs.");
+
+    // A hand-written agent file with a key conforme does not write is the
+    // user's own, never an orphan.
+    fs::write(
+        dir.path().join(".codex/agents/mine.toml"),
+        "name = \"mine\"\ndescription = \"Mine\"\nmodel = \"gpt-5\"\ndeveloper_instructions = \"Build.\"\n",
+    )
+    .unwrap();
+    let orphans = conforme::adapters::find_orphans(
+        &adapter.managed_directories(dir.path()),
+        &adapter.generate(dir.path(), &rich_config()).unwrap(),
+    )
+    .unwrap();
+    assert!(orphans.is_empty(), "{orphans:?}");
 }
 
 // Test that sync → check is consistent (idempotency through the trait)

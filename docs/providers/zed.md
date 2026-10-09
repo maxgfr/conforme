@@ -51,6 +51,7 @@ Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` 
   - `.zed/settings.json` holds the user's entire Zed configuration, so conforme **merges** the `context_servers` key into any existing file rather than overwriting it, and `remove zed` / `migrate --source zed` leave the file in place
   - Zed settings are JSONC. The merge edits only `context_servers` in place, so comments and trailing commas elsewhere survive; per-server keys conforme never emits are kept, and a file conforme cannot parse is left untouched (sync fails). A hand-set `"enabled": false` is reset, so `check` never passes while Zed hides a synced server
   - Zed's remote variant has no `env`, so `env` is written on stdio servers only
+  - A legacy SSE server has no SSE form in Zed: its remote transport is streamable only (Zed 1.23.2 `crates/context_server/src/transport/http.rs:105-110`), so it is written as `url` + `headers` (streamable HTTP) and `sync` and `migrate` warn about the server
   - `context_servers` is a documented project setting (`.zed/settings.json`), not only a user one
   - An extension context server configured only through `settings` (no `command`, no `url`) has no portable form: conforme skips it on read and keeps it untouched on write
   - Zed expands no variable references (none documented or found in its source): values are copied as they are, so a `${VAR}` from another tool stays literal; conforme writes it as is and `sync`/`migrate` warn about that server

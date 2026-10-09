@@ -63,7 +63,7 @@ pub fn literal_secrets(config: &NormalizedConfig) -> Vec<String> {
     let mut found = Vec::new();
     for server in &config.mcp_servers {
         let headers = match &server.transport {
-            McpTransport::Http { headers, .. } => Some(headers),
+            McpTransport::Http { headers, .. } | McpTransport::Sse { headers, .. } => Some(headers),
             McpTransport::Stdio { .. } => None,
         };
         let entries = headers
@@ -197,7 +197,9 @@ pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
             McpTransport::Stdio { command, .. } if command.trim().is_empty() => {
                 errors.push(format!("MCP server '{}' has an empty command", mcp.name));
             }
-            McpTransport::Http { url, .. } if url.trim().is_empty() => {
+            McpTransport::Http { url, .. } | McpTransport::Sse { url, .. }
+                if url.trim().is_empty() =>
+            {
                 errors.push(format!("MCP server '{}' has an empty URL", mcp.name));
             }
             _ => {}
@@ -315,6 +317,24 @@ mod tests {
         };
 
         assert!(!validate(&config, false));
+    }
+
+    #[test]
+    fn test_blank_sse_url_is_invalid() {
+        let sse = |url: &str| NormalizedConfig {
+            mcp_servers: vec![NormalizedMcpServer {
+                name: "events".to_string(),
+                transport: McpTransport::Sse {
+                    url: url.to_string(),
+                    headers: Default::default(),
+                },
+                env: Default::default(),
+            }],
+            ..Default::default()
+        };
+        assert!(!validate(&sse(""), false));
+        assert!(!validate(&sse("  "), false));
+        assert!(validate(&sse("https://example.com/sse"), false));
     }
 
     #[test]

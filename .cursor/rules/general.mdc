@@ -41,7 +41,7 @@ src/
                        status shows excluded tools as "Excluded" and AGENTS.md as "Source's own file" /
                        "Generated output" / "Not managed";
                        a source that reads back empty warns "nothing to sync" and writes/cleans nothing;
-                       migrate keeps what staying tools generate or manage — see Orphan cleanup below)
+                       migrate keeps what staying tools generate or manage — see docs/architecture.md)
   detect.rs         — Tool detection (which tools present in project)
   hash.rs           — SHA-256 content hashing for change detection
   json_settings.rs  — JSONC-safe merge of conforme's keys into user-owned JSON settings files
@@ -79,8 +79,8 @@ src/
                          `bearer_token_env_var`, an exact `${VAR}` header → `env_http_headers`, all read back to `${VAR}`;
                          `env` on HTTP is dropped; tuning keys (timeouts, `enabled_tools`, `required`, …) are read past and kept
                        - per-tool keys and shapes: see "MCP key mapping per tool" below
-                       - Claude .mcp.json parsing accepts http/https, sse, streamable-http and ws (all mapped
-                         to the HTTP variant); `type: "sdk"` entries are skipped
+                       - Claude .mcp.json parsing: `sse` maps to Sse, http/https/streamable-http/ws to Http;
+                         `type: "sdk"` entries are skipped
                        - OpenCode: merge_opencode_agents keeps the user's own `agent` entries (the adapter
                          drops one an earlier sync wrote for an agent that left the source)
                        - Kilo: build_kilo_mcp_object (no variable reference)
@@ -107,7 +107,7 @@ src/
                        ManagedDir / find_orphans (what sync would remove, including skill folders that hold the
                        `.conforme` marker but left the source; check, diff and status report it) /
                        clean_orphans + source_files() (what read() loads outside the
-                       managed dirs; see Orphan cleanup below)
+                       managed dirs; see docs/architecture.md)
     claude.rs       — Claude Code: CLAUDE.md (or .claude/CLAUDE.md when only that exists)
                        + .claude/rules/**/*.md, read recursively (paths: frontmatter); with no CLAUDE.md
                        nor .claude/CLAUDE.md, reads AGENTS.md and .claude/AGENTS.md (root first) as Claude
@@ -119,7 +119,7 @@ src/
                        global_rules.md (.devin/, else .windsurf/) and .windsurfrules are read into the instructions
     copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md; MCP merged into .vscode/mcp.json;
                        detected from copilot-instructions.md or .github/{instructions,agents,skills}/
-    codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively
+    codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively; agents at .codex/agents/*.toml
     opencode.rs     — OpenCode: reads AGENTS.md natively; agents read from .opencode/agents/, .opencode/agent/
                        and the opencode.json `agent` key together (markdown wins; built-in overrides skipped);
                        an agent named like a built-in one (build, plan, …) is never written; config merged into
@@ -162,7 +162,7 @@ docs/
 5. `src/validate.rs` — if adding new validation rules
 6. `src/watch.rs` — if changing watched file patterns
 7. `docs/providers/<tool>.md` — provider-specific documentation
-8. This `CLAUDE.md` — architecture section and test count
+8. This `CLAUDE.md` — architecture section and test count, and `docs/architecture.md` (orphan cleanup, shared files)
 
 ## Key concepts
 
@@ -230,96 +230,26 @@ Review for bugs.
 
 | Tool | JSON key | Notes |
 |---|---|---|
-| Claude, Kiro | `mcpServers` (`.mcp.json`, `.kiro/settings/mcp.json`) | `type: stdio/http`; merged (keeps `oauth`, Kiro `autoApprove`/`disabledTools`, Claude `type: "sdk"` entries) |
-| Cursor | `mcpServers` (`.cursor/mcp.json`) | `type: stdio` locally, no `type` on remote entries; `${env:VAR}`; merged |
-| Zoo Code | `mcpServers` (inside `.roo/mcp.json`) | HTTP uses `type: streamable-http` (not `http`), no `env` on remote servers; merged (keeps Zoo's `alwaysAllow`/`disabledTools`) |
-| Copilot | `servers` (inside `.vscode/mcp.json`) + `mcpServers` (inside `.github/mcp.json`) | VS Code reads the first (`env` on stdio, `headers` on HTTP; keeps `inputs`/`sandbox`), Copilot CLI only the second (Claude Code shape); both merged. The cloud agent reads no file: its servers are set in the repository settings |
-| Devin | `mcpServers` (inside `.devin/mcp_config.json`) | No type field; remote `url` + `transport: http`; `${env:VAR}`; merged |
-| OpenCode | `mcp` (inside `opencode.json`: an existing root one, else `.opencode/opencode.json`) | `type: local/remote`; `command` is a single array; env key is `environment` (local only); `{env:VAR}`; merged (preserves user keys and `{ "enabled": false }` toggles) |
-| Zed | `context_servers` (inside `.zed/settings.json`) | No type field; merged into existing settings (preserves theme/keybindings/etc. and extension servers configured only via `settings`) |
-| Gemini | `mcpServers` (inside `.gemini/settings.json`) | No type field, uses `httpUrl` for HTTP; merged into existing settings |
-| Kilo Code | `mcp` (inside `.kilo/kilo.jsonc` or the existing `kilo.json(c)`) | OpenCode shape; no variable reference (Kilo refuses `{env:VAR}` in a project config): `NAME=${NAME}` dropped, other `${VAR}` written as is with a warning; merged |
-| Mistral Vibe | `[[mcp_servers]]` (inside `.vibe/config.toml`) | TOML; `transport` stdio / streamable-http; `Bearer ${VAR}` → static `auth.api_key_env`; other `${VAR}` written as is with a warning; atomic merge keeps settings, OAuth auth and target-only servers |
+| Claude, Kiro | `mcpServers` (`.mcp.json`, `.kiro/settings/mcp.json`) | `type: stdio/http/sse` (Kiro: SSE has no `type`); merged (keeps `oauth`, Kiro `autoApprove`/`disabledTools`, Claude `type: "sdk"` entries) |
+| Cursor | `mcpServers` (`.cursor/mcp.json`) | `type: stdio` locally, no `type` on remote entries (SSE: `type: "sse"`); `${env:VAR}`; merged |
+| Zoo Code | `mcpServers` (inside `.roo/mcp.json`) | HTTP uses `type: streamable-http` (not `http`), SSE `type: "sse"`, no `env` on remote servers; merged (keeps Zoo's `alwaysAllow`/`disabledTools`) |
+| Copilot | `servers` (inside `.vscode/mcp.json`) + `mcpServers` (inside `.github/mcp.json`) | VS Code reads the first (`env` on stdio, `headers` on HTTP; keeps `inputs`/`sandbox`), Copilot CLI only the second (Claude Code shape); both merged, SSE as `type: "sse"` in both. The cloud agent reads no file: its servers are in the repository settings |
+| Devin | `mcpServers` (inside `.devin/mcp_config.json`) | No type field; remote `url` + `transport: http` (SSE: `transport: "sse"`); `${env:VAR}`; merged |
+| OpenCode | `mcp` (inside `opencode.json`: an existing root one, else `.opencode/opencode.json`) | `type: local/remote` (SSE is `remote`, read as HTTP); `command` is a single array; env key is `environment` (local only); `{env:VAR}`; merged (preserves user keys and `{ "enabled": false }` toggles) |
+| Zed | `context_servers` (inside `.zed/settings.json`) | No type field; SSE becomes streamable HTTP (warned); merged into existing settings (preserves theme/keybindings/etc. and extension servers configured only via `settings`) |
+| Gemini | `mcpServers` (inside `.gemini/settings.json`) | `httpUrl` for HTTP, `url` + `type: "sse"` for SSE; merged into existing settings |
+| Kilo Code | `mcp` (inside `.kilo/kilo.jsonc` or the existing `kilo.json(c)`) | OpenCode shape (SSE is `remote`); no variable reference (Kilo refuses `{env:VAR}` in a project config): `NAME=${NAME}` dropped, other `${VAR}` written as is with a warning; merged |
+| Mistral Vibe | `[[mcp_servers]]` (inside `.vibe/config.toml`) | TOML; `transport` stdio / streamable-http (SSE becomes streamable-http, warned); `Bearer ${VAR}` → static `auth.api_key_env`; other `${VAR}` written as is with a warning; atomic merge keeps settings, OAuth auth and target-only servers |
 | DeepSeek Harness | _(none)_ | MCP is a user-level `cordis.patch.yml` plugin entry under `$DSH_HOME`; nothing project-scoped is generated |
-| Codex | `[mcp_servers.<name>]` (inside `.codex/config.toml`) | TOML; no `${VAR}` expansion, so references go through `env_vars` (stdio), `bearer_token_env_var` and `env_http_headers`; atomic merge preserves unrelated settings, comments, target-only servers, and Codex-specific options; shared file is never deleted wholesale |
+| Codex | `[mcp_servers.<name>]` (inside `.codex/config.toml`) | TOML; SSE becomes streamable HTTP (warned); no `${VAR}` expansion (mapping under mcp.rs above); atomic merge preserves unrelated settings, comments, target-only servers, and Codex-specific options |
 
-### Rules-directory discovery
+### Rules discovery, orphan cleanup and shared files
 
-Claude Code, Cursor and Zoo Code all scan their rules directory **recursively**
-(`.claude/rules/frontend/react.md`, `.cursor/rules/backend/rpc.mdc`, …).
-`adapters::collect_rule_files` implements that scan for all three, sorting by
-base name (case-insensitive, so Zoo's `00-`/`01-` prefixes keep their meaning)
-then by full path. Nested rules are written back flat, one file per rule name.
-`clean_orphans` stays non-recursive, so hand-authored files in subdirectories are
-never deleted.
-
-### Orphan cleanup and shared files
-
-`managed_directories()` returns `ManagedDir`s: each names the file suffix conforme
-writes there (`.md`, `.mdc`, `.instructions.md`, `.agent.md`), and orphan cleanup
-only deletes top-level files with that suffix. Skills directories are
-`ManagedDir::subdirs` (conforme only writes `<name>/SKILL.md` folders), so no
-top-level file there is ever swept. Files a tool accepts but conforme never
-writes (Kiro `.json` agents, dsh flat `<name>.md` skills, plain `.md` Copilot
-agents) therefore survive a sync.
-
-`ManagedDir::files_except` keeps files a tool does not load as agents (a
-Claude README or an agent without `description`, a Gemini `_draft.md` or remote agent).
-`ManagedDir::legacy_files` / `legacy_skills` (Devin's `.windsurf/`) remove only
-conforme's old copies: a legacy file or skill whose name is generated in the
-current location (a skill folder that bundles other files is kept).
-
-Directories two tools share (`.agents/skills/` for Codex and Zed):
-`sync::target_config` leaves the source's skills root to the source, and
-`remove` never deletes a file the source or another kept tool also generates.
-`migrate` generates the output through `target_config` too, never deletes a
-file another detected tool generates nor anything in a directory a staying tool
-(the output or another detected tool) manages, and in the source's own
-directories deletes only files with conforme's suffix not protected by `keep`
-(Kiro `.json` agents, Zoo `.txt` rules survive) and, in a skills directory, only
-skill sub-folders, never top-level files. It also keeps a skill folder that
-bundles other files (only `SKILL.md` reaches the output) and the skills or
-agents the output cannot hold. It validates the config and refuses an empty
-source, like `sync`; when the output keeps its instructions in `AGENTS.md`
-(Codex, OpenCode, DeepSeek, Vibe, Kilo, Gemini CLI loading only `AGENTS.md`) it writes
-`AGENTS.md`, and refuses before changing anything when a different `AGENTS.md`
-exists that the source does not read. `--dry-run` reports identical files as
-"unchanged".
-
-`AiToolAdapter::source_files(project_root)` lists what `read()` loads outside
-the tool's managed directories, only paths that exist and are used: Claude Code
-`CLAUDE.md` (or `AGENTS.md` + `.claude/AGENTS.md` in the fallback), Codex
-`AGENTS.md`, OpenCode the first of `AGENTS.md` / `CLAUDE.md` / `CONTEXT.md`, Kilo the first of
-`AGENTS.md` / `CLAUDE.md` / `CONTEXT.md` plus its rule directories, Vibe
-`AGENTS.md` plus `.agents/skills` when `.vibe/skills` has none, DeepSeek the first of `AGENTS.md` /
-`CLAUDE.md` plus `.agents/skills` when `.dsh/skills` has none, Gemini CLI its
-existing context files, Devin `global_rules.md` and `.windsurfrules`, Cursor `.cursorrules`, Zoo Code
-`.roorules`. With that tool as the source no target writes them
-(`sync::target_files` / `write_target`), `remove`/`migrate` never delete them,
-`gitignore install` never ignores them, and `target_config` treats a fallback
-skills root like a shared one.
-
-`reads_agents_md(project_root)` is true for Codex, OpenCode, DeepSeek, Vibe and Kilo;
-for Claude Code when the project has no `CLAUDE.md` nor `.claude/CLAUDE.md` but
-has `AGENTS.md` / `.claude/AGENTS.md` (a personal `CLAUDE.local.md` deliberately
-does not change that); for Gemini CLI when `.gemini/settings.json`
-`context.fileName` names `AGENTS.md`. Such a tool reads it with the AGENTS.md
-convention, and when it is the source `AGENTS.md` is never regenerated nor
-gitignored, and `conforme add` refuses to append to an `AGENTS.md` a tool
-source regenerates. Renamed tool ids (`windsurf` → `devin`) are an error
-wherever an id is accepted.
-
-Every JSON file conforme merges into (`.mcp.json`, `.cursor/mcp.json`,
-`.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`,
-`.zed/settings.json`, `.gemini/settings.json`, `kilo.json(c)`,
-`.vscode/mcp.json`, `.github/mcp.json`, `.roo/mcp.json`) goes through `json_settings`, and together
-with `.codex/config.toml` and `.vibe/config.toml` is declared by `is_shared_file()` so `remove`/`migrate`
-never delete it wholesale and `gitignore install` never ignores it.
-
-`AiToolAdapter::warnings(project_root, config)` names what the tool will not
-load as written (Kilo: `${VAR}` it cannot resolve, a root `opencode.json` it
-refuses; Vibe: reserved names, `${VAR}`; Codex, Zed, Zoo: references kept literal); `sync` and
-`migrate` print them for every target.
+See `docs/architecture.md`: recursive rules-directory scan (`collect_rule_files`), what orphan
+cleanup may delete (`ManagedDir` suffixes, `files_except`, `legacy_*`, skill `.conforme` markers),
+shared directories (`.agents/skills/`), `source_files()`, `reads_agents_md()`, merged settings
+files (`is_shared_file()`) and `warnings()`. Read it before changing an adapter's managed
+directories, `remove` or `migrate`.
 
 ### Sync algorithm
 

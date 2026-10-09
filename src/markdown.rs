@@ -350,6 +350,7 @@ fn build_mcp(name: &str, lines: &[String]) -> Option<NormalizedMcpServer> {
     let mut url = None;
     let mut env = std::collections::BTreeMap::new();
     let mut headers = std::collections::BTreeMap::new();
+    let mut transport_kind: Option<String> = None;
 
     for line in lines {
         let trimmed = line.trim();
@@ -372,6 +373,11 @@ fn build_mcp(name: &str, lines: &[String]) -> Option<NormalizedMcpServer> {
             .and_then(|s| s.strip_suffix("-->"))
         {
             url = Some(inner.trim().to_string());
+        } else if let Some(inner) = trimmed
+            .strip_prefix("<!-- transport:")
+            .and_then(|s| s.strip_suffix("-->"))
+        {
+            transport_kind = Some(inner.trim().to_string());
         } else if let Some(inner) = trimmed
             .strip_prefix("<!-- env:")
             .and_then(|s| s.strip_suffix("-->"))
@@ -398,7 +404,11 @@ fn build_mcp(name: &str, lines: &[String]) -> Option<NormalizedMcpServer> {
     // A `## MCP:` section without either a `url:` or a `command:` comment does
     // not describe a usable server, so it is skipped rather than emitted empty.
     let transport = if let Some(u) = url {
-        McpTransport::Http { url: u, headers }
+        if transport_kind.as_deref() == Some("sse") {
+            McpTransport::Sse { url: u, headers }
+        } else {
+            McpTransport::Http { url: u, headers }
+        }
     } else {
         McpTransport::Stdio {
             command: command?,
@@ -536,8 +546,11 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
                     out.push_str(&format!("<!-- args: {} -->\n", args.join(", ")));
                 }
             }
-            McpTransport::Http { url, headers } => {
+            McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
                 out.push_str(&format!("<!-- url: {} -->\n", url));
+                if matches!(&mcp.transport, McpTransport::Sse { .. }) {
+                    out.push_str("<!-- transport: sse -->\n");
+                }
                 if !headers.is_empty() {
                     let pairs: Vec<String> =
                         headers.iter().map(|(k, v)| format!("{k}={v}")).collect();
@@ -764,5 +777,20 @@ Review code for correctness.
             &config.mcp_servers[0].transport,
             McpTransport::Http { url, .. } if url == "https://example.com/mcp"
         ));
+    }
+
+    #[test]
+    fn test_sse_server_round_trips_through_agents_md() {
+        // The legacy HTTP+SSE transport survives an AGENTS.md export: the
+        // exported file parses back to the same server.
+        let content = "## MCP: legacy\n<!-- url: https://x.dev/sse -->\n<!-- transport: sse -->\n";
+        let config = parse_agents_md(content).unwrap();
+        assert!(matches!(
+            &config.mcp_servers[0].transport,
+            McpTransport::Sse { url, .. } if url == "https://x.dev/sse"
+        ));
+        let exported = export_as_agents_md(&config);
+        let reparsed = parse_agents_md(&exported).unwrap();
+        assert_eq!(reparsed.mcp_servers, config.mcp_servers);
     }
 }

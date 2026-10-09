@@ -100,7 +100,7 @@ pub fn merge_codex_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> 
                     entry.insert("env_vars", value(env_vars));
                 }
             }
-            McpTransport::Http { url, headers } => {
+            McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
                 // Codex rejects `env` on an HTTP server: it is dropped, as in
                 // every JSON shape without `env` on remote servers. It rejects
                 // the legacy `bearer_token` there too.
@@ -170,9 +170,11 @@ pub(crate) fn server_strings(server: &NormalizedMcpServer) -> Vec<(Option<&str>,
                     .map(|(k, v)| (Some(k.as_str()), v.as_str())),
             )
             .collect(),
-        McpTransport::Http { url, headers } => std::iter::once((None, url.as_str()))
-            .chain(headers.iter().map(|(k, v)| (Some(k.as_str()), v.as_str())))
-            .collect(),
+        McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
+            std::iter::once((None, url.as_str()))
+                .chain(headers.iter().map(|(k, v)| (Some(k.as_str()), v.as_str())))
+                .collect()
+        }
     }
 }
 
@@ -180,7 +182,10 @@ pub(crate) fn server_strings(server: &NormalizedMcpServer) -> Vec<(Option<&str>,
 /// Codex expands none, and only forwards by name a stdio `NAME=${NAME}`, an
 /// `Authorization: Bearer ${VAR}` and a header that is exactly `${VAR}`.
 pub(crate) fn codex_keeps_literal(server: &NormalizedMcpServer) -> bool {
-    let http = matches!(server.transport, McpTransport::Http { .. });
+    let http = matches!(
+        server.transport,
+        McpTransport::Http { .. } | McpTransport::Sse { .. }
+    );
     server_strings(server)
         .into_iter()
         .any(|(key, value)| match key {
@@ -349,7 +354,7 @@ pub fn merge_vibe_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> R
                 entry.insert("args", value(toml_args));
                 set_string_map(entry, "env", &server.env, true);
             }
-            McpTransport::Http { url, headers } => {
+            McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
                 for key in [
                     "command",
                     "args",
@@ -917,6 +922,10 @@ fn map_server_strings(
                 url: f(url),
                 headers: map(headers),
             },
+            McpTransport::Sse { url, headers } => McpTransport::Sse {
+                url: f(url),
+                headers: map(headers),
+            },
         },
         env: map(&server.env),
     }
@@ -940,6 +949,14 @@ pub fn canonicalize_env_refs(
         .collect()
 }
 
+/// How a legacy SSE server is written; `None`: as the HTTP variant (the tool has no SSE).
+struct SseShape {
+    /// Key of the server's URL.
+    url_key: &'static str,
+    /// Marker written on the entry (`type: "sse"`, Devin's `transport: "sse"`).
+    marker: Option<(&'static str, &'static str)>,
+}
+
 /// The JSON shape of one tool's MCP server entries.
 struct ServerShape {
     /// `type` written on stdio entries (`None`: no `type` field).
@@ -953,6 +970,7 @@ struct ServerShape {
     /// Whether a remote entry may carry `env` (most tools document `env` for
     /// stdio servers only, and Zoo Code rejects it on remote ones).
     env_on_http: bool,
+    sse: Option<SseShape>,
     env_refs: EnvRefStyle,
 }
 
@@ -964,6 +982,10 @@ const CLAUDE_SHAPE: ServerShape = ServerShape {
     url_key: "url",
     http_extra: None,
     env_on_http: false,
+    sse: Some(SseShape {
+        url_key: "url",
+        marker: Some(("type", "sse")),
+    }),
     env_refs: EnvRefStyle::Dollar,
 };
 
@@ -975,6 +997,10 @@ const CURSOR_SHAPE: ServerShape = ServerShape {
     url_key: "url",
     http_extra: None,
     env_on_http: false,
+    sse: Some(SseShape {
+        url_key: "url",
+        marker: Some(("type", "sse")),
+    }),
     env_refs: EnvRefStyle::EnvColon,
 };
 
@@ -985,6 +1011,10 @@ const KIRO_SHAPE: ServerShape = ServerShape {
     url_key: "url",
     http_extra: None,
     env_on_http: true,
+    sse: Some(SseShape {
+        url_key: "url",
+        marker: None,
+    }),
     env_refs: EnvRefStyle::DollarNoDefault,
 };
 
@@ -996,6 +1026,10 @@ const COPILOT_SHAPE: ServerShape = ServerShape {
     url_key: "url",
     http_extra: None,
     env_on_http: false,
+    sse: Some(SseShape {
+        url_key: "url",
+        marker: Some(("type", "sse")),
+    }),
     env_refs: EnvRefStyle::EnvColon,
 };
 
@@ -1008,6 +1042,10 @@ const ZOOCODE_SHAPE: ServerShape = ServerShape {
     url_key: "url",
     http_extra: None,
     env_on_http: false,
+    sse: Some(SseShape {
+        url_key: "url",
+        marker: Some(("type", "sse")),
+    }),
     env_refs: EnvRefStyle::EnvColon,
 };
 
@@ -1019,6 +1057,7 @@ const ZED_SHAPE: ServerShape = ServerShape {
     url_key: "url",
     http_extra: None,
     env_on_http: false,
+    sse: None,
     env_refs: EnvRefStyle::Literal,
 };
 
@@ -1029,6 +1068,10 @@ const GEMINI_SHAPE: ServerShape = ServerShape {
     url_key: "httpUrl",
     http_extra: None,
     env_on_http: true,
+    sse: Some(SseShape {
+        url_key: "url",
+        marker: Some(("type", "sse")),
+    }),
     env_refs: EnvRefStyle::DollarOrBare,
 };
 
@@ -1040,6 +1083,10 @@ const DEVIN_SHAPE: ServerShape = ServerShape {
     url_key: "url",
     http_extra: Some(("transport", "http")),
     env_on_http: false,
+    sse: Some(SseShape {
+        url_key: "url",
+        marker: Some(("transport", "sse")),
+    }),
     env_refs: EnvRefStyle::EnvColon,
 };
 
@@ -1074,7 +1121,18 @@ fn build_servers_object(
                 );
                 false
             }
-            McpTransport::Http { url, headers } => {
+            McpTransport::Sse { url, headers } if shape.sse.is_some() => {
+                let sse = shape.sse.as_ref().expect("checked by the guard");
+                if let Some((key, value)) = sse.marker {
+                    entry.insert(key.to_string(), Json::String(value.to_string()));
+                }
+                entry.insert(sse.url_key.to_string(), Json::String(url.clone()));
+                if !headers.is_empty() {
+                    entry.insert("headers".to_string(), string_map(headers));
+                }
+                true
+            }
+            McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
                 if let Some(t) = shape.http_type {
                     entry.insert("type".to_string(), Json::String(t.to_string()));
                 }
@@ -1222,7 +1280,7 @@ fn build_opencode_style_object(
                     entry.insert("environment".to_string(), string_map(&server.env));
                 }
             }
-            McpTransport::Http { url, headers } => {
+            McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
                 entry.insert(
                     "type".to_string(),
                     serde_json::Value::String("remote".to_string()),
@@ -1583,6 +1641,8 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
         let Some(obj) = obj else { continue };
 
         let transport_type = obj.get("type").and_then(|v| v.as_str());
+        // Devin declares its transport under `transport` (`http`, `sse`), not `type`.
+        let transport_key = obj.get("transport").and_then(|v| v.as_str());
         let url_value = obj
             .get("url")
             .or_else(|| obj.get("httpUrl"))
@@ -1606,7 +1666,15 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
                         .collect()
                 })
                 .unwrap_or_default();
-            McpTransport::Http { url, headers }
+            // SSE servers declare `sse` as their type (Claude, Gemini) or their
+            // transport (Devin); every other remote entry stays HTTP.
+            let is_sse = url_value.is_some()
+                && (transport_type == Some("sse") || transport_key == Some("sse"));
+            if is_sse {
+                McpTransport::Sse { url, headers }
+            } else {
+                McpTransport::Http { url, headers }
+            }
         } else {
             let command = obj
                 .get("command")
@@ -2338,6 +2406,32 @@ callback_port = 5555
     }
 
     #[test]
+    fn test_parse_mcp_json_reads_sse() {
+        // `type: "sse"` (Claude, Gemini) or `transport: "sse"` (Devin) with a URL is
+        // an SSE server; every other remote entry stays an HTTP transport.
+        let parsed = parse_mcp_json(
+            r#"{"mcpServers": {
+                "claude": {"type": "sse", "url": "u"},
+                "devin": {"transport": "sse", "url": "u"},
+                "gemini": {"type": "sse", "url": "u"},
+                "http": {"type": "http", "url": "u"},
+                "bare": {"url": "u"}
+            }}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.len(), 5);
+        for server in &parsed {
+            match (server.name.as_str(), &server.transport) {
+                ("claude" | "devin" | "gemini", McpTransport::Sse { url, .. }) => {
+                    assert_eq!(url, "u")
+                }
+                ("http" | "bare", McpTransport::Http { url, .. }) => assert_eq!(url, "u"),
+                (name, other) => panic!("unexpected transport for {name}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn test_parse_opencode_mcp_object_skips_toggle_entries() {
         // `mcp.<name>` may be just `{ "enabled": false }`, toggling a server
         // defined in the global config.
@@ -2826,5 +2920,48 @@ callback_port = 5555
         // looks exactly like a generated one.
         assert_eq!(merged["stale"], existing["stale"]);
         assert_eq!(merged["mine"], existing["mine"]);
+    }
+
+    #[test]
+    fn test_sse_entry_shape_per_tool() {
+        use serde_json::json;
+        let server = NormalizedMcpServer {
+            name: "legacy".to_string(),
+            transport: McpTransport::Sse {
+                url: "https://x.dev/sse".to_string(),
+                headers: BTreeMap::from([("X-Org".to_string(), "acme".to_string())]),
+            },
+            env: BTreeMap::new(),
+        };
+        let build = |shape: &ServerShape| {
+            let obj = build_servers_object(std::slice::from_ref(&server), shape);
+            obj.get("legacy").cloned().expect("legacy entry")
+        };
+        let with_headers =
+            json!({"type": "sse", "url": "https://x.dev/sse", "headers": {"X-Org": "acme"}});
+        for shape in [&CLAUDE_SHAPE, &CURSOR_SHAPE, &COPILOT_SHAPE, &ZOOCODE_SHAPE] {
+            assert_eq!(build(shape), with_headers);
+        }
+        let gemini = build(&GEMINI_SHAPE);
+        assert_eq!(gemini["type"], "sse");
+        assert_eq!(gemini["url"], "https://x.dev/sse");
+        assert!(gemini.get("httpUrl").is_none());
+        assert_eq!(
+            build(&DEVIN_SHAPE),
+            json!({"transport": "sse", "url": "https://x.dev/sse", "headers": {"X-Org": "acme"}})
+        );
+        assert_eq!(
+            build(&KIRO_SHAPE),
+            json!({"url": "https://x.dev/sse", "headers": {"X-Org": "acme"}})
+        );
+        let http = NormalizedMcpServer {
+            transport: McpTransport::Http {
+                url: "https://x.dev/sse".to_string(),
+                headers: BTreeMap::from([("X-Org".to_string(), "acme".to_string())]),
+            },
+            ..server.clone()
+        };
+        let zed_http = build_servers_object(std::slice::from_ref(&http), &ZED_SHAPE);
+        assert_eq!(build(&ZED_SHAPE), zed_http["legacy"]);
     }
 }
