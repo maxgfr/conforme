@@ -39,6 +39,28 @@ impl AiToolAdapter for ZedAdapter {
         path.ends_with(Path::new(".zed/settings.json"))
     }
 
+    /// Zed expands no variable in `context_servers` (none documented, none in
+    /// `crates/project/src/context_server_store.rs`).
+    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+        config
+            .mcp_servers
+            .iter()
+            .filter(|server| {
+                crate::mcp::server_strings(server)
+                    .iter()
+                    .any(|(_, value)| value.contains("${"))
+            })
+            .map(|server| {
+                format!(
+                    "MCP server {}: Zed expands no ${{VAR}}, so it is sent as written; put the \
+                     real value in your user settings (~/.config/zed/settings.json) under \
+                     another server name",
+                    server.name
+                )
+            })
+            .collect()
+    }
+
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         // Zed reads skills from the shared `.agents/skills/` location (same as
         // Codex), so track it for orphan cleanup.

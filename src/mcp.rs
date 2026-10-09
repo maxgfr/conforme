@@ -155,6 +155,46 @@ fn env_ref_name(text: &str) -> Option<&str> {
         .then_some(name)
 }
 
+/// The strings of a server a tool copies as they are: `command` and `args`
+/// (with `env` values) for stdio, `url` and header values for HTTP. `env` on
+/// an HTTP server is dropped by every target, so it is not listed.
+pub(crate) fn server_strings(server: &NormalizedMcpServer) -> Vec<(Option<&str>, &str)> {
+    match &server.transport {
+        McpTransport::Stdio { command, args } => std::iter::once(command)
+            .chain(args)
+            .map(|s| (None, s.as_str()))
+            .chain(
+                server
+                    .env
+                    .iter()
+                    .map(|(k, v)| (Some(k.as_str()), v.as_str())),
+            )
+            .collect(),
+        McpTransport::Http { url, headers } => std::iter::once((None, url.as_str()))
+            .chain(headers.iter().map(|(k, v)| (Some(k.as_str()), v.as_str())))
+            .collect(),
+    }
+}
+
+/// Whether Codex writes this string as is although it holds a `${VAR}`:
+/// Codex expands none, and only forwards by name a stdio `NAME=${NAME}`, an
+/// `Authorization: Bearer ${VAR}` and a header that is exactly `${VAR}`.
+pub(crate) fn codex_keeps_literal(server: &NormalizedMcpServer) -> bool {
+    let http = matches!(server.transport, McpTransport::Http { .. });
+    server_strings(server)
+        .into_iter()
+        .any(|(key, value)| match key {
+            _ if !value.contains("${") => false,
+            Some(key) if !http => env_ref_name(value) != Some(key),
+            Some(key) => {
+                env_ref_name(value).is_none()
+                    && !(key.eq_ignore_ascii_case("authorization")
+                        && bearer_env_var(value).is_some())
+            }
+            None => true,
+        })
+}
+
 /// `VAR` for a header value that is exactly `Bearer ${VAR}`.
 pub(crate) fn bearer_env_var(value: &str) -> Option<&str> {
     value.strip_prefix("Bearer ").and_then(env_ref_name)
@@ -219,9 +259,9 @@ fn shell_split(text: &str) -> Option<Vec<String>> {
                 loop {
                     match chars.next()? {
                         '"' => break,
+                        // Only `\` and `"` are escaped inside double quotes.
                         '\\' => match chars.next()? {
-                            c @ ('\\' | '"' | '$' | '`') => current.push(c),
-                            '\n' => {}
+                            c @ ('\\' | '"') => current.push(c),
                             c => {
                                 current.push('\\');
                                 current.push(c);
@@ -231,10 +271,7 @@ fn shell_split(text: &str) -> Option<Vec<String>> {
                     }
                 }
             }
-            '\\' => match chars.next()? {
-                '\n' => {}
-                c => word.get_or_insert_with(String::new).push(c),
-            },
+            '\\' => word.get_or_insert_with(String::new).push(chars.next()?),
             c => word.get_or_insert_with(String::new).push(c),
         }
     }
@@ -1932,6 +1969,28 @@ args = ["."]
                 args: vec!["-y".to_string(), "my server".to_string(), ".".to_string()],
             }
         );
+    }
+
+    #[test]
+    fn test_shell_split_matches_python_shlex() {
+        // Expected values are what `shlex.split` returns for the same input.
+        let split = |s: &str| shell_split(s);
+        let words = |w: &[&str]| Some(w.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(split("npx -y  fs"), words(&["npx", "-y", "fs"]));
+        assert_eq!(split(r#"run "a b" c"#), words(&["run", "a b", "c"]));
+        assert_eq!(split(r#""say \"hi\"""#), words(&[r#"say "hi""#]));
+        assert_eq!(split(r#""a\nb""#), words(&[r"a\nb"]));
+        assert_eq!(split(r"a\ b"), words(&["a b"]));
+        assert_eq!(split("'it''s'"), words(&["its"]));
+        assert_eq!(split("x ''"), words(&["x", ""]));
+        assert_eq!(split("   "), words(&[]));
+        // Unlike a shell, `shlex` escapes only `\` and `"` inside double
+        // quotes, and keeps an escaped newline.
+        assert_eq!(split(r#""a\$b""#), words(&[r"a\$b"]));
+        assert_eq!(split(r#""a\`b""#), words(&[r"a\`b"]));
+        assert_eq!(split("a\\\nb"), words(&["a\nb"]));
+        assert_eq!(split("unterminated 'quote"), None);
+        assert_eq!(split("trailing\\"), None);
     }
 
     #[test]

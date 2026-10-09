@@ -313,7 +313,7 @@ never delete it wholesale and `gitignore install` never ignores it.
 
 `AiToolAdapter::warnings(project_root, config)` names what the tool will not
 load as written (Kilo: `${VAR}` it cannot resolve, a root `opencode.json` it
-refuses; Vibe: reserved skill names, `${VAR}` it does not expand); `sync` and
+refuses; Vibe: reserved names, `${VAR}`; Codex, Zed, Zoo: references kept literal); `sync` and
 `migrate` print them for every target.
 
 ### Sync algorithm

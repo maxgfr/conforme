@@ -569,6 +569,98 @@ fn test_kilo_scout_agent_is_left_to_kilo() {
     assert!(adapter.generate(dir.path(), &config).unwrap().is_empty());
 }
 
+/// A variable reference a tool will not resolve is written as is: the
+/// adapter must say so (`warnings`), never lose it silently.
+#[test]
+fn test_unresolved_variable_references_are_warned_about() {
+    let server = |name: &str, transport: McpTransport, env: &[(&str, &str)]| NormalizedMcpServer {
+        name: name.to_string(),
+        transport,
+        env: env
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    };
+    let stdio = |command: &str, args: &[&str]| McpTransport::Stdio {
+        command: command.to_string(),
+        args: args.iter().map(|a| a.to_string()).collect(),
+    };
+    let http = |url: &str, headers: &[(&str, &str)]| McpTransport::Http {
+        url: url.to_string(),
+        headers: headers
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    };
+    let config = |servers: Vec<NormalizedMcpServer>| NormalizedConfig {
+        mcp_servers: servers,
+        ..Default::default()
+    };
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+
+    // Codex forwards `NAME=${NAME}`, `Bearer ${VAR}` and an exact `${VAR}`
+    // header by name (codex-rs/config/src/mcp_types.rs); nothing else.
+    let codex = conforme::adapters::codex::CodexAdapter;
+    let forwarded = config(vec![
+        server("fs", stdio("npx", &["fs"]), &[("TOKEN", "${TOKEN}")]),
+        server(
+            "api",
+            http(
+                "https://x.dev/mcp",
+                &[("Authorization", "Bearer ${API}"), ("X-Key", "${KEY}")],
+            ),
+            &[],
+        ),
+    ]);
+    assert!(codex.warnings(root, &forwarded).is_empty());
+    for literal in [
+        server("a", stdio("npx", &["--root", "${HOME}/src"]), &[]),
+        server("b", stdio("npx", &[]), &[("TOKEN", "${OTHER}")]),
+        server(
+            "c",
+            http("https://x.dev/mcp", &[("X-Key", "key=${KEY}")]),
+            &[],
+        ),
+    ] {
+        let name = literal.name.clone();
+        assert_eq!(
+            codex.warnings(root, &config(vec![literal])).len(),
+            1,
+            "{name}"
+        );
+    }
+
+    // Zed expands no variable at all.
+    let zed = conforme::adapters::zed::ZedAdapter;
+    assert_eq!(zed.warnings(root, &forwarded).len(), 2);
+    assert!(zed
+        .warnings(root, &config(vec![server("p", stdio("npx", &["fs"]), &[])]))
+        .is_empty());
+
+    // Zoo Code resolves only `${env:VAR}` and `${workspaceFolder}`.
+    let zoo = conforme::adapters::zoocode::ZooCodeAdapter;
+    assert!(zoo.warnings(root, &forwarded).is_empty());
+    assert!(zoo
+        .warnings(
+            root,
+            &config(vec![server(
+                "w",
+                stdio("npx", &["${workspaceFolder}"]),
+                &[]
+            )])
+        )
+        .is_empty());
+    assert_eq!(
+        zoo.warnings(
+            root,
+            &config(vec![server("h", stdio("npx", &["${userHome}/x"]), &[])])
+        )
+        .len(),
+        1
+    );
+}
+
 #[test]
 fn test_kilo_reads_the_opencode_files_kilo_loads() {
     // Kilo loads `kilo` then `opencode` config files at the root and in each
