@@ -1,4 +1,3 @@
-pub mod amp;
 pub mod claude;
 pub mod codex;
 pub mod copilot;
@@ -6,8 +5,10 @@ pub mod cursor;
 pub mod deepseek;
 pub mod devin;
 pub mod gemini;
+pub mod kilo;
 pub mod kiro;
 pub mod opencode;
+pub mod vibe;
 pub mod zed;
 pub mod zoocode;
 
@@ -70,7 +71,7 @@ pub trait AiToolAdapter: Send + Sync {
     }
 
     /// Whether the tool reads `AGENTS.md` itself as its instruction file in
-    /// this project: always for Codex, OpenCode, Amp and DeepSeek Harness;
+    /// this project: always for Codex, OpenCode, DeepSeek Harness, Mistral Vibe and Kilo Code;
     /// Claude Code when the project has no `CLAUDE.md`; Gemini CLI when
     /// `context.fileName` names it. When such a tool is the source,
     /// `AGENTS.md` *is* its config: sync never regenerates it, and
@@ -88,6 +89,12 @@ pub trait AiToolAdapter: Send + Sync {
     /// them, `remove` and `migrate` never delete them, and `gitignore
     /// install` never ignores them.
     fn source_files(&self, _project_root: &Path) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
+    /// What the tool will not load as written, for `sync` and `migrate` to
+    /// print: a setting it cannot express, or a file in the project it refuses.
+    fn warnings(&self, _project_root: &Path, _config: &NormalizedConfig) -> Vec<String> {
         Vec::new()
     }
 
@@ -396,8 +403,9 @@ pub fn all_adapters() -> Vec<Box<dyn AiToolAdapter>> {
         Box::new(gemini::GeminiAdapter),
         Box::new(zed::ZedAdapter),
         Box::new(kiro::KiroAdapter),
-        Box::new(amp::AmpAdapter),
         Box::new(deepseek::DeepSeekAdapter),
+        Box::new(vibe::VibeAdapter),
+        Box::new(kilo::KiloAdapter),
     ]
 }
 

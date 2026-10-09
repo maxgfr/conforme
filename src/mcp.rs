@@ -153,6 +153,11 @@ fn env_ref_name(text: &str) -> Option<&str> {
         .then_some(name)
 }
 
+/// `VAR` for a header value that is exactly `Bearer ${VAR}`.
+pub(crate) fn bearer_env_var(value: &str) -> Option<&str> {
+    value.strip_prefix("Bearer ").and_then(env_ref_name)
+}
+
 /// Write `map` as the string table `key` of a Codex server entry (inline when
 /// the entry is), or remove the key when `map` is empty.
 fn set_string_map(
@@ -175,6 +180,242 @@ fn set_string_map(
         Item::Table(table)
     };
     entry.insert(key, item);
+}
+
+/// Merge normalized MCP servers into Mistral Vibe's project `.vibe/config.toml`,
+/// an array of `[[mcp_servers]]` tables matched by `name`. Every other setting,
+/// comment and server the source does not define is kept, and so are the
+/// per-server keys conforme does not own (`prompt`, timeouts, `cwd`,
+/// `disabled_tools`, an OAuth `auth`). Vibe expands no `${VAR}`: an
+/// `Authorization: Bearer ${VAR}` header becomes a static `auth` reading the
+/// token from `VAR` (`api_key_env`); any other value is written as it is.
+pub fn merge_vibe_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> Result<String> {
+    let mut document = if existing.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        existing
+            .parse::<DocumentMut>()
+            .context("failed to parse Vibe config TOML")?
+    };
+    if !document.as_table().contains_key("mcp_servers") {
+        document["mcp_servers"] = Item::ArrayOfTables(toml_edit::ArrayOfTables::new());
+    }
+    let entries = document["mcp_servers"]
+        .as_array_of_tables_mut()
+        .context("Vibe config `mcp_servers` must be an array of tables ([[mcp_servers]])")?;
+
+    for server in servers {
+        let position = entries
+            .iter()
+            .position(|t| t.get("name").and_then(Item::as_str) == Some(server.name.as_str()));
+        let index = match position {
+            Some(index) => index,
+            None => {
+                let mut table = Table::new();
+                table["name"] = value(server.name.clone());
+                entries.push(table);
+                entries.len() - 1
+            }
+        };
+        let entry = entries
+            .get_mut(index)
+            .context("newly inserted Vibe MCP server is missing")?;
+        // A synced server is enabled, as with every other target.
+        entry.remove("disabled");
+
+        match &server.transport {
+            McpTransport::Stdio { command, args } => {
+                for key in [
+                    "url",
+                    "headers",
+                    "api_key_env",
+                    "api_key_header",
+                    "api_key_format",
+                ] {
+                    entry.remove(key);
+                }
+                if entry
+                    .get("auth")
+                    .and_then(|a| a.get("type"))
+                    .and_then(Item::as_str)
+                    != Some("oauth")
+                {
+                    entry.remove("auth");
+                }
+                entry.insert("transport", value("stdio"));
+                entry.insert("command", value(command.clone()));
+                let mut toml_args = Array::new();
+                for arg in args {
+                    toml_args.push(arg);
+                }
+                entry.insert("args", value(toml_args));
+                set_string_map(entry, "env", &server.env, true);
+            }
+            McpTransport::Http { url, headers } => {
+                for key in [
+                    "command",
+                    "args",
+                    "env",
+                    "cwd",
+                    "headers",
+                    "api_key_env",
+                    "api_key_header",
+                    "api_key_format",
+                ] {
+                    entry.remove(key);
+                }
+                entry.insert("transport", value("streamable-http"));
+                entry.insert("url", value(url.clone()));
+
+                let mut bearer = None;
+                let mut literal = BTreeMap::new();
+                for (name, header_value) in headers {
+                    let bearer_ref = header_value
+                        .strip_prefix("Bearer ")
+                        .and_then(env_ref_name)
+                        .filter(|_| name.eq_ignore_ascii_case("Authorization"));
+                    match bearer_ref {
+                        Some(var) => bearer = Some(var.to_string()),
+                        None => {
+                            literal.insert(name.clone(), header_value.clone());
+                        }
+                    }
+                }
+                let oauth = entry
+                    .get("auth")
+                    .and_then(|a| a.get("type"))
+                    .and_then(Item::as_str)
+                    == Some("oauth");
+                if bearer.is_none() && literal.is_empty() {
+                    if !oauth {
+                        entry.remove("auth");
+                    }
+                } else {
+                    let mut auth = InlineTable::new();
+                    auth.insert("type", "static".into());
+                    if let Some(var) = bearer {
+                        auth.insert("api_key_env", var.into());
+                        auth.insert("api_key_header", "Authorization".into());
+                        auth.insert("api_key_format", "Bearer {token}".into());
+                    }
+                    if !literal.is_empty() {
+                        let mut table = InlineTable::new();
+                        for (name, header_value) in &literal {
+                            table.insert(name, header_value.as_str().into());
+                        }
+                        auth.insert("headers", Value::InlineTable(table));
+                    }
+                    entry.insert("auth", value(auth));
+                }
+            }
+        }
+    }
+
+    Ok(document.to_string())
+}
+
+/// Parse Vibe's `[[mcp_servers]]` tables into normalized servers (the inverse
+/// of [`merge_vibe_mcp_toml`]). A disabled server is skipped; a static
+/// `auth` reads back as headers (`api_key_env` as `Bearer ${VAR}`).
+pub fn parse_vibe_mcp_toml(content: &str) -> Result<Vec<NormalizedMcpServer>> {
+    if content.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let root: toml::Value = toml::from_str(content).context("failed to parse Vibe config TOML")?;
+    let Some(entries) = root.get("mcp_servers").and_then(toml::Value::as_array) else {
+        return Ok(Vec::new());
+    };
+    let strings = |value: Option<&toml::Value>| -> BTreeMap<String, String> {
+        value
+            .and_then(toml::Value::as_table)
+            .map(|t| {
+                t.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut result = Vec::new();
+    for entry in entries.iter().filter_map(toml::Value::as_table) {
+        let Some(name) = entry.get("name").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        if entry.get("disabled").and_then(toml::Value::as_bool) == Some(true) {
+            continue;
+        }
+        let transport = entry
+            .get("transport")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("stdio");
+        let (transport, env) = if transport == "stdio" {
+            // `command` is a string, or a list holding the arguments too.
+            let mut parts: Vec<String> = match entry.get("command") {
+                Some(toml::Value::String(command)) => vec![command.clone()],
+                Some(toml::Value::Array(items)) => items
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect(),
+                _ => continue,
+            };
+            if parts.is_empty() {
+                continue;
+            }
+            let command = parts.remove(0);
+            let args = entry
+                .get("args")
+                .and_then(toml::Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            parts.extend::<Vec<String>>(args);
+            (
+                McpTransport::Stdio {
+                    command,
+                    args: parts,
+                },
+                strings(entry.get("env")),
+            )
+        } else {
+            let Some(url) = entry.get("url").and_then(toml::Value::as_str) else {
+                continue;
+            };
+            // Legacy top-level `headers` / `api_key_env`, or a static `auth`.
+            let auth = entry
+                .get("auth")
+                .and_then(toml::Value::as_table)
+                .filter(|a| a.get("type").and_then(toml::Value::as_str) != Some("oauth"));
+            let field = |key: &str| {
+                auth.and_then(|a| a.get(key))
+                    .or_else(|| entry.get(key))
+                    .and_then(toml::Value::as_str)
+            };
+            let mut headers = strings(auth.and_then(|a| a.get("headers")).or(entry.get("headers")));
+            if let Some(var) = field("api_key_env") {
+                let header = field("api_key_header").unwrap_or("Authorization");
+                let format = field("api_key_format").unwrap_or("Bearer {token}");
+                headers.insert(
+                    header.to_string(),
+                    format.replace("{token}", &format!("${{{var}}}")),
+                );
+            }
+            (
+                McpTransport::Http {
+                    url: url.to_string(),
+                    headers,
+                },
+                BTreeMap::new(),
+            )
+        };
+        result.push(NormalizedMcpServer {
+            name: name.to_string(),
+            transport,
+            env,
+        });
+    }
+    Ok(result)
 }
 
 /// Parse Codex's TOML MCP tables into normalized server definitions.
@@ -418,7 +659,7 @@ pub enum EnvRefStyle {
     Dollar,
     /// `$VAR`, `${VAR}` and `${VAR:-default}` (Gemini CLI).
     DollarOrBare,
-    /// `${VAR}` with no default form (Kiro, Amp); a default is dropped.
+    /// `${VAR}` with no default form (Kiro); a default is dropped.
     DollarNoDefault,
     /// `${env:VAR}` (Cursor, VS Code / Copilot, Zoo Code, Devin); a default is
     /// dropped, and predefined variables such as `${workspaceFolder}` are kept.
@@ -679,17 +920,6 @@ const ZED_SHAPE: ServerShape = ServerShape {
     env_refs: EnvRefStyle::Literal,
 };
 
-/// Amp `amp.mcpServers`: transport inferred from the shape (`command`/`args`/
-/// `env` locally, `url`/`headers` remotely), no `type`.
-const AMP_SHAPE: ServerShape = ServerShape {
-    stdio_type: None,
-    http_type: None,
-    url_key: "url",
-    http_extra: None,
-    env_on_http: false,
-    env_refs: EnvRefStyle::DollarNoDefault,
-};
-
 /// Gemini CLI `mcpServers`: no `type`, streamable HTTP servers use `httpUrl`.
 const GEMINI_SHAPE: ServerShape = ServerShape {
     stdio_type: None,
@@ -842,10 +1072,38 @@ pub fn build_copilot_servers_object(
 pub fn build_opencode_mcp_object(
     servers: &[NormalizedMcpServer],
 ) -> serde_json::Map<String, serde_json::Value> {
+    build_opencode_style_object(servers, EnvRefStyle::OpenCode)
+}
+
+/// Build the Kilo Code `mcp` object: OpenCode's shape, with no variable
+/// references. Kilo refuses a project config holding `{env:VAR}`, so strings
+/// are copied verbatim; a local server inherits Kilo's environment, so an
+/// `env` entry that only passes a variable through (`TOKEN=${TOKEN}`) is left
+/// out instead of being set to the literal text.
+pub fn build_kilo_mcp_object(
+    servers: &[NormalizedMcpServer],
+) -> serde_json::Map<String, serde_json::Value> {
+    let servers: Vec<NormalizedMcpServer> = servers
+        .iter()
+        .map(|server| {
+            let mut server = server.clone();
+            server
+                .env
+                .retain(|key, value| value.trim() != format!("${{{key}}}"));
+            server
+        })
+        .collect();
+    build_opencode_style_object(&servers, EnvRefStyle::Literal)
+}
+
+fn build_opencode_style_object(
+    servers: &[NormalizedMcpServer],
+    style: EnvRefStyle,
+) -> serde_json::Map<String, serde_json::Value> {
     let mut mcp = serde_json::Map::new();
 
     for server in servers {
-        let server = map_server_strings(server, |s| env_refs_to_tool(s, EnvRefStyle::OpenCode));
+        let server = map_server_strings(server, |s| env_refs_to_tool(s, style));
         let mut entry = serde_json::Map::new();
 
         match &server.transport {
@@ -976,6 +1234,13 @@ pub fn is_opencode_builtin_agent(name: &str) -> bool {
     OPENCODE_BUILTIN_AGENTS.contains(&crate::config::sanitize_name(name).as_str())
 }
 
+/// Kilo Code's built-in agents: OpenCode's, plus its own modes.
+pub fn is_kilo_builtin_agent(name: &str) -> bool {
+    is_opencode_builtin_agent(name)
+        || ["code", "ask", "debug", "orchestrator"]
+            .contains(&crate::config::sanitize_name(name).as_str())
+}
+
 /// Parse the OpenCode `agent` object from an `opencode.json` value back into
 /// normalized agents (the inverse of [`build_opencode_agent_object`]).
 pub fn parse_opencode_agent_object(
@@ -1040,7 +1305,6 @@ pub const KIRO_OWNED_SERVER_KEYS: &[&str] = &[
     "type", "command", "args", "env", "url", "headers", "disabled",
 ];
 pub const ZED_OWNED_SERVER_KEYS: &[&str] = &["command", "args", "env", "url", "headers", "enabled"];
-pub const AMP_OWNED_SERVER_KEYS: &[&str] = &["command", "args", "env", "url", "headers"];
 // `type` is listed because `gemini mcp add -t http|sse` writes one next to
 // `url`; left in place it would contradict the `httpUrl` conforme writes.
 pub const GEMINI_OWNED_SERVER_KEYS: &[&str] = &[
@@ -1081,16 +1345,6 @@ pub fn build_zed_context_servers_object(
     servers: &[NormalizedMcpServer],
 ) -> serde_json::Map<String, serde_json::Value> {
     build_servers_object(servers, &ZED_SHAPE)
-}
-
-/// Build the Amp `amp.mcpServers` object (not a full file — `.amp/settings.json`
-/// is merged by the adapter so user-authored workspace settings are preserved).
-/// Amp infers the transport from the entry's shape: stdio uses `command`/`args`,
-/// remote uses `url` (+ optional `headers`). No `type` field is emitted.
-pub fn build_amp_mcp_object(
-    servers: &[NormalizedMcpServer],
-) -> serde_json::Map<String, serde_json::Value> {
-    build_servers_object(servers, &AMP_SHAPE)
 }
 
 /// Build the Gemini CLI `mcpServers` object (not a full file — `.gemini/settings.json`
@@ -1190,9 +1444,9 @@ pub fn merge_opencode_agents(
 
 /// Parse an MCP config file into normalized servers. Handles every key conforme
 /// emits — `mcpServers` (standard), `servers` (Copilot/VS Code),
-/// `context_servers` (Zed) and `amp.mcpServers` (Amp) — and infers the transport
+/// and `context_servers` (Zed) — and infers the transport
 /// from the entry's shape when there is no explicit `type` field (Gemini
-/// `httpUrl`, Zed/Amp remote `url`; a Devin Desktop-style `serverUrl` is also
+/// `httpUrl`, Zed remote `url`; a Devin Desktop-style `serverUrl` is also
 /// accepted for hand-written files).
 pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
     // JSONC-tolerant: Zed, VS Code and Zoo Code settings may hold comments
@@ -1205,8 +1459,6 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
         "servers"
     } else if root.get("context_servers").is_some() {
         "context_servers"
-    } else if root.get("amp.mcpServers").is_some() {
-        "amp.mcpServers"
     } else {
         return Ok(Vec::new());
     };
@@ -1479,6 +1731,121 @@ command = "node"
 
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].name, "enabled");
+    }
+
+    fn vibe_servers() -> Vec<NormalizedMcpServer> {
+        vec![
+            NormalizedMcpServer {
+                name: "files".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@mcp/server-filesystem".to_string()],
+                },
+                env: BTreeMap::from([("ROOT".to_string(), "/workspace".to_string())]),
+            },
+            NormalizedMcpServer {
+                name: "github".to_string(),
+                transport: McpTransport::Http {
+                    url: "https://api.githubcopilot.com/mcp/".to_string(),
+                    headers: BTreeMap::from([
+                        (
+                            "Authorization".to_string(),
+                            "Bearer ${GITHUB_TOKEN}".to_string(),
+                        ),
+                        ("X-Region".to_string(), "eu".to_string()),
+                    ]),
+                },
+                env: BTreeMap::new(),
+            },
+        ]
+    }
+
+    #[test]
+    fn test_vibe_mcp_toml_round_trips() {
+        // Vibe expands no `${VAR}`: the bearer token is read from the named
+        // variable through a static `auth`, never written as text.
+        let toml = merge_vibe_mcp_toml("", &vibe_servers()).unwrap();
+        assert!(toml.contains("[[mcp_servers]]"), "{toml}");
+        assert!(toml.contains("transport = \"streamable-http\""), "{toml}");
+        assert!(toml.contains("api_key_env = \"GITHUB_TOKEN\""), "{toml}");
+        assert!(!toml.contains("${GITHUB_TOKEN}"), "{toml}");
+        assert_eq!(parse_vibe_mcp_toml(&toml).unwrap(), vibe_servers());
+    }
+
+    #[test]
+    fn test_merge_vibe_mcp_toml_keeps_the_users_settings() {
+        let existing = r#"# my Vibe settings
+active_model = "devstral"
+
+[[mcp_servers]]
+name = "files"
+transport = "stdio"
+command = "old"
+disabled = true
+tool_timeout_sec = 90
+
+[[mcp_servers]]
+name = "mine"
+transport = "stdio"
+command = "my-server"
+
+[[mcp_servers]]
+name = "github"
+transport = "streamable-http"
+url = "https://old.example.com/mcp"
+auth = { type = "oauth", scopes = ["repo"] }
+"#;
+        let servers = vec![
+            vibe_servers().remove(0),
+            NormalizedMcpServer {
+                name: "github".to_string(),
+                transport: McpTransport::Http {
+                    url: "https://api.githubcopilot.com/mcp/".to_string(),
+                    headers: BTreeMap::new(),
+                },
+                env: BTreeMap::new(),
+            },
+        ];
+
+        let toml = merge_vibe_mcp_toml(existing, &servers).unwrap();
+
+        assert!(toml.contains("# my Vibe settings"), "{toml}");
+        assert!(toml.contains("active_model = \"devstral\""), "{toml}");
+        assert!(toml.contains("tool_timeout_sec = 90"), "{toml}");
+        assert!(!toml.contains("disabled = true"), "{toml}");
+        assert!(toml.contains("command = \"npx\""), "{toml}");
+        assert!(toml.contains("name = \"mine\""), "{toml}");
+        // An OAuth login the user set up survives a server without headers.
+        assert!(toml.contains("type = \"oauth\""), "{toml}");
+        assert!(
+            toml.contains("https://api.githubcopilot.com/mcp/"),
+            "{toml}"
+        );
+        assert_eq!(parse_vibe_mcp_toml(&toml).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_parse_vibe_mcp_toml_reads_command_lists_and_skips_disabled() {
+        let toml = r#"[[mcp_servers]]
+name = "cmd"
+transport = "stdio"
+command = ["uvx", "server", "--flag"]
+
+[[mcp_servers]]
+name = "off"
+transport = "stdio"
+command = "x"
+disabled = true
+"#;
+        let parsed = parse_vibe_mcp_toml(toml).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(
+            parsed[0].transport,
+            McpTransport::Stdio {
+                command: "uvx".to_string(),
+                args: vec!["server".to_string(), "--flag".to_string()],
+            }
+        );
     }
 
     #[test]
@@ -2033,33 +2400,6 @@ environment_id = "local"
     }
 
     #[test]
-    fn test_parse_mcp_json_amp_key() {
-        // Amp keys its servers under the dotted `amp.mcpServers` and emits no
-        // `type` field — both must survive the read path.
-        let servers = vec![NormalizedMcpServer {
-            name: "linear".to_string(),
-            transport: McpTransport::Http {
-                url: "https://mcp.linear.app/mcp".to_string(),
-                headers: BTreeMap::new(),
-            },
-            env: BTreeMap::new(),
-        }];
-        let json = serde_json::to_string_pretty(
-            &serde_json::json!({ "amp.mcpServers": build_amp_mcp_object(&servers) }),
-        )
-        .unwrap();
-        assert!(!json.contains("\"type\""));
-
-        let parsed = parse_mcp_json(&json).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].name, "linear");
-        match &parsed[0].transport {
-            McpTransport::Http { url, .. } => assert_eq!(url, "https://mcp.linear.app/mcp"),
-            other => panic!("expected http, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn test_build_opencode_agent_object() {
         let agents = vec![crate::config::NormalizedAgent {
             name: "reviewer".to_string(),
@@ -2126,7 +2466,6 @@ environment_id = "local"
             ("copilot", build_copilot_servers_object(&servers)),
             ("zoocode", build_zoocode_servers_object(&servers)),
             ("zed", build_zed_context_servers_object(&servers)),
-            ("amp", build_amp_mcp_object(&servers)),
             ("devin", build_devin_servers_object(&servers)),
         ] {
             assert!(map["remote"].get("env").is_none(), "{tool}: {map:?}");

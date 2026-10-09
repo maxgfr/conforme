@@ -35,7 +35,7 @@ fn find_adapter(id: &str) -> Option<Box<dyn AiToolAdapter>> {
 
 /// The config a target tool is generated from. When the target writes skills
 /// into a directory the source tool reads its own skills from
-/// (`.agents/skills/` is shared by Codex, Zed and Amp), that directory is
+/// (`.agents/skills/` is shared by Codex and Zed), that directory is
 /// left to the source: the target would add flat copies of the source's
 /// nested skills there, which the source would then load twice.
 fn target_config<'a>(
@@ -69,7 +69,7 @@ fn target_config<'a>(
 }
 
 /// A target's managed directories, minus those the source reads its own
-/// config from (`.agents/skills` shared by Codex, Zed and Amp, DeepSeek's
+/// config from (`.agents/skills` shared by Codex and Zed, DeepSeek's
 /// fallback root): orphan cleanup there would delete the source's skills,
 /// conforme's marker or not.
 fn target_managed_dirs(
@@ -278,10 +278,10 @@ pub fn run_init(project_root: &Path, force: bool, verbose: bool) -> Result<()> {
 # only = ["cursor", "copilot", "devin"]
 
 # Exclude these tools from sync
-# exclude = ["zed", "amp"]
+# exclude = ["zed", "kilo"]
 
 # Auto-generate AGENTS.md from source (default: true; never applies when the
-# source reads AGENTS.md itself: codex, opencode, amp, deepseek; claude when the
+# source reads AGENTS.md itself: codex, opencode, deepseek, vibe, kilo; claude when the
 # project has no CLAUDE.md; gemini when context.fileName names AGENTS.md)
 generate_agents_md = true
 
@@ -430,7 +430,7 @@ pub fn run_sync(
 
     for adapter in selected_targets(&adapters, project_root, &source_id, only, &project_cfg) {
         // Warn about capability loss
-        warn_capability_loss(adapter, &config);
+        warn_capability_loss(adapter, project_root, &config);
 
         if dry_run {
             let generated =
@@ -544,7 +544,11 @@ pub fn run_sync(
 }
 
 /// Warn about capabilities lost when syncing to this adapter.
-fn warn_capability_loss(adapter: &dyn AiToolAdapter, config: &NormalizedConfig) {
+fn warn_capability_loss(
+    adapter: &dyn AiToolAdapter,
+    project_root: &Path,
+    config: &NormalizedConfig,
+) {
     let caps = adapter.capabilities();
 
     if !caps.activation_modes {
@@ -587,6 +591,10 @@ fn warn_capability_loss(adapter: &dyn AiToolAdapter, config: &NormalizedConfig) 
             config.mcp_servers.len()
         );
     }
+
+    for warning in adapter.warnings(project_root, config) {
+        eprintln!("  {} {}: {}", "!".yellow(), adapter.name(), warning);
+    }
 }
 
 /// Run the `remove` command.
@@ -599,8 +607,8 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
     let known_ids: Vec<&str> = adapters.iter().map(|a| a.id()).collect();
 
     // A file the source or another tool that stays also generates is never
-    // removed: `.agents/skills/` belongs to Codex, Zed and Amp at once. Nor is
-    // a file the source reads (an Amp source reading `CLAUDE.md`).
+    // removed: `.agents/skills/` belongs to Codex and Zed at once. Nor is
+    // a file the source reads (an OpenCode source reading `CLAUDE.md`).
     let source_files = source_files(project_root, &source_id);
     let mut kept = std::collections::HashSet::new();
     for adapter in &adapters {
@@ -726,7 +734,7 @@ pub fn run_check(project_root: &Path, from: Option<&str>, verbose: bool) -> Resu
     }
 
     // The AGENTS.md sync generates is an output like any other: Codex,
-    // OpenCode, Amp and DeepSeek read it.
+    // OpenCode, DeepSeek, Vibe and Kilo read it.
     if !config.is_empty() {
         if let Some(agents_md) =
             generated_agents_md(project_root, &source_id, &project_cfg, &config)
@@ -787,7 +795,7 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
             "Yes".green(),
             match project_cfg.source.as_deref() {
                 None => "Source of truth",
-                // Codex, OpenCode, Amp, DeepSeek (and Claude Code or Gemini
+                // Codex, OpenCode, DeepSeek, Vibe, Kilo (and Claude Code or Gemini
                 // CLI when they fall back to it) read AGENTS.md as their config.
                 Some(source)
                     if find_adapter(source).is_some_and(|a| a.reads_agents_md(project_root)) =>
@@ -1060,15 +1068,15 @@ pub fn run_migrate(
     }
 
     // Warn about capability loss on the output adapter
-    warn_capability_loss(output_adapter.as_ref(), &config);
+    warn_capability_loss(output_adapter.as_ref(), project_root, &config);
 
     // The output leaves a skills directory it shares with the source
-    // (`.agents/skills/` for Codex, Amp and Zed) alone, as `sync` does: the
+    // (`.agents/skills/` for Codex and Zed) alone, as `sync` does: the
     // skills there are already the output's, and regenerating them would drop
     // frontmatter conforme does not model and flatten nested skills.
     let output_config = target_config(project_root, source, output_adapter.as_ref(), &config);
 
-    // Codex, OpenCode, Amp and DeepSeek (and Gemini CLI when it only loads
+    // Codex, OpenCode, DeepSeek, Vibe and Kilo (and Gemini CLI when it only loads
     // AGENTS.md) keep their instructions in AGENTS.md: generating nothing
     // for them would delete the source's instructions and rules into nothing.
     let agents_md = migrated_agents_md(
@@ -1389,11 +1397,10 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
     Ok(())
 }
 
-/// Recursively collect all files under a directory.
 /// The AGENTS.md `migrate` writes when the output keeps its instructions
 /// there (it reads AGENTS.md and generates nothing for instructions or
-/// rules), or `None`. An existing AGENTS.md that differs, and that the source
-/// does not read itself, is refused rather than overwritten.
+/// rules), or `None`. An existing AGENTS.md whose text the source lacks, and
+/// that the source does not read itself, is refused rather than overwritten.
 fn migrated_agents_md(
     project_root: &Path,
     source: &dyn AiToolAdapter,
@@ -1419,8 +1426,25 @@ fn migrated_agents_md(
         // The source already keeps its instructions there.
         return Ok(None);
     }
-    let content = markdown::export_as_agents_md(config);
-    if path.exists() && !crate::hash::contents_match(&std::fs::read_to_string(&path)?, &content) {
+    let Some(existing) = path
+        .exists()
+        .then(|| std::fs::read_to_string(&path))
+        .transpose()?
+    else {
+        return Ok(Some((path, markdown::export_as_agents_md(config))));
+    };
+    // An AGENTS.md left by an earlier switch (Codex, then Zed) is rewritten
+    // when its instructions and rules are already in the source (only the
+    // layout differs); its skill, agent and MCP sections the source lacks
+    // (an agent Zed cannot hold) are carried into the new one. Text the
+    // source lacks is the user's: refused.
+    let old = markdown::parse_agents_md(&existing).ok();
+    let carried = old.as_ref().map(|old| with_sections_of(config, old));
+    let merged = carried.as_ref().unwrap_or(config);
+    let content = markdown::export_as_agents_md(merged);
+    let text_kept = crate::hash::contents_match(&existing, &content)
+        || old.as_ref().is_some_and(|old| text_is_covered(old, config));
+    if !text_kept {
         bail!(
             "{} keeps its instructions in AGENTS.md, which already exists and differs from what {} holds. \
              Merge the two by hand (or remove AGENTS.md), then migrate again; nothing was changed.",
@@ -1429,6 +1453,46 @@ fn migrated_agents_md(
         );
     }
     Ok(Some((path, content)))
+}
+
+/// Whether the instructions and every rule body of an existing AGENTS.md
+/// are already in `config` (whitespace aside).
+fn text_is_covered(old: &NormalizedConfig, config: &NormalizedConfig) -> bool {
+    let normalize = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut text = config.instructions.clone();
+    for rule in &config.rules {
+        text.push('\n');
+        text.push_str(&rule.content);
+    }
+    let text = normalize(&text);
+    std::iter::once(old.instructions.as_str())
+        .chain(old.rules.iter().map(|r| r.content.as_str()))
+        .map(normalize)
+        .filter(|piece| !piece.is_empty())
+        .all(|piece| text.contains(&piece))
+}
+
+/// `config` plus the skill, agent and MCP sections of `old` it lacks.
+fn with_sections_of(config: &NormalizedConfig, old: &NormalizedConfig) -> NormalizedConfig {
+    let same =
+        |a: &str, b: &str| crate::config::sanitize_name(a) == crate::config::sanitize_name(b);
+    let mut merged = config.clone();
+    for skill in &old.skills {
+        if !merged.skills.iter().any(|s| same(&s.name, &skill.name)) {
+            merged.skills.push(skill.clone());
+        }
+    }
+    for agent in &old.agents {
+        if !merged.agents.iter().any(|a| same(&a.name, &agent.name)) {
+            merged.agents.push(agent.clone());
+        }
+    }
+    for server in &old.mcp_servers {
+        if !merged.mcp_servers.iter().any(|s| s.name == server.name) {
+            merged.mcp_servers.push(server.clone());
+        }
+    }
+    merged
 }
 
 /// Skill folders of a skills directory that bundle a file conforme cannot
@@ -1471,6 +1535,7 @@ fn migrated_files(dir: &adapters::ManagedDir) -> Result<Vec<std::path::PathBuf>>
     })
 }
 
+/// Recursively collect all files under a directory.
 fn collect_files_recursive(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
     let mut files = Vec::new();
     if !dir.is_dir() {

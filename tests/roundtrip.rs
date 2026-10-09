@@ -427,24 +427,6 @@ fn test_codex_config_merge_preserves_user_settings() {
 }
 
 #[test]
-fn test_roundtrip_amp_skills_mcp() {
-    let adapter = conforme::adapters::amp::AmpAdapter;
-    let dir = TempDir::new().unwrap();
-
-    adapter.write(dir.path(), &rich_config()).unwrap();
-    let read_config = adapter.read(dir.path()).unwrap();
-
-    assert_eq!(read_config.skills.len(), 1);
-    assert_eq!(read_config.skills[0].name, "deploy");
-    // Amp keys its servers under `amp.mcpServers` with no `type` field.
-    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
-    assert_eq!(
-        find_http_url(&read_config, "api").as_deref(),
-        Some("https://example.com/mcp")
-    );
-}
-
-#[test]
 fn test_roundtrip_deepseek_skills() {
     let adapter = conforme::adapters::deepseek::DeepSeekAdapter;
     let dir = TempDir::new().unwrap();
@@ -462,24 +444,6 @@ fn test_roundtrip_deepseek_skills() {
     // The harness has no project-scoped MCP file and no user-defined agents.
     assert!(read_config.mcp_servers.is_empty());
     assert!(read_config.agents.is_empty());
-}
-
-#[test]
-fn test_amp_settings_merge_preserves_user_keys() {
-    let adapter = conforme::adapters::amp::AmpAdapter;
-    let dir = TempDir::new().unwrap();
-    fs::create_dir_all(dir.path().join(".amp")).unwrap();
-    fs::write(
-        dir.path().join(".amp").join("settings.json"),
-        r#"{ "amp.notifications.enabled": true }"#,
-    )
-    .unwrap();
-
-    adapter.write(dir.path(), &rich_config()).unwrap();
-
-    let settings = fs::read_to_string(dir.path().join(".amp").join("settings.json")).unwrap();
-    assert!(settings.contains("amp.notifications.enabled"));
-    assert!(settings.contains("amp.mcpServers"));
 }
 
 #[test]
@@ -513,6 +477,83 @@ fn test_roundtrip_opencode_skills_agents_mcp() {
         }
         other => panic!("expected stdio transport, got {other:?}"),
     }
+}
+
+#[test]
+fn test_roundtrip_kilo_skills_agents_mcp() {
+    let adapter = conforme::adapters::kilo::KiloAdapter;
+    let dir = TempDir::new().unwrap();
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    assert!(dir.path().join(".kilo/skills/deploy/SKILL.md").exists());
+    assert!(dir.path().join(".kilo/agents/reviewer.md").exists());
+    let settings = fs::read_to_string(dir.path().join(".kilo/kilo.jsonc")).unwrap();
+    assert!(!settings.contains("{env:"), "{settings}");
+
+    let read_config = adapter.read(dir.path()).unwrap();
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.skills[0].name, "deploy");
+    assert_eq!(read_config.agents.len(), 1);
+    assert_eq!(read_config.agents[0].name, "reviewer");
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+    assert_eq!(
+        find_http_url(&read_config, "api").as_deref(),
+        Some("https://example.com/mcp")
+    );
+}
+
+#[test]
+fn test_kilo_reads_rules_legacy_locations_and_keeps_its_settings() {
+    let adapter = conforme::adapters::kilo::KiloAdapter;
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".kilo/rules")).unwrap();
+    fs::write(root.join(".kilo/rules/style.md"), "Use tabs.\n").unwrap();
+    write_skill(&root.join(".kilocode/skills/legacy"), "legacy");
+    fs::write(
+        root.join("kilo.jsonc"),
+        "{\n  // my model\n  \"model\": \"anthropic/claude-sonnet-4-5\",\n  \"mcp\": { \"mine\": { \"type\": \"remote\", \"url\": \"https://mine.example/mcp\" } }\n}\n",
+    )
+    .unwrap();
+
+    let read = adapter.read(root).unwrap();
+    assert_eq!(read.rules.len(), 1);
+    assert_eq!(read.rules[0].name, "style");
+    assert_eq!(read.rules[0].content, "Use tabs.");
+    assert_eq!(read.skills[0].name, "legacy");
+    assert_eq!(mcp_names(&read), vec!["mine"]);
+
+    // The existing root kilo.jsonc is the file merged into, comments kept.
+    adapter.write(root, &rich_config()).unwrap();
+    assert!(!root.join(".kilo/kilo.jsonc").exists());
+    let settings = fs::read_to_string(root.join("kilo.jsonc")).unwrap();
+    assert!(settings.contains("// my model"), "{settings}");
+    assert!(settings.contains("\"model\""), "{settings}");
+    assert!(settings.contains("\"fs\""), "{settings}");
+    assert!(adapter
+        .source_files(root)
+        .contains(&root.join(".kilo/rules")));
+}
+
+#[test]
+fn test_roundtrip_vibe_skills_agents_mcp() {
+    let adapter = conforme::adapters::vibe::VibeAdapter;
+    let dir = TempDir::new().unwrap();
+
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    assert!(dir.path().join(".vibe/skills/deploy/SKILL.md").exists());
+    assert!(dir.path().join(".vibe/agents/reviewer.toml").exists());
+
+    let read_config = adapter.read(dir.path()).unwrap();
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.skills[0].name, "deploy");
+    assert_eq!(read_config.agents.len(), 1);
+    assert_eq!(read_config.agents[0].name, "reviewer");
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+    assert_eq!(
+        find_http_url(&read_config, "api").as_deref(),
+        Some("https://example.com/mcp")
+    );
 }
 
 // Test that sync → check is consistent (idempotency through the trait)
@@ -1118,17 +1159,12 @@ fn test_nested_skills_are_read_where_the_tool_searches_recursively() {
     write_skill(&root.join(".cursor/skills/group/lint"), "lint");
     write_skill(&root.join(".opencode/skills/a/b/fmt"), "fmt");
     write_skill(&root.join(".opencode/skill/legacy"), "legacy");
-    fs::create_dir_all(root.join(".amp")).unwrap();
 
     let names = |config: NormalizedConfig| -> Vec<String> {
         config.skills.into_iter().map(|s| s.name).collect()
     };
     assert_eq!(
         names(conforme::adapters::codex::CodexAdapter.read(root).unwrap()),
-        ["release"]
-    );
-    assert_eq!(
-        names(conforme::adapters::amp::AmpAdapter.read(root).unwrap()),
         ["release"]
     );
     assert_eq!(
@@ -1188,32 +1224,6 @@ fn test_native_agents_md_source_keeps_its_sections_and_is_never_rewritten() {
         agents_md
     );
     assert!(root.join(".cursor/agents/reviewer.md").exists());
-}
-
-#[test]
-fn test_amp_uses_settings_jsonc_when_only_that_exists() {
-    let adapter = conforme::adapters::amp::AmpAdapter;
-    let dir = TempDir::new().unwrap();
-    let jsonc = dir.path().join(".amp/settings.jsonc");
-    fs::create_dir_all(jsonc.parent().unwrap()).unwrap();
-    fs::write(
-        &jsonc,
-        "{\n  // workspace\n  \"amp.mcpServers\": {\"old\": {\"command\": \"x\"}},\n}\n",
-    )
-    .unwrap();
-
-    assert_eq!(mcp_names(&adapter.read(dir.path()).unwrap()), vec!["old"]);
-
-    let files = adapter.generate(dir.path(), &rich_config()).unwrap();
-    let settings: Vec<_> = files
-        .iter()
-        .filter(|(p, _)| p.starts_with(dir.path().join(".amp")))
-        .collect();
-    assert_eq!(settings.len(), 1);
-    assert_eq!(settings[0].0, jsonc);
-    assert!(settings[0].1.contains("// workspace"));
-    assert!(adapter.is_shared_file(&jsonc));
-    assert!(!dir.path().join(".amp/settings.json").exists());
 }
 
 #[test]

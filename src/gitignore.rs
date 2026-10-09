@@ -61,8 +61,9 @@ fn static_patterns(id: &str) -> Vec<&'static str> {
         "zoocode" => vec![".roo/rules/*.md", ".roo/skills/"],
         "zed" => vec!["/.rules", ".agents/skills/"],
         "kiro" => vec![".kiro/steering/*.md", ".kiro/skills/", ".kiro/agents/*.md"],
-        "amp" => vec![".agents/skills/"],
         "deepseek" => vec![".dsh/skills/"],
+        "vibe" => vec![".vibe/skills/", ".vibe/agents/*.toml"],
+        "kilo" => vec![".kilo/skills/", ".kilo/agents/*.md"],
         _ => vec![],
     }
 }
@@ -81,8 +82,8 @@ fn build_gitignore_block(project_root: &Path) -> String {
 
     // Collect patterns for the tools sync writes to (`only` / `exclude`
     // respected: an excluded tool's files are the user's). A location the
-    // source also uses stays tracked (`.agents/skills/` is Codex's, Zed's and
-    // Amp's), so does a file the source reads (an Amp source reading
+    // source also uses stays tracked (`.agents/skills/` is Codex's and Zed's),
+    // so does a file the source reads (an OpenCode source reading
     // `CLAUDE.md`), and a pattern another adapter already listed is not
     // repeated.
     let mut listed = adapter_gitignore_patterns(project_root, source_id);
@@ -407,7 +408,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join(".conformerc.toml"), "source = \"codex\"\n").unwrap();
         let block = build_gitignore_block(dir.path());
-        // Zed and Amp also write `.agents/skills/`, which is Codex's source.
+        // Zed also writes `.agents/skills/`, which is Codex's source.
         assert!(!block.contains(".agents/skills/"), "{block}");
         // Codex reads AGENTS.md itself: it is the source, not an output.
         assert!(!block.contains("AGENTS.md\n"), "{block}");

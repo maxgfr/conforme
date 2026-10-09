@@ -34,7 +34,8 @@ fn create_project_with_tools(agents_md: &str, tools: &[&str]) -> TempDir {
             "gemini" => fs::create_dir_all(dir.path().join(".gemini")).unwrap(),
             "zed" => fs::write(dir.path().join(".rules"), "").unwrap(),
             "kiro" => fs::create_dir_all(dir.path().join(".kiro")).unwrap(),
-            "amp" => fs::create_dir_all(dir.path().join(".amp")).unwrap(),
+            "vibe" => fs::create_dir_all(dir.path().join(".vibe")).unwrap(),
+            "kilo" => fs::create_dir_all(dir.path().join(".kilo")).unwrap(),
             "deepseek" => fs::create_dir_all(dir.path().join(".dsh")).unwrap(),
             _ => {}
         }
@@ -498,7 +499,7 @@ fn test_sync_every_tool() {
         agents_md,
         &[
             "cursor", "claude", "devin", "copilot", "codex", "opencode", "zoocode", "gemini",
-            "zed", "kiro", "amp", "deepseek",
+            "zed", "kiro", "deepseek", "vibe", "kilo",
         ],
     );
 
@@ -708,7 +709,8 @@ fn test_help_ai() {
             .and(predicate::str::contains("Cursor"))
             .and(predicate::str::contains("Devin Desktop"))
             .and(predicate::str::contains("Kiro"))
-            .and(predicate::str::contains("Amp"))
+            .and(predicate::str::contains("Mistral Vibe"))
+            .and(predicate::str::contains("Kilo Code"))
             .and(predicate::str::contains("AGENTS.md")),
     );
 }
@@ -822,7 +824,7 @@ fn test_remove_codex_preserves_shared_config() {
     assert!(content.contains("[mcp_servers.filesystem]"));
 }
 
-/// Zed, Gemini, Amp and OpenCode merge MCP servers into a settings file that
+/// Zed, Gemini, Kilo and OpenCode merge MCP servers into a settings file that
 /// also holds the user's own configuration. `remove <tool>` must leave that
 /// file in place rather than deleting the user's settings along with it.
 #[test]
@@ -847,10 +849,10 @@ Be helpful.
             "GitHub",
         ),
         (
-            "amp",
-            ".amp/settings.json",
-            r#"{"amp.notifications.enabled":true}"#,
-            "notifications",
+            "kilo",
+            ".kilo/kilo.jsonc",
+            r#"{"model":"anthropic/claude-sonnet-4-5"}"#,
+            "claude-sonnet",
         ),
         (
             "opencode",
@@ -926,7 +928,7 @@ Review for bugs.
     assert!(command.exists(), "sync deleted a user command");
 }
 
-/// Zed, OpenCode, VS Code (Copilot), Gemini, Amp and Zoo Code settings may be
+/// Zed, OpenCode, VS Code (Copilot), Gemini, Kilo and Zoo Code settings may be
 /// JSONC. A comment or trailing comma used to make conforme fall back to an
 /// empty object and rewrite the file with its own keys only, wiping every
 /// user setting. The merge must keep user keys and comments, and a second
@@ -942,7 +944,7 @@ Be helpful.
     let cases = [
         ("zed", ".zed/settings.json"),
         ("gemini", ".gemini/settings.json"),
-        ("amp", ".amp/settings.json"),
+        ("kilo", ".kilo/kilo.jsonc"),
         ("opencode", "opencode.json"),
         ("copilot", ".vscode/mcp.json"),
         ("zoocode", ".roo/mcp.json"),
@@ -2014,7 +2016,7 @@ fn test_migrate_between_tools_sharing_agents_skills_keeps_the_output() {
     let dir = TempDir::new().unwrap();
     let skill = dir.path().join(".agents/skills/deploy/SKILL.md");
     fs::create_dir_all(skill.parent().unwrap()).unwrap();
-    fs::create_dir_all(dir.path().join(".amp")).unwrap();
+    fs::write(dir.path().join(".rules"), "").unwrap();
     fs::write(
         &skill,
         "---\nname: deploy\ndescription: Deploy\n---\nRun.\n",
@@ -2027,21 +2029,21 @@ fn test_migrate_between_tools_sharing_agents_skills_keeps_the_output() {
             dir.path().to_str().unwrap(),
             "migrate",
             "--source",
-            "amp",
+            "zed",
             "--output",
             "codex",
         ])
         .assert()
         .success();
 
-    // Codex reads the same `.agents/skills/` Amp did: migrating must not
+    // Codex reads the same `.agents/skills/` Zed did: migrating must not
     // delete what it has just written there.
     let content = fs::read_to_string(&skill).unwrap();
     assert!(content.contains("name: deploy"), "{content}");
 }
 
 /// Every tool can be the source, and a second sync from it changes nothing.
-/// Tools that read AGENTS.md natively (Codex, OpenCode, Amp, DeepSeek) used to
+/// Tools that read AGENTS.md natively (Codex, OpenCode, DeepSeek, Vibe, Kilo) used to
 /// read back the AGENTS.md the previous sync generated as one block, so their
 /// instructions grew on every sync and `check` never passed.
 #[test]
@@ -2080,7 +2082,7 @@ Review.
 "#;
     let tools = [
         "claude", "cursor", "devin", "copilot", "codex", "opencode", "zoocode", "gemini", "zed",
-        "kiro", "amp", "deepseek",
+        "kiro", "deepseek", "vibe", "kilo",
     ];
     for source in conforme::adapters::all_adapters() {
         let dir = create_project_with_tools(agents_md, &tools);
@@ -2148,13 +2150,12 @@ fn test_old_windsurf_id_is_an_error_not_silently_ignored() {
 #[test]
 fn test_targets_leave_the_source_skills_root_alone() {
     // Codex is the source and reads a nested skill from `.agents/skills/`;
-    // Amp and Zed write skills to the same root and must not add a flat copy
+    // Zed writes skills to the same root and must not add a flat copy
     // there (Codex would load the skill twice).
     let dir = TempDir::new().unwrap();
     let root = dir.path();
     fs::write(root.join("AGENTS.md"), "Be helpful.\n").unwrap();
     fs::write(root.join(".conformerc.toml"), "source = \"codex\"\n").unwrap();
-    fs::create_dir_all(root.join(".amp")).unwrap();
     fs::write(root.join(".rules"), "").unwrap();
     let nested = root.join(".agents/skills/team/deploy");
     fs::create_dir_all(nested.join("scripts")).unwrap();
@@ -2175,9 +2176,9 @@ fn test_targets_leave_the_source_skills_root_alone() {
         .assert()
         .success();
 
-    // Removing Amp does not delete what Codex, the source, reads.
+    // Removing Zed does not delete what Codex, the source, reads.
     conforme()
-        .args(["-C", root.to_str().unwrap(), "remove", "amp"])
+        .args(["-C", root.to_str().unwrap(), "remove", "zed"])
         .assert()
         .success();
     assert!(nested.join("SKILL.md").exists());
@@ -2189,7 +2190,7 @@ fn test_migrate_between_tools_sharing_agents_skills_keeps_bundled_files() {
     let dir = TempDir::new().unwrap();
     let skill = dir.path().join(".agents/skills/deploy");
     fs::create_dir_all(skill.join("scripts")).unwrap();
-    fs::create_dir_all(dir.path().join(".amp")).unwrap();
+    fs::write(dir.path().join(".rules"), "").unwrap();
     fs::write(
         skill.join("SKILL.md"),
         "---\nname: deploy\ndescription: Deploy\n---\nRun.\n",
@@ -2203,7 +2204,7 @@ fn test_migrate_between_tools_sharing_agents_skills_keeps_bundled_files() {
             dir.path().to_str().unwrap(),
             "migrate",
             "--source",
-            "amp",
+            "zed",
             "--output",
             "codex",
         ])
@@ -2392,7 +2393,7 @@ fn test_check_status_diff_and_gitignore_respect_exclude() {
 #[test]
 fn test_check_reports_a_stale_generated_agents_md() {
     // With a Claude Code source, AGENTS.md is generated for Codex, OpenCode,
-    // Amp and DeepSeek: `check` must notice when it is stale.
+    // DeepSeek, Vibe and Kilo: `check` must notice when it is stale.
     let dir = TempDir::new().unwrap();
     let root = dir.path();
     fs::create_dir_all(root.join(".codex")).unwrap();
@@ -2498,10 +2499,11 @@ fn migrate(root: &std::path::Path, source: &str, output: &str) {
 }
 
 #[test]
-fn test_migrate_codex_to_amp_leaves_shared_skills_byte_identical() {
-    // Codex and Amp read the same `.agents/skills/`: migrating between them
+fn test_migrate_codex_to_zed_leaves_shared_skills_byte_identical() {
+    // Codex and Zed read the same `.agents/skills/`: migrating between them
     // must not rewrite the user's skills (dropping `license`, `metadata` or
-    // Amp's `mcpServers`) nor add flat copies of nested ones.
+    // keys another tool reads, such as `mcpServers`) nor add flat copies of
+    // nested ones.
     let dir = TempDir::new().unwrap();
     let root = dir.path();
     fs::create_dir_all(root.join(".codex")).unwrap();
@@ -2515,7 +2517,7 @@ fn test_migrate_codex_to_amp_leaves_shared_skills_byte_identical() {
     fs::write(&linear, linear_text).unwrap();
     fs::write(&nested, nested_text).unwrap();
 
-    migrate(root, "codex", "amp");
+    migrate(root, "codex", "zed");
 
     assert_eq!(fs::read_to_string(&linear).unwrap(), linear_text);
     assert_eq!(fs::read_to_string(&nested).unwrap(), nested_text);
@@ -2807,13 +2809,13 @@ fn test_a_skill_removed_from_the_source_leaves_every_copy() {
 
 #[test]
 fn test_marked_skills_in_the_sources_own_directory_are_kept() {
-    // With Codex as the source, `.agents/skills` is its config: Amp shares
+    // With Codex as the source, `.agents/skills` is its config: Zed shares
     // the directory, and the copies an earlier sync marked there are now
     // the source's skills, never orphans.
     let dir = TempDir::new().unwrap();
     let root = dir.path();
     fs::create_dir_all(root.join(".codex")).unwrap();
-    fs::create_dir_all(root.join(".amp")).unwrap();
+    fs::write(root.join(".rules"), "").unwrap();
     fs::write(root.join("AGENTS.md"), "Be helpful.\n").unwrap();
     let skill = root.join(".agents/skills/deploy");
     fs::create_dir_all(&skill).unwrap();

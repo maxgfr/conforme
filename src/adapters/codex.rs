@@ -44,7 +44,7 @@ impl AiToolAdapter for CodexAdapter {
     }
 
     /// Skills live in the shared `.agents/skills/` root (also Zed's and
-    /// Amp's); conforme only writes `<name>/SKILL.md` folders there.
+    /// nobody else's); conforme only writes `<name>/SKILL.md` folders there.
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![ManagedDir::subdirs(
             project_root.join(".agents").join("skills"),

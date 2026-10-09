@@ -216,7 +216,7 @@ pub(crate) const UNBOUNDED_SKILL_DEPTH: usize = 16;
 
 /// Read skills from every `SKILL.md` folder under `skills_dir`, up to
 /// `max_depth` levels below it, for the tools that search their skills root
-/// recursively (Codex: 6 levels, Amp: 5, Cursor and OpenCode: unbounded). A
+/// recursively (Codex: 6 levels, Cursor and OpenCode: unbounded). A
 /// folder holding a `SKILL.md` is one skill; its sub-folders are not
 /// searched. A skill nested deeper than one level is written back flat.
 pub(crate) fn read_skills_recursive(
@@ -522,6 +522,177 @@ pub fn generate_claude_skills(
     }
 
     Ok(files)
+}
+
+/// Generate Mistral Vibe skill files in `.vibe/skills/<name>/SKILL.md`. Vibe
+/// requires a kebab-case `name` and a `description`, and keeps a skill out of
+/// automatic use with `disable-model-invocation: true`.
+pub fn generate_vibe_skills(
+    project_root: &Path,
+    skills: &[NormalizedSkill],
+) -> Result<Vec<(PathBuf, String)>> {
+    let skills_dir = project_root.join(".vibe").join("skills");
+    let mut files = Vec::new();
+
+    for skill in skills {
+        let skill_name = sanitize_name(&skill.name);
+        let skill_dir = skills_dir.join(&skill_name);
+        let skill_path = skill_dir.join("SKILL.md");
+
+        let mut fields = BTreeMap::new();
+        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
+        fields.insert(
+            "description".to_string(),
+            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
+        );
+
+        add_invocation_fields(&mut fields, skill);
+        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
+        files.push((skill_path, content));
+        files.extend(bundled_outputs(&skill_dir, skill));
+    }
+
+    Ok(files)
+}
+
+/// Mistral Vibe's built-in tools, by the Gemini CLI name `gemini_tools`
+/// translates to first: custom subagents get built-in tools only.
+const VIBE_TOOLS: &[(&str, &str)] = &[
+    ("read_file", "read_file"),
+    ("read_many_files", "read_file"),
+    ("list_directory", "read_file"),
+    ("glob", "grep"),
+    ("grep_search", "grep"),
+    ("search_file_content", "grep"),
+    ("write_file", "write_file"),
+    ("replace", "edit"),
+    ("run_shell_command", "bash"),
+    ("web_fetch", "web_fetch"),
+    ("google_web_search", "web_search"),
+    ("write_todos", "todo"),
+    ("invoke_agent", "task"),
+    ("activate_skill", "skill"),
+    ("ask_user", "ask_user_question"),
+];
+
+/// Translate a tool list into Vibe's built-in tool names; a restricted list
+/// in which nothing translates becomes read-only access, never every tool.
+fn vibe_tools(tools: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for gemini in gemini_tools(tools) {
+        if let Some((_, vibe)) = VIBE_TOOLS.iter().find(|(g, _)| *g == gemini) {
+            if !out.iter().any(|t| t == vibe) {
+                out.push(vibe.to_string());
+            }
+        }
+    }
+    if out.is_empty() && !tools.is_empty() {
+        out.push("read_file".to_string());
+    }
+    out
+}
+
+/// Generate Mistral Vibe subagents as `.vibe/agents/<name>.toml`
+/// (`agent_type = "subagent"`, a required `description`, the prompt as
+/// `instructions`, tools as `enabled_tools`). `model` is left out: Vibe models
+/// are aliases each user defines.
+pub fn generate_vibe_agents(
+    project_root: &Path,
+    agents: &[NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
+    let agents_dir = project_root.join(".vibe").join("agents");
+    let mut files = Vec::new();
+    for agent in agents {
+        let mut document = toml_edit::DocumentMut::new();
+        document["agent_type"] = toml_edit::value("subagent");
+        document["description"] =
+            toml_edit::value(description_or_name(&agent.description, &agent.name));
+        document["instructions"] = toml_edit::value(agent.content.trim());
+        let tools = vibe_tools(&agent.tools);
+        if !tools.is_empty() {
+            let mut array = toml_edit::Array::new();
+            for tool in tools {
+                array.push(tool);
+            }
+            document["enabled_tools"] = toml_edit::value(array);
+        }
+        files.push((
+            agents_dir.join(format!("{}.toml", sanitize_name(&agent.name))),
+            document.to_string(),
+        ));
+    }
+    Ok(files)
+}
+
+/// Whether a `.vibe/agents/*.toml` file is a subagent (`agent_type =
+/// "subagent"`), the kind conforme writes; anything else is a mode the user
+/// defined.
+pub(crate) fn is_vibe_subagent_file(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|content| content.parse::<toml::Value>().ok())
+        .is_some_and(|value| {
+            value.get("agent_type").and_then(toml::Value::as_str) == Some("subagent")
+        })
+}
+
+/// Read Mistral Vibe subagents back from `.vibe/agents/*.toml`. The prompt is
+/// `instructions`, or the `.vibe/prompts/<system_prompt_id>.md` file.
+pub(crate) fn read_vibe_agents(project_root: &Path) -> Result<Vec<NormalizedAgent>> {
+    let agents_dir = project_root.join(".vibe").join("agents");
+    let mut agents = Vec::new();
+    if !agents_dir.is_dir() {
+        return Ok(agents);
+    }
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&agents_dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "toml") && is_vibe_subagent_file(p))
+        .collect();
+    paths.sort();
+    for path in paths {
+        let value: toml::Value = std::fs::read_to_string(&path)?.parse()?;
+        let text = |key: &str| {
+            value
+                .get(key)
+                .and_then(toml::Value::as_str)
+                .map(str::to_string)
+        };
+        let content = match text("instructions") {
+            Some(instructions) => instructions,
+            None => text("system_prompt_id")
+                .and_then(|id| {
+                    std::fs::read_to_string(
+                        project_root
+                            .join(".vibe")
+                            .join("prompts")
+                            .join(format!("{id}.md")),
+                    )
+                    .ok()
+                })
+                .unwrap_or_default(),
+        };
+        let tools = value
+            .get("enabled_tools")
+            .and_then(toml::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        agents.push(NormalizedAgent {
+            name: path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+            description: text("description").unwrap_or_default(),
+            content: content.trim().to_string(),
+            tools,
+            ..Default::default()
+        });
+    }
+    Ok(agents)
 }
 
 /// Generate Cursor skill files in `.cursor/skills/<name>/SKILL.md`.
@@ -863,6 +1034,7 @@ const TOOL_EQUIVALENTS: &[(&str, &str, &str, &str)] = &[
     ("ask_user", "ask_user", "", "AskUserQuestion"),
     ("skill", "activate_skill", "", "Skill"),
     ("activate_skill", "activate_skill", "", "Skill"),
+    ("ask_user_question", "ask_user", "", "AskUserQuestion"),
     // Every MCP tool: Gemini `mcp_*`, Kiro `@mcp`; Claude Code has no
     // wildcard for it.
     ("mcp_*", "mcp_*", "@mcp", ""),
@@ -1312,7 +1484,22 @@ pub fn generate_opencode_skills(
     project_root: &Path,
     skills: &[NormalizedSkill],
 ) -> Result<Vec<(PathBuf, String)>> {
-    let skills_dir = project_root.join(".opencode").join("skills");
+    generate_opencode_style_skills(&project_root.join(".opencode").join("skills"), skills)
+}
+
+/// Generate Kilo Code skill files in `.kilo/skills/<name>/SKILL.md`. Kilo is
+/// an OpenCode fork and reads the same `name` and `description` frontmatter.
+pub fn generate_kilo_skills(
+    project_root: &Path,
+    skills: &[NormalizedSkill],
+) -> Result<Vec<(PathBuf, String)>> {
+    generate_opencode_style_skills(&project_root.join(".kilo").join("skills"), skills)
+}
+
+fn generate_opencode_style_skills(
+    skills_dir: &Path,
+    skills: &[NormalizedSkill],
+) -> Result<Vec<(PathBuf, String)>> {
     let mut files = Vec::new();
 
     for skill in skills {
@@ -1345,7 +1532,22 @@ pub fn generate_opencode_agents_md(
     project_root: &Path,
     agents: &[NormalizedAgent],
 ) -> Result<Vec<(PathBuf, String)>> {
-    let agents_dir = project_root.join(".opencode").join("agents");
+    generate_opencode_style_agents(&project_root.join(".opencode").join("agents"), agents)
+}
+
+/// Generate Kilo Code subagent markdown files in `.kilo/agents/<name>.md`,
+/// in OpenCode's format (`description`, `mode: subagent`, `provider/model`).
+pub fn generate_kilo_agents_md(
+    project_root: &Path,
+    agents: &[NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
+    generate_opencode_style_agents(&project_root.join(".kilo").join("agents"), agents)
+}
+
+fn generate_opencode_style_agents(
+    agents_dir: &Path,
+    agents: &[NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
     let mut files = Vec::new();
 
     for agent in agents {

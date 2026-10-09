@@ -51,7 +51,7 @@ pub fn parse_agents_md(content: &str) -> Result<NormalizedConfig> {
 }
 
 /// The source config of a tool that reads `AGENTS.md` (or a fallback)
-/// natively: Codex, OpenCode, Amp, DeepSeek Harness.
+/// natively: Codex, OpenCode, DeepSeek Harness, Mistral Vibe, Kilo Code.
 ///
 /// The first existing file among `candidates` is parsed with the AGENTS.md
 /// convention, so its `## Rule:` sections become rules and do not land in the

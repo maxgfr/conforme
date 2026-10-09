@@ -63,7 +63,7 @@ pub fn print_help_ai() {
             "Skills synced to .github/skills/<name>/SKILL.md",
             "Agents synced to .github/agents/<name>.agent.md",
             "Detected from .github/copilot-instructions.md or a .github/instructions/, agents/ or skills/ directory",
-            "MCP merged into .vscode/mcp.json (`servers` key, ${env:VAR} references; VS Code `inputs`/`sandbox` kept)",
+            "MCP merged into .vscode/mcp.json (`servers` key, ${env:VAR} references; VS Code `inputs`/`sandbox` kept) and .github/mcp.json (`mcpServers`, read by Copilot CLI and the cloud agent)",
             "Reads AGENTS.md, CLAUDE.md, and GEMINI.md natively",
         ],
     );
@@ -115,11 +115,11 @@ pub fn print_help_ai() {
     print_tool(
         "OpenCode",
         "opencode",
-        "AGENTS.md (native) + opencode.json",
+        "AGENTS.md (native) + .opencode/opencode.json",
         &[
             "Skills synced to .opencode/skills/<name>/SKILL.md (name, description, and manual invocation metadata)",
-            "MCP merged into opencode.json under `mcp` key (type:local/remote, command as single array, key `environment`)",
-            "Agents merged into opencode.json under `agent` key + per-agent .opencode/agents/<name>.md (model only as provider/model)",
+            "MCP merged into the project's opencode.json under `mcp` key (type:local/remote, command as single array, key `environment`, {env:VAR}): an existing root opencode.json(c), else .opencode/opencode.json, which Kilo Code does not read",
+            "Agents merged into the same file under `agent` key + per-agent .opencode/agents/<name>.md (model only as provider/model)",
             "Agents read from .opencode/agents/, .opencode/agent/ and the `agent` key together (markdown wins); built-in agent names (build, plan, general, …) are neither written nor read",
             "Skills read from .opencode/skills/ and .opencode/skill/ only; OpenCode also loads .claude/skills/ and .agents/skills/, so a skill synced there too appears twice",
         ],
@@ -162,13 +162,26 @@ pub fn print_help_ai() {
         ],
     );
     print_tool(
-        "Amp",
-        "amp",
-        "AGENTS.md (native), falls back to AGENT.md or CLAUDE.md",
+        "Mistral Vibe",
+        "vibe",
+        "AGENTS.md (native) + .vibe/",
         &[
-            "Skills synced to .agents/skills/<name>/SKILL.md (shared format)",
-            "MCP merged into .amp/settings.json (or .amp/settings.jsonc) under `amp.mcpServers` (preserves existing settings)",
-            "Supports @doc/file.md references in AGENTS.md",
+            "Project files load only in a folder trusted in ~/.vibe/trusted_folders.toml",
+            "Skills synced to .vibe/skills/<name>/SKILL.md (the shared .agents/skills/ is read only when .vibe/skills/ has none); `vibe` and `skill-creator` are reserved names",
+            "Subagents synced to .vibe/agents/<name>.toml (agent_type = \"subagent\", enabled_tools translated to Vibe tools); other agent files are the user's modes and are kept",
+            "MCP merged into .vibe/config.toml as [[mcp_servers]] (stdio / streamable-http); `Authorization: Bearer ${VAR}` becomes a static auth reading VAR, any other ${VAR} is passed as written",
+        ],
+    );
+    print_tool(
+        "Kilo Code",
+        "kilo",
+        "AGENTS.md (native, else CLAUDE.md, else CONTEXT.md) + .kilo/",
+        &[
+            "OpenCode fork: the Kilo CLI and the VS Code extension read the same files",
+            ".kilo/rules/*.md and the legacy .kilocode/ locations are read",
+            "Skills synced to .kilo/skills/<name>/SKILL.md, subagents to .kilo/agents/<name>.md (OpenCode format; built-in names code, ask, debug, orchestrator, … skipped)",
+            "MCP merged into .kilo/kilo.jsonc (or the existing kilo.json/kilo.jsonc) under `mcp`, OpenCode shape, with no variable reference: Kilo refuses {env:VAR} in a project config, a local server inherits the environment",
+            "A root opencode.json holding {env:VAR} makes Kilo refuse the project config; conforme warns about it",
         ],
     );
     println!();
