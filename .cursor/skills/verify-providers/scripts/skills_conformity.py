@@ -21,7 +21,9 @@ holding `<name>/SKILL.md` folders (`.cursor/skills`, `.agents/skills`,
 - UNMANAGED    the copy root has a skill without the marker that the source
                does not have: written by hand in that tool (warning)
 
-Exits 1 when any finding but UNMANAGED is reported. Standard library only.
+Exits 1 when any finding but UNMANAGED is reported, and 2 when nothing could
+be checked (bad arguments, no source skill, no copy root). Standard library
+only.
 """
 
 import os
@@ -104,12 +106,30 @@ def copy_roots(project, source):
     return sorted(roots)
 
 
+def parse_args(argv):
+    """`(project, source_rel)`, or None when the arguments are not usable."""
+    args = argv[1:]
+    source_rel = ".claude/skills"
+    if "--source" in args:
+        at = args.index("--source")
+        if at + 1 >= len(args):
+            return None
+        source_rel = args[at + 1]
+        del args[at : at + 2]
+    if len(args) != 1:
+        return None
+    return os.path.abspath(args[0]), source_rel
+
+
 def main(argv):
-    if len(argv) < 2:
+    parsed = parse_args(argv)
+    if parsed is None:
         print(__doc__)
         return 2
-    project = os.path.abspath(argv[1])
-    source_rel = argv[argv.index("--source") + 1] if "--source" in argv else ".claude/skills"
+    project, source_rel = parsed
+    if not os.path.isdir(project):
+        print(f"not a directory: {project}")
+        return 2
     source = os.path.join(project, source_rel)
     source_skills = skills_in(source)
     if not source_skills:
@@ -156,6 +176,10 @@ def main(argv):
                 warnings.append(f"UNMANAGED    {rel_root}/{name}: not in the source, no marker")
 
     print(f"source {source_rel}: {len(expected)} skill(s); {len(roots)} copy root(s)")
+    if not roots:
+        # Nothing was compared: a pass here would prove nothing.
+        print("no copy root: no tool holds a copy of the source skills")
+        return 2
     for root in roots:
         print(f"  {os.path.relpath(root, project)}")
     for line in errors + warnings:

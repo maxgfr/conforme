@@ -26,7 +26,10 @@ src/
   frontmatter.rs    — gray_matter wrapper for YAML frontmatter parsing/serialization
   lib.rs            — Library crate re-exports (adapters, config, etc.)
   sync.rs           — Core sync engine: init, sync, check, status, remove, diff, migrate commands
-                       (target_config, renamed-id check, AGENTS.md output unless the source reads it;
+                       (target_config, renamed-id check, AGENTS.md output unless the source reads it, holding only
+                       instructions and rules (migrate adds what the output cannot hold); a Codex
+                       warning past its 32 KiB AGENTS.md budget; remove prunes emptied directories
+                       and says how to exclude a tool still detected;
                        selected_targets (detection + only/exclude) is the one target set of sync, check,
                        diff and status; target_files/write_target leave out the source's source_files();
                        generated_agents_md is compared by check and diff too; check validates the config;
@@ -50,7 +53,8 @@ src/
                        files, the source's own locations and its source_files() stay tracked
   project_config.rs  — .conformerc.toml parser (source, only, exclude, clean options)
   validate.rs        — Config validation (duplicate names, empty content, invalid globs,
-                       names that sanitize to nothing or collide, over-long skill descriptions,
+                       names that sanitize to nothing or collide, skill descriptions over the 1024
+                       characters Zoo Code and Vibe accept,
                        a rule whose file name becomes `general` while there are instructions — Cursor,
                        Devin and Kiro write the instructions there; warns on skills Claude Code reserves:
                        synced, anthropic-skills)
@@ -69,27 +73,21 @@ src/
                          Codex expands no `${VAR}`: stdio `NAME=${NAME}` → `env_vars`, `Authorization: Bearer ${VAR}` →
                          `bearer_token_env_var`, an exact `${VAR}` header → `env_http_headers`, all read back to `${VAR}`;
                          `env` on HTTP is dropped; tuning keys (timeouts, `enabled_tools`, `required`, …) are read past and kept
-                       - Claude, Kiro: mcpServers with type stdio/http; Cursor: no type on remote entries
-                       - Zoo Code: mcpServers, HTTP uses type "streamable-http" (not "http"), no env on remote
-                       - Claude .mcp.json parsing accepts http/https, sse, streamable-http, and ws transports (all mapped to the HTTP variant);
-                         `type: "sdk"` entries are skipped
-                       - Copilot: "servers" key (env on stdio, headers on HTTP)
-                       - Devin: mcpServers in .devin/mcp_config.json, no type, remote `transport: http`
-                       - OpenCode: "mcp" key merged into opencode.json, type local/remote, command as array, `environment` key (local only);
-                         merge_opencode_agents keeps the user's own `agent` entries
-                       - Zed: "context_servers" key
-                       - Gemini: mcpServers, no type field, httpUrl for HTTP
-                       - Kilo: OpenCode shape with no variable reference (build_kilo_mcp_object: Kilo refuses
-                         `{env:VAR}` in a project config; `NAME=${NAME}` dropped, a local server inherits the env)
-                       - Vibe: `[[mcp_servers]]` in .vibe/config.toml — merge_vibe_mcp_toml / parse_vibe_mcp_toml
-                         (`Authorization: Bearer ${VAR}` ⇄ static auth `api_key_env`)
+                       - per-tool keys and shapes: see "MCP key mapping per tool" below
+                       - Claude .mcp.json parsing accepts http/https, sse, streamable-http and ws (all mapped
+                         to the HTTP variant); `type: "sdk"` entries are skipped
+                       - OpenCode: merge_opencode_agents keeps the user's own `agent` entries (the adapter
+                         drops one an earlier sync wrote for an agent that left the source)
+                       - Kilo: build_kilo_mcp_object (no variable reference)
+                       - Vibe: merge_vibe_mcp_toml / parse_vibe_mcp_toml; a string `command` is shell-split
+                         as Vibe does, one that would not survive it is written as a list
                        - parse_mcp_json reads back mcpServers / servers / context_servers
                        - OpenCode needs its own inverse (parse_opencode_mcp_object / parse_opencode_agent_object)
   skills.rs         — Skills (SKILL.md plus the text files bundled beside it: read_bundled_files,
                        written next to SKILL.md in every tool, stale ones found by stale_bundled_files)
                        and agents generation per tool; shared read helpers
-                       preserve manual_invocation (and Codex policy sidecars, created only in
-                       .agents/skills) across sync (read_skills_from_dir, read_skills_recursive,
+                       preserve manual_invocation (and Codex policy sidecars, which Vibe honours too,
+                       created only in .agents/skills) across sync (read_skills_from_dir, read_skills_recursive,
                        read_agents_from_dir, parse_frontmatter_tool_list) used by adapters to
                        round-trip skills/agents on read(); TOOL_EQUIVALENTS translates agent tools
                        for Claude/Gemini/Kiro/Vibe (Gemini `mcp_*` ⇄ Kiro `@mcp`, Kiro todo tool `todo`);
@@ -113,7 +111,7 @@ src/
     cursor.rs       — Cursor: .cursor/rules/**/*.mdc, read recursively (alwaysApply/globs/description); subagents at .cursor/agents/*.md
     devin.rs        — Devin Desktop (formerly Windsurf): writes .devin/{rules,skills,mcp_config.json}; reads
                        .devin/ and the legacy .windsurf/ (both loaded upstream) and cleans conforme's legacy copies;
-                       global_rules.md (.devin/, else .windsurf/) is read into the instructions
+                       global_rules.md (.devin/, else .windsurf/) and .windsurfrules are read into the instructions
     copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md; MCP merged into .vscode/mcp.json;
                        detected from copilot-instructions.md or .github/{instructions,agents,skills}/
     codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively
@@ -133,11 +131,12 @@ src/
     kiro.rs         — Kiro (AWS): .kiro/steering/*.md (inclusion/fileMatchPattern)
     deepseek.rs     — DeepSeek Harness (dsh): reads AGENTS.md natively; skills at .dsh/skills/<name>/SKILL.md
     vibe.rs         — Mistral Vibe: reads AGENTS.md natively; .vibe/skills/, .vibe/agents/<name>.toml subagents
-                       (other agent files are the user's modes), MCP merged into .vibe/config.toml; warns about
-                       reserved skill names and `${VAR}` Vibe does not expand
+                       (other agent files are the user's modes; built-in agent names never written), MCP merged
+                       into .vibe/config.toml; warns about reserved names and `${VAR}` Vibe does not expand
     kilo.rs         — Kilo Code (OpenCode fork): reads AGENTS.md (else CLAUDE.md, CONTEXT.md) and .kilo/rules/*.md
                        natively; .kilo/skills/, .kilo/agents/*.md (built-in names skipped), MCP merged into
-                       .kilo/kilo.jsonc or the existing kilo.json(c); legacy .kilocode/ read; warns about a root
+                       .kilo/kilo.jsonc or the existing kilo.json(c) (read: every kilo/opencode.json(c) Kilo
+                       loads); legacy .kilocode/ read; warns about a root
                        opencode.json holding `{env:VAR}`
 tests/
   integration.rs    — CLI integration tests (assert_cmd + tempfile)
@@ -347,28 +346,14 @@ Works alongside existing hooks (appends/removes its own block).
 
 ## CLI commands
 
-```
-conforme init [--force]                    # Create AGENTS.md + sync to tools
-conforme sync [--dry-run] [--only tools]   # AGENTS.md → all tool configs
-conforme check                             # Exit 0 if in sync, 1 if not
-conforme status                            # Show detected tools + sync state
-conforme remove <tools>                    # Remove generated config files for tools
-conforme hook install                      # Install git pre-commit hook
-conforme hook uninstall                    # Remove git pre-commit hook
-conforme help-ai                           # Show all supported tools + formats
-conforme diff                              # Show diff between expected and actual
-conforme add rule|skill|agent|mcp          # Add section to AGENTS.md
-conforme watch                             # Watch source and auto-sync
-conforme sync --from <tool>                # Use specific tool as source
-conforme sync --no-clean                   # Don't clean orphan files
-conforme migrate --source X --output Y    # Migrate config between tools
-```
+`conforme --help` lists them (`src/cli.rs`: subcommands and `after_help` examples), as does the README's
+Quick start: init, sync, check, status, diff, remove, add, watch, migrate, hook, gitignore, help-ai.
 
 ## Skills
 
 This project uses Claude Code skills in `.claude/skills/`:
 
-- **verify-providers** — Verify all 13 provider adapters online: what changed upstream since the last audit (web search, changelogs, releases), a fact sheet in which every line carries a proof URL fetched during the run (vendor docs, and the tool's source when public, which wins when they disagree; subagent brief in `references/online-brief.md`), compared with the adapter code and safety invariants; then prove every tool's copy of every skill matches the source (`scripts/skills_conformity.py`), check with the tools' own CLIs (`references/live-cli.md`), run every command with every tool as source plus a second pass by concern, keep secrets out of the copies, check links, then fix with regression tests
+- **verify-providers** — Verify all 13 provider adapters online, with a proof URL for every fact, the tools' own CLIs and every command; fix drift with regression tests (see its `SKILL.md`)
 
 ## Upstream documentation
 
@@ -398,12 +383,11 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 
 - Every adapter change MUST be reflected in its `docs/providers/<tool>.md`
 - Every MCP format change MUST update the corresponding `generate_*_mcp_json` function AND its unit test
+- MCP keys and shapes per tool are the "MCP key mapping per tool" table in CLAUDE.md: update it with any MCP change
 - When adding a new adapter, update ALL of: README.md tables, src/help_ai.rs, src/cli.rs tool count, CLAUDE.md architecture section
 - Provider docs must list all official documentation URLs for the tool, back each fact with the vendor page, changelog or source it comes from, and carry a `Last verified online` line (date, upstream version) that `verify-providers` updates
 - Test round-trips: `read()` output fed into `generate()` should produce identical files
-- MCP JSON keys per tool: Claude/Kiro/Zoo Code/Gemini/Cursor/Devin = `mcpServers`, Copilot = `servers`, OpenCode and Kilo Code = `mcp` (inside `opencode.json` / `kilo.jsonc`), Zed = `context_servers`; Codex `[mcp_servers.<name>]` and Mistral Vibe `[[mcp_servers]]` are TOML
 - A JSON MCP entry shape is a `ServerShape` in `src/mcp.rs` (type values, URL key, `env` on remote, env-var syntax); add or change a tool there rather than writing another builder
-- OpenCode MCP specifics: `command` is a single array `[cmd, ...args]`, env key is `environment` (not `env`), servers live inside the project's `opencode.json` (an existing root one, else `.opencode/opencode.json`; conforme merges — never clobber user-authored keys)
 - Devin (formerly Windsurf): write `.devin/` only; `.windsurf/` is read as a legacy location (Devin loads both) and conforme's old copies there are cleaned. Project MCP is `.devin/mcp_config.json`; never generate `.windsurf/mcp.json`
 - Never add a user-authored directory (e.g. `.github/prompts/`) to `managed_directories()`: orphan cleanup deletes every file there that carries the directory's suffix and that conforme did not generate
 - Give each `ManagedDir` the exact suffix conforme writes there (`ManagedDir::files(dir, ".agent.md")`), and use `ManagedDir::subdirs` for skills directories, so files the tool accepts but conforme never writes (Kiro `.json` agents, dsh flat skills) survive a sync
@@ -411,7 +395,6 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - When an upstream tool is retired (as Amazon Q was), delete its adapter outright rather than keeping it behind a deprecation flag; the removal checklist is the mirror of the "adding a new adapter" one above
 - Every MCP file is merged, never owned: any adapter that merges into a user-owned settings file (`.mcp.json`, `.cursor/mcp.json`, `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `kilo.jsonc`, `.vscode/mcp.json`, `.github/mcp.json`, `.roo/mcp.json`, `.codex/config.toml`, `.vibe/config.toml`) MUST implement `is_shared_file()` so `remove` and `migrate` never delete it wholesale, and its gitignore patterns must not match it
 - Merge JSON settings through `json_settings::server_settings_file` (or `load`/`merge_server_entries`/`render_with_removals`), never `serde_json::from_str(..).unwrap_or_default()`: those files are JSONC, a parse failure must refuse the write instead of replacing the user's file, and a source with no server leaves the file untouched
-- Kilo Code refuses `{env:VAR}` in a project config, and also loads the root `opencode.json`: Kilo's MCP carries no variable reference, and OpenCode's new config goes to `.opencode/opencode.json`
 - A setting a tool will not load as written (a `${VAR}` it cannot resolve, a reserved name, a file it refuses) is reported by `AiToolAdapter::warnings`, which `sync` and `migrate` print
 - Cursor subagents: `.md` extension (not `.mdc`); no `tools` frontmatter field — tool access is inherited from the parent agent
 - Copilot skills: `.github/skills/<name>/SKILL.md` (NOT `.github/prompts/*.prompt.md` — prompt files are a separate VS Code feature)

@@ -6,12 +6,11 @@ trigger: glob
 
 - Every adapter change MUST be reflected in its `docs/providers/<tool>.md`
 - Every MCP format change MUST update the corresponding `generate_*_mcp_json` function AND its unit test
+- MCP keys and shapes per tool are the "MCP key mapping per tool" table in CLAUDE.md: update it with any MCP change
 - When adding a new adapter, update ALL of: README.md tables, src/help_ai.rs, src/cli.rs tool count, CLAUDE.md architecture section
 - Provider docs must list all official documentation URLs for the tool, back each fact with the vendor page, changelog or source it comes from, and carry a `Last verified online` line (date, upstream version) that `verify-providers` updates
 - Test round-trips: `read()` output fed into `generate()` should produce identical files
-- MCP JSON keys per tool: Claude/Kiro/Zoo Code/Gemini/Cursor/Devin = `mcpServers`, Copilot = `servers`, OpenCode and Kilo Code = `mcp` (inside `opencode.json` / `kilo.jsonc`), Zed = `context_servers`; Codex `[mcp_servers.<name>]` and Mistral Vibe `[[mcp_servers]]` are TOML
 - A JSON MCP entry shape is a `ServerShape` in `src/mcp.rs` (type values, URL key, `env` on remote, env-var syntax); add or change a tool there rather than writing another builder
-- OpenCode MCP specifics: `command` is a single array `[cmd, ...args]`, env key is `environment` (not `env`), servers live inside the project's `opencode.json` (an existing root one, else `.opencode/opencode.json`; conforme merges — never clobber user-authored keys)
 - Devin (formerly Windsurf): write `.devin/` only; `.windsurf/` is read as a legacy location (Devin loads both) and conforme's old copies there are cleaned. Project MCP is `.devin/mcp_config.json`; never generate `.windsurf/mcp.json`
 - Never add a user-authored directory (e.g. `.github/prompts/`) to `managed_directories()`: orphan cleanup deletes every file there that carries the directory's suffix and that conforme did not generate
 - Give each `ManagedDir` the exact suffix conforme writes there (`ManagedDir::files(dir, ".agent.md")`), and use `ManagedDir::subdirs` for skills directories, so files the tool accepts but conforme never writes (Kiro `.json` agents, dsh flat skills) survive a sync
@@ -19,7 +18,6 @@ trigger: glob
 - When an upstream tool is retired (as Amazon Q was), delete its adapter outright rather than keeping it behind a deprecation flag; the removal checklist is the mirror of the "adding a new adapter" one above
 - Every MCP file is merged, never owned: any adapter that merges into a user-owned settings file (`.mcp.json`, `.cursor/mcp.json`, `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `kilo.jsonc`, `.vscode/mcp.json`, `.github/mcp.json`, `.roo/mcp.json`, `.codex/config.toml`, `.vibe/config.toml`) MUST implement `is_shared_file()` so `remove` and `migrate` never delete it wholesale, and its gitignore patterns must not match it
 - Merge JSON settings through `json_settings::server_settings_file` (or `load`/`merge_server_entries`/`render_with_removals`), never `serde_json::from_str(..).unwrap_or_default()`: those files are JSONC, a parse failure must refuse the write instead of replacing the user's file, and a source with no server leaves the file untouched
-- Kilo Code refuses `{env:VAR}` in a project config, and also loads the root `opencode.json`: Kilo's MCP carries no variable reference, and OpenCode's new config goes to `.opencode/opencode.json`
 - A setting a tool will not load as written (a `${VAR}` it cannot resolve, a reserved name, a file it refuses) is reported by `AiToolAdapter::warnings`, which `sync` and `migrate` print
 - Cursor subagents: `.md` extension (not `.mdc`); no `tools` frontmatter field — tool access is inherited from the parent agent
 - Copilot skills: `.github/skills/<name>/SKILL.md` (NOT `.github/prompts/*.prompt.md` — prompt files are a separate VS Code feature)

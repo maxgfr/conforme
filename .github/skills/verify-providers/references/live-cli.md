@@ -38,7 +38,8 @@ folder trust, so the user's own configuration is never touched.
   - `… mcp get <name> --json`: `env_vars`, `bearer_token_env_var`,
     `env_http_headers`.
   - `… debug prompt-input`: the model-visible skills list (a manual skill is
-    absent from it) and the loaded `AGENTS.md`.
+    absent from it) and the loaded `AGENTS.md`, which must hold no skill body
+    (grep the manual skill's text: it must not appear).
 - **OpenCode** (`opencode`): its output includes every global skill and
   plugin, megabytes that take a minute: redirect it to a file and grep the
   file, with no short `timeout` (a cut-off pipe reads as "nothing loaded").
@@ -52,13 +53,14 @@ folder trust, so the user's own configuration is never touched.
   - `gemini skills list`: each skill and the root it loads from; an
     "Agent loading error" line names an agent Gemini rejects; "Skill conflict
     detected" names a skill present in two roots.
-- **Copilot CLI** (`copilot`): with `HOME=<tmp>` holding `.copilot/config.json`
+- **Copilot CLI** (`npx -y @github/copilot@<version>`): with `HOME=<tmp>` holding `.copilot/config.json`
   (`{"trusted_folders": ["<abs path>"]}`), and the Claude `.mcp.json` removed
   so it is not what makes a server appear:
   - `copilot mcp list`: the servers of `.github/mcp.json` (Copilot CLI ignores
     `.vscode/mcp.json`).
   - `copilot skill list` (under "Project skills") and `copilot instruction list`.
-- **Cursor** (`cursor-agent`): `cursor-agent mcp list` lists the project
+- **Cursor** (`cursor-agent`, `brew install --cask cursor-cli`; uninstall it
+  after): `cursor-agent mcp list` lists the project
   servers (a new one waits for approval, which is fine). Skills and agents have
   no listing command: check the files.
 - **Mistral Vibe** (`vibe`): project files load only in a trusted folder. Load
@@ -67,7 +69,12 @@ folder trust, so the user's own configuration is never touched.
   (`trusted = ["<abs path>"]`): `ConfigOrchestrator` for `mcp_servers`,
   `SkillManager` for skills (and their model-invocation flag and parse
   issues), `AgentRegistry` for subagents, `HarnessFilesManager.load_project_docs`
-  for `AGENTS.md`.
+  for `AGENTS.md`. Call `init_harness_files_manager("user", "project")`
+  (`vibe.core.config.harness_files._harness_manager`) first and build the
+  config with `vibe.core.config.default_orchestrator.build_default_orchestrator`;
+  set `HOME` to the temporary directory too, or `~/.agents/skills` leaks in.
+  `MCPStdio.argv()` shows the command Vibe will run. When Homebrew lags a
+  release, install it in a throwaway venv (`uv pip install mistral-vibe==<v>`).
 - **Kilo Code** (`kilo`): with `HOME` and `XDG_*` pointing at a temporary
   directory:
   - `kilo config check`: exit 1, naming the file, when Kilo refuses a project

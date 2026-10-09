@@ -688,6 +688,48 @@ fn test_remove_deletes_tool_files() {
 }
 
 #[test]
+fn test_remove_leaves_no_empty_tool_directory_behind() {
+    // An emptied `.cursor/` kept Cursor detected, so the next sync (or the
+    // pre-commit `check`) wrote back or demanded what `remove` deleted.
+    let agents_md =
+        "# Instructions\nHello.\n\n## Skill: deploy\n<!-- description: Deploy -->\nRun deploy.\n";
+    let dir = create_project_with_tools(agents_md, &["cursor", "devin"]);
+    let root = dir.path().to_str().unwrap();
+
+    conforme().args(["-C", root, "sync"]).assert().success();
+    assert!(dir.path().join(".cursor/skills/deploy/SKILL.md").exists());
+
+    conforme()
+        .args(["-C", root, "remove", "cursor"])
+        .assert()
+        .success();
+
+    assert!(!dir.path().join(".cursor").exists());
+    assert!(dir.path().join(".devin/rules/general.md").exists());
+    conforme().args(["-C", root, "check"]).assert().success();
+}
+
+#[test]
+fn test_remove_says_how_to_stop_a_tool_still_detected() {
+    // `.cursor/mcp.json` is merged, never deleted: Cursor stays detected and
+    // the next sync writes its files back unless it is excluded.
+    let agents_md =
+        "# Instructions\nHello.\n\n## MCP: fs\n<!-- command: npx -->\n<!-- args: -y, fs -->\n";
+    let dir = create_project_with_tools(agents_md, &["cursor"]);
+    let root = dir.path().to_str().unwrap();
+
+    conforme().args(["-C", root, "sync"]).assert().success();
+    conforme()
+        .args(["-C", root, "remove", "cursor"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("exclude"));
+
+    assert!(dir.path().join(".cursor/mcp.json").exists());
+    assert!(!dir.path().join(".cursor/rules").exists());
+}
+
+#[test]
 fn test_remove_no_files() {
     let agents_md = "# Instructions\nHello.\n";
     let dir = create_project_with_tools(agents_md, &["cursor"]);
@@ -3030,4 +3072,173 @@ fn test_gemini_remote_agents_are_not_read_as_local_agents() {
     assert!(root.join(".claude/agents/reviewer.md").exists());
     assert!(!root.join(".claude/agents/remote-helper.md").exists());
     assert!(!root.join(".claude/agents/fleet.md").exists());
+}
+
+const CLAUDE_SOURCE_WITH_EVERYTHING: &[(&str, &str)] = &[
+    ("CLAUDE.md", "# Project\n\nUse pnpm.\n"),
+    (
+        ".claude/rules/ts.md",
+        "---\npaths:\n  - \"**/*.ts\"\n---\nUse strict TypeScript.\n",
+    ),
+    (
+        ".claude/skills/notes/SKILL.md",
+        "---\nname: notes\ndescription: Draft release notes\ndisable-model-invocation: true\n---\nList merged PRs.\n",
+    ),
+    (
+        ".claude/agents/reviewer.md",
+        "---\nname: reviewer\ndescription: Reviews code\n---\nReview the diff.\n",
+    ),
+    (
+        ".mcp.json",
+        "{\"mcpServers\":{\"fs\":{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"fs\"]}}}",
+    ),
+    (".conformerc.toml", "source = \"claude\"\n"),
+];
+
+fn claude_source_with_everything(tools: &[&str]) -> TempDir {
+    let dir = TempDir::new().unwrap();
+    for (path, content) in CLAUDE_SOURCE_WITH_EVERYTHING {
+        let path = dir.path().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+    for tool in tools {
+        fs::create_dir_all(dir.path().join(tool)).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn test_generated_agents_md_holds_only_instructions_and_rules() {
+    // Codex, OpenCode, Kilo, Vibe, DeepSeek (and Cursor, Copilot, Zoo Code,
+    // Kiro, Devin) load AGENTS.md as instructions: a skill body there is
+    // always in the model's context, a manual one included, and Codex reads
+    // only 32 KiB of it. Each tool gets skills, agents and MCP servers in
+    // its own files.
+    let dir = claude_source_with_everything(&[".codex", ".opencode"]);
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let agents_md = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(agents_md.contains("Use pnpm."), "{agents_md}");
+    assert!(agents_md.contains("## Rule: ts"), "{agents_md}");
+    for section in ["## Skill:", "## Agent:", "## MCP:", "List merged PRs"] {
+        assert!(!agents_md.contains(section), "{section} in {agents_md}");
+    }
+    assert!(dir.path().join(".agents/skills/notes/SKILL.md").exists());
+    assert!(dir.path().join(".opencode/agents/reviewer.md").exists());
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_migrated_agents_md_keeps_only_what_the_output_cannot_hold() {
+    // Codex holds skills (`.agents/skills`) and MCP (`.codex/config.toml`)
+    // but no agent: the agent section stays in AGENTS.md so a later switch
+    // still has it.
+    let dir = claude_source_with_everything(&[]);
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "claude",
+            "--output",
+            "codex",
+        ])
+        .assert()
+        .success();
+
+    let agents_md = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(agents_md.contains("Use pnpm."), "{agents_md}");
+    assert!(agents_md.contains("## Agent: reviewer"), "{agents_md}");
+    assert!(!agents_md.contains("## Skill:"), "{agents_md}");
+    assert!(!agents_md.contains("## MCP:"), "{agents_md}");
+    assert!(dir.path().join(".agents/skills/notes/SKILL.md").exists());
+    assert!(fs::read_to_string(dir.path().join(".codex/config.toml"))
+        .unwrap()
+        .contains("[mcp_servers.fs]"));
+}
+
+#[test]
+fn test_agent_leaving_the_source_leaves_opencode_json_too() {
+    // conforme writes an agent both as `.opencode/agents/<name>.md` and as
+    // `agent.<name>` in opencode.json; only the file was cleaned, so OpenCode
+    // still loaded the agent. An entry the user extended (`permission`) or
+    // wrote without a markdown file stays.
+    let dir = claude_source_with_everything(&[".opencode"]);
+    let root = dir.path();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    let json_path = root.join(".opencode/opencode.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&json_path).unwrap()).unwrap();
+    json["agent"]["mine"] =
+        serde_json::json!({"description": "Mine", "mode": "subagent", "prompt": "Mine."});
+    fs::write(&json_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+
+    fs::remove_file(root.join(".claude/agents/reviewer.md")).unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&json_path).unwrap()).unwrap();
+    assert!(json["agent"].get("reviewer").is_none(), "{json}");
+    assert!(json["agent"].get("mine").is_some(), "{json}");
+    assert!(!root.join(".opencode/agents/reviewer.md").exists());
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_sync_warns_when_codex_would_truncate_agents_md() {
+    // Codex reads `project_doc_max_bytes` = 32768 bytes of instruction files
+    // and truncates the rest (codex-rs/config/defaults.toml, core agents_md.rs).
+    let big = format!("# Instructions\n{}\n", "Keep this rule. ".repeat(2200));
+    let dir = create_project_with_tools(&big, &["codex"]);
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("32 KiB"));
+
+    let small = create_project_with_tools("# Instructions\nShort.\n", &["codex"]);
+    conforme()
+        .args(["-C", small.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("32 KiB").not());
+}
+
+#[test]
+fn test_long_skill_description_warning_names_the_tools_that_skip_it() {
+    // Zoo Code and Mistral Vibe skip a skill whose description is over 1024
+    // characters (Zoo SkillsManager.ts: "must be 1-1024 characters", Vibe
+    // skills/models.py `max_length=1024`); Codex 0.162.0 checks
+    // only the name length (codex-rs/skills/src/parser.rs).
+    let agents_md = format!(
+        "# Instructions\nGlobal.\n\n## Skill: deploy\n<!-- description: {} -->\nRun deploy.\n",
+        "d".repeat(1025)
+    );
+    let dir = create_project_with_tools(&agents_md, &["zoocode", "codex"]);
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Zoo Code and Mistral Vibe skip it",
+        ))
+        .stderr(predicate::str::contains("Codex").not());
 }

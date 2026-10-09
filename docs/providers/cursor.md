@@ -18,6 +18,8 @@
 - CLI: what it loads (`AGENTS.md`, `CLAUDE.md`, `.cursor/rules`, `mcp.json`): https://cursor.com/docs/cli/using
 - CLI parameters (`agent mcp list`, `list-tools`, `enable`): https://cursor.com/docs/cli/reference/parameters
 - Security and workspace trust: https://cursor.com/docs/agent/security
+- CLI changelog (`user-invocable: false` in v2026.07.06; skill and subagent scans skip hidden dot-directories since v2026.08.11): https://cursor.com/docs/cli/changelog
+- Customizing Cursor (index of rules, skills, subagents, hooks, plugins): https://cursor.com/docs/customize-cursor
 
 ## Config files
 
@@ -57,7 +59,7 @@
 - `globs` is one comma-separated string ("Separate multiple patterns with commas"), so brace groups are expanded on write (`src/*.{ts,tsx}` → `src/*.ts, src/*.tsx`) and kept whole on read. On read a YAML list is accepted too; an empty `globs` scopes nothing, so the rule falls through to its `description` (agent-decision) or to manual
 - An agent-decision rule always carries a `description` (the rule name when the source has none): without one Cursor would treat it as manual
 - `model` value is `inherit` or a Cursor model ID, optionally with `[key=value]` parameters (`fast` is no longer a model value). conforme leaves out another host's alias (`sonnet`, `opus`, `haiku`, `fable`, `pro`, `flash`, `flash-lite`) and any `provider/model` id, and copies other values as they are. Cursor documents a fallback to "a compatible model" when a model is blocked or unavailable, but not what happens with an id it does not know (unverified)
-- Skills use the standard SKILL.md format; `name` and `description` are required, and `paths`, `disable-model-invocation`, `icon`, `color` and `metadata` are optional (conforme emits only `name` + `description`)
+- Skills use the standard SKILL.md format; `name` and `description` are required, and `paths`, `disable-model-invocation`, `icon`, `color` and `metadata` are optional (https://cursor.com/docs/skills). conforme emits `name` + `description`, and for a manual skill `disable-model-invocation: true` plus `metadata: {opencode/autoinvoke: "false"}`, both keys Cursor documents. It does not write `paths` (skill scoping) nor `user-invocable` (CLI v2026.07.06, https://cursor.com/docs/cli/changelog)
 - Cursor discovers skills from `.cursor/skills/` and `.agents/skills/` and, for compatibility, `.claude/skills/` and `.codex/skills/`; subagents likewise from `.claude/agents/` and `.codex/agents/`. conforme writes the Cursor-native `.cursor/` locations, so a skill synced to several of those directories (Claude Code, Codex) may be loaded twice by Cursor
 - With Cursor as the source conforme reads only `.cursor/skills/`, and `gitignore install` with `source = "cursor"` ignores the `.agents/skills/` Codex output although Cursor loads it (known gaps, design pending)
 - A root `.cursorrules` still makes conforme detect Cursor, but it is not read; Cursor calls it "legacy and will be deprecated" (known gap)

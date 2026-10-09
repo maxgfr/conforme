@@ -202,10 +202,50 @@ fn generated_agents_md(
         || {
             (
                 project_root.join("AGENTS.md"),
-                markdown::export_as_agents_md(config),
+                markdown::export_as_agents_md(&instructions_and_rules(config)),
             )
         },
     )
+}
+
+/// The part of a config AGENTS.md carries when it is an output: the tools
+/// that load it read it whole as instructions, so a skill, agent or MCP
+/// section there would sit in the model's context (a manual skill included)
+/// and count against Codex's 32 KiB budget. Each tool gets those in its own
+/// files.
+fn instructions_and_rules(config: &NormalizedConfig) -> NormalizedConfig {
+    NormalizedConfig {
+        instructions: config.instructions.clone(),
+        rules: config.rules.clone(),
+        ..Default::default()
+    }
+}
+
+/// [`instructions_and_rules`] plus the skills, agents and MCP servers a tool
+/// cannot hold in files of its own (Codex agents, DeepSeek agents and MCP):
+/// after `migrate`, AGENTS.md is the only place left to keep them.
+fn instructions_rules_and_unheld(
+    config: &NormalizedConfig,
+    caps: &adapters::AdapterCapabilities,
+) -> NormalizedConfig {
+    NormalizedConfig {
+        skills: if caps.skills {
+            Vec::new()
+        } else {
+            config.skills.clone()
+        },
+        agents: if caps.agents {
+            Vec::new()
+        } else {
+            config.agents.clone()
+        },
+        mcp_servers: if caps.mcp {
+            Vec::new()
+        } else {
+            config.mcp_servers.clone()
+        },
+        ..instructions_and_rules(config)
+    }
 }
 
 /// Resolve the source config: reads from the configured source tool or AGENTS.md.
@@ -428,7 +468,10 @@ pub fn run_sync(
         }
     }
 
-    for adapter in selected_targets(&adapters, project_root, &source_id, only, &project_cfg) {
+    let targets = selected_targets(&adapters, project_root, &source_id, only, &project_cfg);
+    let codex_reads_agents_md =
+        source_id == "codex" || targets.iter().any(|adapter| adapter.id() == "codex");
+    for adapter in targets {
         // Warn about capability loss
         warn_capability_loss(adapter, project_root, &config);
 
@@ -536,11 +579,33 @@ pub fn run_sync(
         }
     }
 
+    if !dry_run && codex_reads_agents_md {
+        warn_codex_instruction_budget(project_root);
+    }
+
     if !dry_run && !any_written {
         println!("{} All configs already in sync.", "=".green());
     }
 
     Ok(())
+}
+
+/// Codex loads at most `project_doc_max_bytes` (32 KiB by default) of
+/// instruction files and truncates the rest (codex-rs/config/defaults.toml,
+/// core/src/agents_md.rs).
+const CODEX_INSTRUCTION_BUDGET: u64 = 32 * 1024;
+
+fn warn_codex_instruction_budget(project_root: &Path) {
+    let size = std::fs::metadata(project_root.join("AGENTS.md")).map_or(0, |m| m.len());
+    if size > CODEX_INSTRUCTION_BUDGET {
+        eprintln!(
+            "  {} Codex CLI: AGENTS.md is {} KiB, and Codex reads only the first 32 KiB \
+             (`project_doc_max_bytes`): move content into skills or rules, or raise \
+             `project_doc_max_bytes` in ~/.codex/config.toml",
+            "!".yellow(),
+            size.div_ceil(1024)
+        );
+    }
 }
 
 /// Warn about capabilities lost when syncing to this adapter.
@@ -665,6 +730,18 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
                 removed_files.push(path.clone());
             }
         }
+        // A directory left empty would keep the tool detected (`.cursor/`),
+        // so the next sync would write everything back.
+        for path in &removed_files {
+            for dir in path.ancestors().skip(1) {
+                if dir == project_root
+                    || !dir.starts_with(project_root)
+                    || std::fs::remove_dir(dir).is_err()
+                {
+                    break;
+                }
+            }
+        }
 
         if !removed_files.is_empty() {
             any_removed = true;
@@ -681,6 +758,14 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
                 "  {} {} (no files to remove)",
                 "-".dimmed(),
                 adapter.name().dimmed()
+            );
+        }
+        if adapter.detect(project_root) {
+            println!(
+                "  {} {} is still detected, so the next sync writes its files back: add \"{}\" to `exclude` in .conformerc.toml to stop syncing it",
+                "!".yellow(),
+                adapter.name(),
+                adapter.id()
             );
         }
     }
@@ -1277,6 +1362,9 @@ pub fn run_migrate(
                 output_adapter.name().bold()
             );
         }
+        if output == "codex" {
+            warn_codex_instruction_budget(project_root);
+        }
     }
 
     Ok(())
@@ -1426,22 +1514,25 @@ fn migrated_agents_md(
         // The source already keeps its instructions there.
         return Ok(None);
     }
+    let caps = output.capabilities();
     let Some(existing) = path
         .exists()
         .then(|| std::fs::read_to_string(&path))
         .transpose()?
     else {
-        return Ok(Some((path, markdown::export_as_agents_md(config))));
+        let content = markdown::export_as_agents_md(&instructions_rules_and_unheld(config, &caps));
+        return Ok(Some((path, content)));
     };
     // An AGENTS.md left by an earlier switch (Codex, then Zed) is rewritten
     // when its instructions and rules are already in the source (only the
     // layout differs); its skill, agent and MCP sections the source lacks
-    // (an agent Zed cannot hold) are carried into the new one. Text the
-    // source lacks is the user's: refused.
+    // (an agent Zed cannot hold) are carried into the new one, unless the
+    // output holds them in its own files. Text the source lacks is the
+    // user's: refused.
     let old = markdown::parse_agents_md(&existing).ok();
     let carried = old.as_ref().map(|old| with_sections_of(config, old));
     let merged = carried.as_ref().unwrap_or(config);
-    let content = markdown::export_as_agents_md(merged);
+    let content = markdown::export_as_agents_md(&instructions_rules_and_unheld(merged, &caps));
     let text_kept = crate::hash::contents_match(&existing, &content)
         || old.as_ref().is_some_and(|old| text_is_covered(old, config));
     if !text_kept {

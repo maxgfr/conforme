@@ -109,6 +109,10 @@ clean = true
 
 When `source` is set, conforme reads your rules, skills, agents, and MCP servers from that tool's config files instead of `AGENTS.md`. This means you can author your config in whichever tool you prefer and have it propagated everywhere else.
 
+The `AGENTS.md` generated from a tool source holds only the instructions and `## Rule:` sections. Codex, OpenCode, Kilo, Vibe, DeepSeek and most other tools load that file whole as instructions, so a skill, agent or MCP section there would sit in every conversation, a manual skill included; each tool gets those in its own files instead. `migrate` also writes the skills, agents or MCP servers the output cannot hold (agents for Codex, agents and MCP for DeepSeek) there, so a later switch still has them. Codex reads only the first 32 KiB of `AGENTS.md` (`project_doc_max_bytes`): `sync` and `migrate` warn when it is larger.
+
+`conforme remove <tools>` deletes the files conforme generated for those tools (merged settings files stay) and the directories it leaves empty. A tool still detected afterwards (its `mcp.json` stays, for example) gets its files back on the next sync: add it to `exclude` to stop syncing it, as `remove` says.
+
 ## AGENTS.md format
 
 conforme uses `## Rule:` headings with HTML comments to define rules and their activation:

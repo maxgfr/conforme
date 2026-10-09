@@ -81,7 +81,17 @@ impl AiToolAdapter for OpenCodeAdapter {
         // (`package.json` for plugins, commands, tools, …) and must never be
         // swept for orphans.
         vec![
-            ManagedDir::files(project_root.join(".opencode").join("agents"), ".md"),
+            // `.opencode/agents/build.md` tunes OpenCode's own Build agent:
+            // conforme never writes it, so it is the user's.
+            ManagedDir::files_except(
+                project_root.join(".opencode").join("agents"),
+                ".md",
+                |path| {
+                    path.file_stem().is_some_and(|stem| {
+                        crate::mcp::is_opencode_builtin_agent(&stem.to_string_lossy())
+                    })
+                },
+            ),
             ManagedDir::subdirs(project_root.join(".opencode").join("skills")),
         ]
     }
@@ -210,10 +220,19 @@ impl AiToolAdapter for OpenCodeAdapter {
         // only our managed keys.
         // A key the source has nothing for is left alone, like every other
         // MCP target: it may hold what the user keeps there by hand.
-        if !config.mcp_servers.is_empty() || !config.agents.is_empty() {
-            let config_path = config_path(project_root);
-            let existing = crate::json_settings::load(&config_path)?;
-
+        let config_path = config_path(project_root);
+        // With nothing to write there, a file conforme cannot parse is only
+        // left alone, as before.
+        let existing = match crate::json_settings::load(&config_path) {
+            Err(_) if config.mcp_servers.is_empty() && config.agents.is_empty() => None,
+            loaded => loaded?,
+        };
+        let stale = stale_agent_entries(
+            project_root,
+            existing.as_ref().and_then(|f| f.get("agent")),
+            &config.agents,
+        );
+        if !config.mcp_servers.is_empty() || !config.agents.is_empty() || !stale.is_empty() {
             let mut set = Vec::new();
             if !config.mcp_servers.is_empty() {
                 let mcp_obj = crate::json_settings::merge_server_entries(
@@ -223,14 +242,17 @@ impl AiToolAdapter for OpenCodeAdapter {
                 );
                 set.push(("mcp", serde_json::Value::Object(mcp_obj)));
             }
-            if !config.agents.is_empty() {
+            if !config.agents.is_empty() || !stale.is_empty() {
                 // `agent` also holds the user's own entries (overrides of the
                 // built-in `build`/`plan` agents, per-agent `permission`, …),
                 // which survive.
-                let agent_obj = crate::mcp::merge_opencode_agents(
+                let mut agent_obj = crate::mcp::merge_opencode_agents(
                     existing.as_ref().and_then(|f| f.get("agent")),
                     crate::mcp::build_opencode_agent_object(&config.agents),
                 );
+                for name in &stale {
+                    agent_obj.remove(name);
+                }
                 set.push(("agent", serde_json::Value::Object(agent_obj)));
             }
 
@@ -247,6 +269,45 @@ impl AiToolAdapter for OpenCodeAdapter {
 
         Ok(files)
     }
+}
+
+/// The `agent` entries of opencode.json an earlier sync wrote for an agent
+/// that has left the source. conforme writes every agent twice, as
+/// `.opencode/agents/<name>.md` and as `agent.<name>`: an entry whose file is
+/// still there (orphan cleanup removes it in the same sync) and that holds
+/// only the keys conforme writes is conforme's. Left behind, it would keep the
+/// agent loaded. An entry without that file, or one the user extended
+/// (`permission`, `temperature`, …), is the user's.
+fn stale_agent_entries(
+    project_root: &Path,
+    existing: Option<&serde_json::Value>,
+    agents: &[crate::config::NormalizedAgent],
+) -> Vec<String> {
+    let Some(entries) = existing.and_then(serde_json::Value::as_object) else {
+        return Vec::new();
+    };
+    let generated: Vec<String> = agents
+        .iter()
+        .map(|a| crate::config::sanitize_name(&a.name))
+        .collect();
+    entries
+        .iter()
+        .filter(|(name, entry)| {
+            !generated.contains(name)
+                && !crate::mcp::is_opencode_builtin_agent(name)
+                && entry.as_object().is_some_and(|fields| {
+                    fields
+                        .keys()
+                        .all(|key| crate::mcp::OPENCODE_OWNED_AGENT_KEYS.contains(&key.as_str()))
+                })
+                && project_root
+                    .join(".opencode")
+                    .join("agents")
+                    .join(format!("{name}.md"))
+                    .is_file()
+        })
+        .map(|(name, _)| name.clone())
+        .collect()
 }
 
 #[cfg(test)]

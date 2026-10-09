@@ -102,12 +102,14 @@ pub fn merge_codex_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> 
             }
             McpTransport::Http { url, headers } => {
                 // Codex rejects `env` on an HTTP server: it is dropped, as in
-                // every JSON shape without `env` on remote servers.
+                // every JSON shape without `env` on remote servers. It rejects
+                // the legacy `bearer_token` there too.
                 entry.remove("command");
                 entry.remove("args");
                 entry.remove("env");
                 entry.remove("cwd");
                 entry.remove("env_vars");
+                entry.remove("bearer_token");
                 entry.insert("url", value(url.clone()));
 
                 // Codex expands no `${VAR}` in headers: `Bearer ${VAR}` on
@@ -189,6 +191,57 @@ fn set_string_map(
 /// `disabled_tools`, an OAuth `auth`). Vibe expands no `${VAR}`: an
 /// `Authorization: Bearer ${VAR}` header becomes a static `auth` reading the
 /// token from `VAR` (`api_key_env`); any other value is written as it is.
+/// Split a command string the way Python's `shlex.split` does (POSIX mode,
+/// no comments), as Vibe does with a string `command`. `None` for an
+/// unterminated quote or escape, which `shlex` refuses too.
+fn shell_split(text: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut word: Option<String> = None;
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            c if c.is_whitespace() => {
+                if let Some(done) = word.take() {
+                    words.push(done);
+                }
+            }
+            '\'' => {
+                let current = word.get_or_insert_with(String::new);
+                loop {
+                    match chars.next()? {
+                        '\'' => break,
+                        c => current.push(c),
+                    }
+                }
+            }
+            '"' => {
+                let current = word.get_or_insert_with(String::new);
+                loop {
+                    match chars.next()? {
+                        '"' => break,
+                        '\\' => match chars.next()? {
+                            c @ ('\\' | '"' | '$' | '`') => current.push(c),
+                            '\n' => {}
+                            c => {
+                                current.push('\\');
+                                current.push(c);
+                            }
+                        },
+                        c => current.push(c),
+                    }
+                }
+            }
+            '\\' => match chars.next()? {
+                '\n' => {}
+                c => word.get_or_insert_with(String::new).push(c),
+            },
+            c => word.get_or_insert_with(String::new).push(c),
+        }
+    }
+    words.extend(word);
+    Some(words)
+}
+
 pub fn merge_vibe_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> Result<String> {
     let mut document = if existing.trim().is_empty() {
         DocumentMut::new()
@@ -243,7 +296,15 @@ pub fn merge_vibe_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> R
                     entry.remove("auth");
                 }
                 entry.insert("transport", value("stdio"));
-                entry.insert("command", value(command.clone()));
+                // Vibe shell-splits a string command: one that would not
+                // come back whole (a path with a space) is written as a list.
+                if shell_split(command).as_deref() == Some(std::slice::from_ref(command)) {
+                    entry.insert("command", value(command.clone()));
+                } else {
+                    let mut list = Array::new();
+                    list.push(command.clone());
+                    entry.insert("command", value(list));
+                }
                 let mut toml_args = Array::new();
                 for arg in args {
                     toml_args.push(arg);
@@ -348,9 +409,12 @@ pub fn parse_vibe_mcp_toml(content: &str) -> Result<Vec<NormalizedMcpServer>> {
             .and_then(toml::Value::as_str)
             .unwrap_or("stdio");
         let (transport, env) = if transport == "stdio" {
-            // `command` is a string, or a list holding the arguments too.
+            // `command` is a string Vibe shell-splits, or a list holding the
+            // arguments too.
             let mut parts: Vec<String> = match entry.get("command") {
-                Some(toml::Value::String(command)) => vec![command.clone()],
+                Some(toml::Value::String(command)) => {
+                    shell_split(command).unwrap_or_else(|| vec![command.clone()])
+                }
                 Some(toml::Value::Array(items)) => items
                     .iter()
                     .filter_map(|v| v.as_str().map(str::to_string))
@@ -1412,8 +1476,9 @@ pub fn build_opencode_agent_object(
 /// Unlike MCP servers, `agent` is shared with the user: it is where OpenCode
 /// documents overrides of its built-in agents (`build`, `plan`), per-agent
 /// `permission`, and agents written by hand. So every existing entry the
-/// source does not define is kept (an agent removed from the source stays
-/// here until deleted by hand; its `.opencode/agents/<name>.md` is cleaned).
+/// source does not define is kept here; the OpenCode adapter drops the ones
+/// an earlier sync wrote for an agent that has left the source
+/// (`stale_agent_entries`).
 /// For a synced agent, `description`, `mode` and `prompt` are replaced,
 /// `model` only when the source has one OpenCode can use, and the user's own
 /// keys (`permission`, `temperature`, …) are kept.
@@ -1851,6 +1916,49 @@ disabled = true
     }
 
     #[test]
+    fn test_vibe_string_command_is_shell_split_like_vibe() {
+        // Vibe runs `shlex.split(self.command)` on a string command
+        // (vibe/core/config/models.py `argv`).
+        let toml = r#"[[mcp_servers]]
+name = "fs"
+transport = "stdio"
+command = "npx -y 'my server'"
+args = ["."]
+"#;
+        assert_eq!(
+            parse_vibe_mcp_toml(toml).unwrap()[0].transport,
+            McpTransport::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "my server".to_string(), ".".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn test_vibe_command_with_a_space_is_written_as_a_list() {
+        // A string would be split by Vibe: a path holding a space must stay
+        // one word.
+        let servers = vec![NormalizedMcpServer {
+            name: "local".to_string(),
+            transport: McpTransport::Stdio {
+                command: "/Applications/My Tools/server".to_string(),
+                args: vec!["--stdio".to_string()],
+            },
+            env: BTreeMap::new(),
+        }];
+        let toml = merge_vibe_mcp_toml("", &servers).unwrap();
+        assert!(
+            toml.contains(r#"command = ["/Applications/My Tools/server"]"#),
+            "{toml}"
+        );
+        assert_eq!(parse_vibe_mcp_toml(&toml).unwrap(), servers);
+        // A plain command stays a string.
+        assert!(merge_vibe_mcp_toml("", &vibe_servers())
+            .unwrap()
+            .contains("command = \"npx\""));
+    }
+
+    #[test]
     fn test_codex_env_references_use_codex_env_keys() {
         // Codex expands no `${VAR}` in config.toml: a reference must become
         // `env_vars` (stdio), `bearer_token_env_var` or `env_http_headers`.
@@ -2000,6 +2108,35 @@ callback_port = 5555
 
         assert!(!toml.contains("TOKEN"), "{toml}");
         assert_eq!(parse_codex_mcp_toml(&toml).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_merge_codex_mcp_toml_drops_bearer_token_on_http() {
+        // Codex rejects `bearer_token` on an HTTP server too
+        // (`throw_if_set("streamable_http", "bearer_token", ..)`,
+        // codex-rs/config/src/mcp_types.rs): left in place it would make
+        // Codex refuse the file; the token is `bearer_token_env_var` now.
+        let existing =
+            "[mcp_servers.api]\nurl = \"https://old.example.com/mcp\"\nbearer_token = \"literal\"\n";
+        let server = NormalizedMcpServer {
+            name: "api".to_string(),
+            transport: McpTransport::Http {
+                url: "https://example.com/mcp".to_string(),
+                headers: BTreeMap::from([(
+                    "Authorization".to_string(),
+                    "Bearer ${API_TOKEN}".to_string(),
+                )]),
+            },
+            env: BTreeMap::new(),
+        };
+
+        let toml = merge_codex_mcp_toml(existing, &[server]).unwrap();
+
+        assert!(!toml.contains("bearer_token ="), "{toml}");
+        assert!(
+            toml.contains("bearer_token_env_var = \"API_TOKEN\""),
+            "{toml}"
+        );
     }
 
     #[test]

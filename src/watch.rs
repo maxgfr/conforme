@@ -255,8 +255,14 @@ fn source_locations(id: &str) -> &'static [&'static str] {
             ".kilocode/agent",
             ".kilocode/kilo.json",
             ".kilocode/kilo.jsonc",
+            ".kilocode/opencode.json",
+            ".kilocode/opencode.jsonc",
+            ".kilo/opencode.json",
+            ".kilo/opencode.jsonc",
             "kilo.json",
             "kilo.jsonc",
+            "opencode.json",
+            "opencode.jsonc",
         ],
         _ => &[],
     }
@@ -341,6 +347,8 @@ mod tests {
             ("deepseek", ".agents/skills"),
             ("opencode", ".opencode/opencode.json"),
             ("kilo", ".kilo/rules"),
+            ("kilo", "opencode.json"),
+            ("kilo", ".kilo/opencode.jsonc"),
         ] {
             let paths = get_watch_paths(root, &config(source)).unwrap();
             assert!(
