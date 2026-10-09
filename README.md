@@ -82,6 +82,8 @@ conforme migrate --source cursor --output claude
 
 `migrate` reads the project in the source tool's format, writes it in the output tool's, then removes the source tool's files. What the output can hold comes across: instructions and rules (with their glob scope where the output has activation modes), skills with every bundled file, manual invocation, agents, and MCP servers with their environment-variable references respelled for the output. What it cannot hold stays where it is (a tool without agents leaves the source's agents in place), and nothing the output or another detected tool still reads is deleted.
 
+Switch with `migrate`, not by editing `source`: the `AGENTS.md` that `sync` generates names its source on its first line, and `sync` and `check` refuse a source changed by hand since then (the new source would rewrite every tool, the old one included, and delete what it does not hold). `migrate` moves that line to its output, so setting `source` to the output afterwards is accepted.
+
 Every pair of tools is tested both ways (`tests/migrate_matrix.rs`), including a round trip through all 13 tools and back. Each output is also checked with the tool's own CLI where one exists (Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI, Cursor, Mistral Vibe, Kilo Code): the CLI lists the migrated MCP servers, skills and agents.
 
 ## `.conformerc.toml` configuration

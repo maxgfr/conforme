@@ -28,7 +28,8 @@ src/
   sync.rs           — Core sync engine: init, sync, check, status, remove, diff, migrate commands
                        (target_config, renamed-id check, AGENTS.md output unless the source reads it, holding only
                        instructions and rules (migrate adds what the output cannot hold); a Codex
-                       warning past its 32 KiB AGENTS.md budget; remove prunes emptied directories
+                       warning past its 32 KiB AGENTS.md budget; generated AGENTS.md names its source on
+                       line 1 and sync/check refuse a source changed by hand since (migrate moves it); remove prunes emptied directories
                        and says how to exclude a tool still detected;
                        selected_targets (detection + only/exclude) is the one target set of sync, check,
                        diff and status; target_files/write_target leave out the source's source_files();
@@ -108,7 +109,7 @@ src/
                        nor .claude/CLAUDE.md, reads AGENTS.md and .claude/AGENTS.md (root first) as Claude
                        Code does (CLAUDE.local.md deliberately ignored); a skill and a command of the same
                        name read as the skill
-    cursor.rs       — Cursor: .cursor/rules/**/*.mdc, read recursively (alwaysApply/globs/description); subagents at .cursor/agents/*.md
+    cursor.rs       — Cursor: .cursor/rules/**/*.mdc, read recursively (alwaysApply/globs/description), plus .cursorrules; subagents at .cursor/agents/*.md
     devin.rs        — Devin Desktop (formerly Windsurf): writes .devin/{rules,skills,mcp_config.json}; reads
                        .devin/ and the legacy .windsurf/ (both loaded upstream) and cleans conforme's legacy copies;
                        global_rules.md (.devin/, else .windsurf/) and .windsurfrules are read into the instructions
@@ -288,7 +289,7 @@ the tool's managed directories, only paths that exist and are used: Claude Code
 `AGENTS.md` / `CLAUDE.md` / `CONTEXT.md` plus its rule directories, Vibe
 `AGENTS.md` plus `.agents/skills` when `.vibe/skills` has none, DeepSeek the first of `AGENTS.md` /
 `CLAUDE.md` plus `.agents/skills` when `.dsh/skills` has none, Gemini CLI its
-existing context files, Devin `global_rules.md` and `.windsurfrules`, Zoo Code
+existing context files, Devin `global_rules.md` and `.windsurfrules`, Cursor `.cursorrules`, Zoo Code
 `.roorules`. With that tool as the source no target writes them
 (`sync::target_files` / `write_target`), `remove`/`migrate` never delete them,
 `gitignore install` never ignores them, and `target_config` treats a fallback

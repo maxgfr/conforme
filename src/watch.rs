@@ -182,6 +182,7 @@ fn source_locations(id: &str) -> &'static [&'static str] {
             ".cursor/skills",
             ".cursor/agents",
             ".cursor/mcp.json",
+            ".cursorrules",
         ],
         "devin" => &[
             ".devin/rules",
@@ -348,6 +349,7 @@ mod tests {
             ("opencode", ".opencode/opencode.json"),
             ("kilo", ".kilo/rules"),
             ("kilo", "opencode.json"),
+            ("cursor", ".cursorrules"),
             ("kilo", ".kilo/opencode.jsonc"),
         ] {
             let paths = get_watch_paths(root, &config(source)).unwrap();

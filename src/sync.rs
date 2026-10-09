@@ -202,10 +202,56 @@ fn generated_agents_md(
         || {
             (
                 project_root.join("AGENTS.md"),
-                markdown::export_as_agents_md(&instructions_and_rules(config)),
+                format!(
+                    "{}\n\n{}",
+                    markdown::generated_marker(source_id),
+                    markdown::export_as_agents_md(&instructions_and_rules(config))
+                ),
             )
         },
     )
+}
+
+/// Refuse a source changed by hand since `sync` generated AGENTS.md from
+/// another one: syncing would rewrite every tool, the old source included,
+/// from a source that holds less (Codex has no agents, the generated
+/// AGENTS.md only instructions and rules) and delete the rest. `migrate`
+/// moves the marker to its output, so a switch done with it passes.
+fn refuse_source_changed_by_hand(project_root: &Path, source_id: &str) -> Result<()> {
+    let Ok(text) = std::fs::read_to_string(project_root.join("AGENTS.md")) else {
+        return Ok(());
+    };
+    let Some(old) = markdown::generated_from(&text) else {
+        return Ok(());
+    };
+    if old == source_id {
+        return Ok(());
+    }
+    let name = |id: &str| {
+        find_adapter(id).map_or_else(|| "AGENTS.md".to_string(), |a| a.name().to_string())
+    };
+    let now = if source_id == "agents.md" {
+        "no source is set, so AGENTS.md itself would be the source, and it holds only \
+         instructions and rules"
+            .to_string()
+    } else {
+        format!("the source is now {}", name(source_id))
+    };
+    let switch = if source_id == "agents.md" {
+        String::new()
+    } else {
+        format!("To switch tools, run `conforme migrate --source {old} --output {source_id}`. ")
+    };
+    bail!(
+        "AGENTS.md was generated from {} (its first line says so), but {now}. A sync would \
+         rewrite every tool from that source and delete what it does not hold, {}'s own \
+         agents and skills included; nothing was changed. {switch}To keep {} as the source, \
+         set `source = \"{old}\"` in .conformerc.toml. To sync from the new source anyway, \
+         delete AGENTS.md first.",
+        name(old),
+        name(old),
+        name(old)
+    );
 }
 
 /// The part of a config AGENTS.md carries when it is an output: the tools
@@ -393,6 +439,7 @@ pub fn run_sync(
 ) -> Result<()> {
     let project_cfg = ProjectConfig::load(project_root);
     let (config, source_id) = resolve_config(project_root, from, &project_cfg, verbose)?;
+    refuse_source_changed_by_hand(project_root, &source_id)?;
 
     if verbose {
         println!(
@@ -781,6 +828,8 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
 pub fn run_check(project_root: &Path, from: Option<&str>, verbose: bool) -> Result<()> {
     let project_cfg = ProjectConfig::load(project_root);
     let (config, source_id) = resolve_config(project_root, from, &project_cfg, verbose)?;
+    // What sync would refuse to touch, check explains rather than diffing.
+    refuse_source_changed_by_hand(project_root, &source_id)?;
 
     // Configs sync would refuse are not "in sync" either.
     if !validate::validate(&config, verbose) {
@@ -1361,6 +1410,18 @@ pub fn run_migrate(
                 source_adapter.name().bold(),
                 output_adapter.name().bold()
             );
+        }
+        // An AGENTS.md sync generated from the source now stands for the
+        // output: setting `source` to it afterwards is no switch by hand.
+        let agents_md_path = project_root.join("AGENTS.md");
+        if let Ok(text) = std::fs::read_to_string(&agents_md_path) {
+            if markdown::generated_from(&text) == Some(source) {
+                let body = text.split_once('\n').map_or("", |(_, rest)| rest);
+                std::fs::write(
+                    &agents_md_path,
+                    format!("{}\n{body}", markdown::generated_marker(output)),
+                )?;
+            }
         }
         if output == "codex" {
             warn_codex_instruction_budget(project_root);
