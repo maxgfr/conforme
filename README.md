@@ -23,7 +23,7 @@ cargo install --path .
 1. **Write your config** in your preferred tool (Claude Code, Cursor, Devin, etc.) or directly in `AGENTS.md`
 2. **Run `conforme sync`** — it reads from your chosen source and propagates to all detected tools (filtered by `only` / `exclude`). `check`, `diff` and `status` use the same set of tools, so an excluded tool is never reported out of sync, and they compare the generated `AGENTS.md` too; `check` also validates the config
 3. **Only changed files are updated** — content is compared using SHA-256 hashes, so unchanged files are never touched
-4. **Orphan files are cleaned** — when you rename or remove a rule, the old generated files are automatically deleted. Only files of the kind conforme writes are touched: files a tool accepts but conforme never generates (Kiro `.json` agents, flat DeepSeek skills, hand-written `.md` Copilot agents) are left alone. A source that reads back empty (no instructions, rules, skills, agents or MCP servers) warns "nothing to sync" and writes and cleans nothing. Skills directories are never swept: a skill removed from the source stays in every target until deleted by hand (as does an agent removed from the source in `opencode.json`). `migrate` validates the source and refuses an empty one, removes the source tool's files under the same rule, and never a file or directory the output or another detected tool still uses (`.agents/skills/` shared by Codex, Amp and Zed included), a skill folder that bundles scripts or references, nor skills or agents the output cannot hold. Migrating to a tool that keeps its instructions in `AGENTS.md` (Codex, OpenCode, Amp, DeepSeek, or Gemini CLI loading only `AGENTS.md`) writes `AGENTS.md`, and an existing `AGENTS.md` that differs and that the source does not read is refused before anything changes
+4. **Orphan files are cleaned** — when you rename or remove a rule, the old generated files are automatically deleted. Only files of the kind conforme writes are touched: files a tool accepts but conforme never generates (Kiro `.json` agents, flat DeepSeek skills, hand-written `.md` Copilot agents) are left alone. A source that reads back empty (no instructions, rules, skills, agents or MCP servers) warns "nothing to sync" and writes and cleans nothing. A skill removed from the source is deleted from every tool's copy (conforme marks the copies it generates with a `.conforme` file; an unmarked skill folder is the user's and stays), and `check` reports what `sync` would remove (as does an agent removed from the source in `opencode.json`). `migrate` validates the source and refuses an empty one, removes the source tool's files under the same rule, and never a file or directory the output or another detected tool still uses (`.agents/skills/` shared by Codex, Amp and Zed included), a skill folder holding a file conforme cannot carry (not text), nor skills or agents the output cannot hold. Migrating to a tool that keeps its instructions in `AGENTS.md` (Codex, OpenCode, Amp, DeepSeek, or Gemini CLI loading only `AGENTS.md`) writes `AGENTS.md`, and an existing `AGENTS.md` that differs and that the source does not read is refused before anything changes
 5. **Shared settings are merged, never replaced** — settings and MCP files that also hold your own configuration (`.mcp.json`, `.cursor/mcp.json`, `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json`, `.vscode/mcp.json`, `.roo/mcp.json`, `.codex/config.toml`) only have conforme's key updated. JSONC comments and trailing commas are kept, per-server options a tool added (Kiro `autoApprove`, Zoo Code approvals, Gemini `trust`, …) survive, a file conforme cannot parse is never overwritten, and `remove`/`migrate` never delete one
 6. **Each tool gets values it accepts** — agent tool names are translated into each tool's vocabulary (Claude Code, Gemini CLI and Kiro reject or ignore names they do not know), a model id another tool cannot use is left out, skill and agent names are written as kebab-case ASCII (rules, which only become files, keep other letters), and environment-variable references in MCP configs are rewritten to each tool's syntax (`${VAR}`, `${env:VAR}`, `{env:VAR}`)
 7. **The source's own files stay the source's** — what the source reads outside its own directories (an `AGENTS.md` or `CLAUDE.md` it reads natively or as a fallback, Gemini CLI's context files, Devin's `global_rules.md` and `.windsurfrules`, Zoo Code's `.roorules`, DeepSeek's `.agents/skills` fallback) is never written by another tool's target, deleted by `remove` or `migrate`, nor ignored by `gitignore install`, which also skips tools left out by `only` / `exclude`
@@ -205,7 +205,7 @@ When using Claude Code as source (`source = "claude"`), conforme also reads **cu
 | Amp | `.agents/skills/<name>/SKILL.md` | `name`, `description` (shared Codex format) |
 | DeepSeek Harness | `.dsh/skills/<name>/SKILL.md` | `name`, `description` (kebab-case name) |
 
-Every supported tool syncs skills. Only `SKILL.md` is synced: scripts or references bundled in a skill folder are not copied to the other tools.
+Every supported tool syncs skills, with the files bundled beside `SKILL.md` (scripts, references, templates): each tool's copy is the whole skill folder, so a skill that runs `scripts/check.py` works everywhere. Each copy carries a small `.conforme` marker: a bundled file removed from the source is removed from every copy, a skill removed from the source is deleted from every tool, and `check` reports a copy that is behind. A skill folder without the marker (one written by hand in a tool) is never touched, nor is a directory the source reads its own skills from. Files that are not text (images, binaries) are not copied.
 
 ### Agents format equivalence
 
@@ -513,14 +513,16 @@ Run `cargo test && cargo clippy -- -D warnings`, bump version in Cargo.toml, cre
 ```json
 {
   "mcpServers": {
-    "context7": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"]
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" }
     }
   }
 }
 ```
+
+Every target tool gets this server in its own file, and those files are usually committed: keep secrets in environment variables (`${GITHUB_TOKEN}`), which conforme rewrites to each tool's syntax, never as literal values (`validate` warns about one).
 
 **Setup with pre-commit hook:**
 

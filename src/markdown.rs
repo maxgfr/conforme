@@ -226,6 +226,7 @@ fn build_skill(name: &str, lines: &[String]) -> NormalizedSkill {
         content: content_lines.join("\n").trim().to_string(),
         allowed_tools,
         manual_invocation,
+        files: Default::default(),
     }
 }
 

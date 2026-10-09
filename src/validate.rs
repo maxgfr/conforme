@@ -43,6 +43,49 @@ fn check_file_names<'a>(
     }
 }
 
+/// Header and environment-variable names that hold credentials.
+const SECRET_NAME_PARTS: &[&str] = &[
+    "key",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "auth",
+    "credential",
+];
+
+/// MCP header and `env` values that look like a secret written in clear. The
+/// MCP file of every target tool gets the value, and those files are usually
+/// committed: a secret belongs in an environment variable (`${VAR}`), which
+/// conforme rewrites to each tool's own syntax.
+pub fn literal_secrets(config: &NormalizedConfig) -> Vec<String> {
+    let mut found = Vec::new();
+    for server in &config.mcp_servers {
+        let headers = match &server.transport {
+            McpTransport::Http { headers, .. } => Some(headers),
+            McpTransport::Stdio { .. } => None,
+        };
+        let entries = headers
+            .into_iter()
+            .flatten()
+            .map(|(k, v)| ("header", k, v))
+            .chain(server.env.iter().map(|(k, v)| ("env", k, v)));
+        for (kind, name, value) in entries {
+            let lower = name.to_ascii_lowercase();
+            let secret_name = SECRET_NAME_PARTS.iter().any(|part| lower.contains(part));
+            let is_reference = value.contains("${") || value.contains("{env:");
+            if secret_name && !is_reference && !value.trim().is_empty() {
+                found.push(format!(
+                    "MCP server '{}': {kind} '{name}' holds a literal value; it is copied into every \
+                     tool's (usually committed) config, reference an environment variable instead (${{VAR}})",
+                    server.name
+                ));
+            }
+        }
+    }
+    found
+}
+
 /// Validate a NormalizedConfig and print warnings. Returns true if valid (no errors).
 pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
     let mut errors = Vec::new();
@@ -159,6 +202,8 @@ pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
             _ => {}
         }
     }
+
+    warnings.extend(literal_secrets(config));
 
     // Print warnings
     if verbose || !warnings.is_empty() {
@@ -317,5 +362,50 @@ mod tests {
         assert!(!validate(&rule("Top instructions."), false));
         // Without instructions the `general` file is free.
         assert!(validate(&rule(""), false));
+    }
+
+    #[test]
+    fn test_literal_secrets_in_mcp_are_flagged() {
+        let server = |headers: &[(&str, &str)], env: &[(&str, &str)]| NormalizedMcpServer {
+            name: "api".to_string(),
+            transport: McpTransport::Http {
+                url: "https://example.com/mcp".to_string(),
+                headers: headers
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            },
+            env: env
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        };
+        let config = |s: NormalizedMcpServer| NormalizedConfig {
+            mcp_servers: vec![s],
+            ..Default::default()
+        };
+
+        // A key written in clear is copied into every tool's committed file.
+        assert_eq!(
+            literal_secrets(&config(server(&[("x-api-key", "ctx7sk-abc123")], &[]))).len(),
+            1
+        );
+        assert_eq!(
+            literal_secrets(&config(server(&[("Authorization", "Bearer abc123")], &[]))).len(),
+            1
+        );
+        assert_eq!(
+            literal_secrets(&config(server(&[], &[("GITHUB_TOKEN", "ghp_abc")]))).len(),
+            1
+        );
+        // References and non-secret values are fine.
+        assert!(literal_secrets(&config(server(
+            &[
+                ("Authorization", "Bearer ${GITHUB_TOKEN}"),
+                ("X-Region", "eu")
+            ],
+            &[("API_KEY", "${API_KEY}"), ("TOKEN", "${input:token}")]
+        )))
+        .is_empty());
     }
 }

@@ -148,7 +148,7 @@ mod tests {
             ..Default::default()
         };
         let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
-        assert_eq!(files.len(), 1);
+        assert_eq!(files.len(), 2); // SKILL.md + conforme marker
         assert_eq!(
             files[0].0,
             Path::new("/tmp/test/.dsh/skills/deploy-app/SKILL.md")
