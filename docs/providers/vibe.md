@@ -2,6 +2,8 @@
 
 > Mistral's open-source coding agent CLI (`vibe`). Source: `--from vibe`
 
+**Last verified online:** 2026-10-09, against Mistral Vibe 2.26.0 (https://github.com/mistralai/mistral-vibe/releases)
+
 ## Official docs
 
 - Overview: https://docs.mistral.ai/vibe/code/overview
@@ -11,12 +13,18 @@
 - Agents: https://docs.mistral.ai/vibe/code/cli/agents
 - MCP servers: https://docs.mistral.ai/vibe/code/cli/mcp-servers
 - Repository: https://github.com/mistralai/mistral-vibe
+- Safety, approvals and trusted folders (`vibe --trust`): https://docs.mistral.ai/vibe/code/safety-approvals-permissions
+- Commands (`/mcp`, `/reload`): https://docs.mistral.ai/vibe/code/cli/commands-shortcuts
+- Admin config (precedence: admin, CLI, env, project, user): https://docs.mistral.ai/vibe/code/cli/admin-config
+- VS Code extension agents (same `.vibe/agents`): https://docs.mistral.ai/vibe/code/vs-code-extension/agents
+- CLI, VS Code and web share agents, skills and MCP: https://docs.mistral.ai/vibe/code/choose-cli-vscode-web-sessions
+- Changelog: https://github.com/mistralai/mistral-vibe/blob/main/CHANGELOG.md
 
 ## Config files
 
 | Feature | Path | Format |
 |---------|------|--------|
-| Instructions | `AGENTS.md` (native), from the working directory up to the trusted root | Markdown |
+| Instructions | `AGENTS.md` (native), from the working directory up to the trusted root; since 2.25.8 an `AGENTS.md` in a subdirectory is also surfaced when a file there is read | Markdown |
 | Skills | `.vibe/skills/<name>/SKILL.md`, then `.agents/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description`, `disable-model-invocation`, `user-invocable`, `allowed-tools` |
 | Agents | `.vibe/agents/<name>.toml` | TOML: `agent_type` (`subagent` for a subagent; other files are modes), `description`, `instructions` or `system_prompt_id` (`.vibe/prompts/<id>.md`), `enabled_tools`, `model` |
 | MCP | `.vibe/config.toml`, `[[mcp_servers]]` | TOML array: `name`, `transport` (`stdio` / `http` / `streamable-http`), `command`, `args`, `env`, `url`, `auth` |

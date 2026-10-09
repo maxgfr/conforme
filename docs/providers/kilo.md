@@ -2,6 +2,8 @@
 
 > Open-source coding agent, a fork of OpenCode: the `kilo` CLI and the VS Code extension built on it read the same project files. Source: `--from kilo`
 
+**Last verified online:** 2026-10-09, against Kilo Code 7.8.8 (https://github.com/Kilo-Org/kilocode/releases)
+
 ## Official docs
 
 - CLI: https://kilo.ai/docs/code-with-ai/platforms/cli
@@ -15,6 +17,11 @@
 - MCP in the extension: https://kilo.ai/docs/automate/mcp/using-in-kilo-code
 - Settings: https://kilo.ai/docs/getting-started/settings
 - Repository: https://github.com/Kilo-Org/kilocode
+- CLI reference (`debug config`, `debug skill`, `config check`, `agent list`): https://kilo.ai/docs/code-with-ai/platforms/cli-reference
+- CLI runtime (config merge order, `kilo`/`opencode` files, `.kilo` and `.kilocode`): https://kilo.ai/docs/contributing/architecture/cli-runtime
+- Built-in agents (code, ask, plan, debug; orchestrator deprecated): https://kilo.ai/docs/code-with-ai/agents/using-agents
+- Auto-approving actions (project `.kilo/kilo.jsonc`, MCP permission keys): https://kilo.ai/docs/getting-started/settings/auto-approving-actions
+- Agent permissions (`permission` frontmatter): https://kilo.ai/docs/customize/agent-permissions
 
 ## Config files
 
@@ -26,7 +33,7 @@
 | Agents | `.kilo/agents/<name>.md` (also `.kilo/agent/`, `.kilocode/`) and the `agent` key of the config | OpenCode format: `description`, `mode`, `model` (`provider/model`) |
 | MCP | `mcp` key of `kilo.json(c)`, `.kilo/kilo.json(c)`, `.kilocode/kilo.json(c)`, and the root `opencode.json(c)` | OpenCode shape: `type: local/remote`, `command` array, `environment`, `url`, `headers` |
 
-Kilo saves its own project settings to `.kilo/kilo.jsonc`; `.kilo/` wins over the root files. It no longer reads `.opencode/` directories.
+Kilo's docs name the project file `.kilo/kilo.jsonc` (auto-approving actions) or `.kilo/kilo.json` (CLI runtime); it reads both, and `.kilo/` wins over the root files. Its Orchestrator agent is deprecated but still built in. It no longer reads `.opencode/` directories.
 
 ## Activation modes
 

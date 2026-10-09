@@ -2,6 +2,8 @@
 
 > Open-source AI CLI tool. Source: `--from opencode`
 
+**Last verified online:** 2026-10-09, against OpenCode v1.18.35 (https://github.com/anomalyco/opencode/releases)
+
 ## Official docs
 
 - Rules: https://opencode.ai/docs/rules/
@@ -14,6 +16,7 @@
 - Tools: https://opencode.ai/docs/tools/
 - Permissions: https://opencode.ai/docs/permissions/
 - Repository: https://github.com/anomalyco/opencode (formerly `sst/opencode`, which redirects)
+- Models (`provider_id/model_id`): https://opencode.ai/docs/models
 
 ## Config files
 

@@ -2,6 +2,8 @@
 
 > High-performance editor with AI agent. Source: `--from zed`
 
+**Last verified online:** 2026-10-09, against Zed 1.23.2 (https://zed.dev/releases/stable)
+
 ## Official docs
 
 - Rules: https://zed.dev/docs/ai/instructions
@@ -14,6 +16,8 @@
 - External agents: https://zed.dev/docs/ai/external-agents
 - Tool permissions: https://zed.dev/docs/ai/tool-permissions
 - All settings: https://zed.dev/docs/reference/all-settings
+- Worktree trust (Restricted Mode skips project settings and MCP servers): https://zed.dev/docs/worktree-trust
+- Agent profiles (`context_servers` per profile): https://zed.dev/docs/ai/agent-profiles
 
 ## Config files
 

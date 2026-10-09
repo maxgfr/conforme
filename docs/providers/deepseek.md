@@ -2,6 +2,8 @@
 
 > DeepSeek's open-source agent harness (`dsh`), in preview. Source: `--from deepseek`
 
+**Last verified online:** 2026-10-09, against dsh-v0.2.1-alpha.1 (https://github.com/deepseek-ai/deepseek-harness/releases)
+
 ## Official docs
 
 - Product page: https://www.deepseek.com/en/harness/
@@ -13,6 +15,12 @@
 - MCP client plugin: https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md
 - Boot / profiles (user config layers): https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/boot/app-boot/README.md
 - DeepSeek API docs: https://api-docs.deepseek.com/
+- Instruction discovery (`AGENTS.md` / `CLAUDE.md` chain, root markers): https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/context/agent-instructions/README.md
+- Home paths (`$DSH_HOME`, `$DSH_AGENTS_HOME`): https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/util/home-paths/README.md
+- MCP and memory guide (`cordis.patch.yml` layers): https://deepseek-harness.github.io/deepseek-harness/en/guide/mcp-memory
+- MCP subsystem (one client entry per server): https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/mcp.md
+- CLI help (`dsh --dump-config`): https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cli-help.md
+- Agent preset registry (presets are plugin rows): https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/preset/agent-preset-registry/README.md
 
 ## Config files
 
@@ -38,8 +46,9 @@ each directory, loads every existing candidate:
 - `instructionFileCandidates` default: `['AGENTS.md', 'CLAUDE.md']`
 - `localInstructionFileCandidates` default: `['AGENTS.local.md', 'CLAUDE.local.md']`
 
-A fixed user-global `AGENTS.md` also lives in the harness home (`$DSH_HOME`,
-default `~/.dsh`). Per-directory duplicates with identical trimmed content
+User-global instructions come from `$DSH_HOME/AGENTS.md` (default `~/.dsh`),
+then the shared agents root's `AGENTS.md` (`$DSH_AGENTS_HOME`, default
+`~/.agents`). Per-directory duplicates with identical trimmed content
 collapse to the earliest candidate.
 
 ## Skills discovery

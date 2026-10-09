@@ -2,6 +2,10 @@
 
 > Google's AI CLI tool. Source: `--from gemini`
 
+**Last verified online:** 2026-10-09, against Gemini CLI v0.63.0 (https://github.com/google-gemini/gemini-cli/releases)
+
+Since 2026-06-18 Gemini CLI serves only paid Gemini API keys and Gemini Code Assist Standard or Enterprise licences; Google AI Pro, Ultra and free users moved to **Antigravity CLI** (https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli). Antigravity reads the same `GEMINI.md` and `AGENTS.md`, but its project skills live in `.agents/skills/` and its MCP servers in `.agents/mcp_config.json` (remote key `serverUrl`, not `url`/`httpUrl`) (https://antigravity.google/docs/cli/gcli-migration). conforme has no Antigravity target yet: the Codex and Zed targets already write `.agents/skills/`, and `.agents/mcp_config.json` is not written (known gap)
+
 ## Official docs
 
 - GEMINI.md: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md
@@ -16,6 +20,13 @@
 - Custom commands: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/custom-commands.md
 - Skills repo: https://github.com/google-gemini/gemini-skills
 - Repository: https://github.com/google-gemini/gemini-cli
+- CLI reference (`gemini mcp list`, `gemini skills list`): https://geminicli.com/docs/cli/cli-reference/
+- Commands (`/memory list`, `/agents list`, `/skills list`, `/mcp list`): https://geminicli.com/docs/reference/commands/
+- Remote agents (`kind: remote`): https://geminicli.com/docs/core/remote-agents/
+- Memory imports (`@file.md` in GEMINI.md): https://geminicli.com/docs/reference/memport/
+- Settings schema (`context.fileName`, `mcpServers`): https://raw.githubusercontent.com/google-gemini/gemini-cli/main/schemas/settings.schema.json
+- Transition to Antigravity CLI (2026-05-19): https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli
+- Antigravity CLI migration (what moves where): https://antigravity.google/docs/cli/gcli-migration
 
 ## Config files
 

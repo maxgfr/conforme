@@ -2,6 +2,8 @@
 
 > VS Code AI extension, the community fork of Roo Code. Source: `--from zoocode`
 
+**Last verified online:** 2026-10-09, against Zoo Code 3.86.0 (https://github.com/Zoo-Code-Org/Zoo-Code/releases)
+
 Roo Code was shut down on 2026-05-15 (its repository, `RooCodeInc/Roo-Code`, is
 archived; the docs homepage points users to Zoo Code). Zoo Code continues the
 same extension and reads exactly the same `.roo/` files, so conforme targets it
@@ -21,6 +23,8 @@ under the `zoocode` id. The former `roocode` id no longer exists.
 - Roo to Zoo migration (settings export/import only; project `.roo/` files are read as they are): https://docs.zoocode.dev/roo-to-zoo-migration
 - Source: https://github.com/Zoo-Code-Org/Zoo-Code
 - Roo Code shutdown notice: https://roocodeinc.github.io/Roo-Code/
+- Settings management (`roo-cline.useAgentRules`): https://docs.zoocode.dev/features/settings-management
+- Skill tool (lookup order: `.roo/skills-{mode}`, `.roo/skills`, `.agents/skills`): https://docs.zoocode.dev/advanced-usage/available-tools/skill
 
 ## Config files
 

@@ -3,7 +3,7 @@
 - Every adapter change MUST be reflected in its `docs/providers/<tool>.md`
 - Every MCP format change MUST update the corresponding `generate_*_mcp_json` function AND its unit test
 - When adding a new adapter, update ALL of: README.md tables, src/help_ai.rs, src/cli.rs tool count, CLAUDE.md architecture section
-- Provider docs must list all official documentation URLs for the tool
+- Provider docs must list all official documentation URLs for the tool, back each fact with the vendor page, changelog or source it comes from, and carry a `Last verified online` line (date, upstream version) that `verify-providers` updates
 - Test round-trips: `read()` output fed into `generate()` should produce identical files
 - MCP JSON keys per tool: Claude/Kiro/Zoo Code/Gemini/Cursor/Devin = `mcpServers`, Copilot = `servers`, OpenCode and Kilo Code = `mcp` (inside `opencode.json` / `kilo.jsonc`), Zed = `context_servers`; Codex `[mcp_servers.<name>]` and Mistral Vibe `[[mcp_servers]]` are TOML
 - A JSON MCP entry shape is a `ServerShape` in `src/mcp.rs` (type values, URL key, `env` on remote, env-var syntax); add or change a tool there rather than writing another builder

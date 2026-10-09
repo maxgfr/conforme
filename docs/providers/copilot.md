@@ -2,6 +2,8 @@
 
 > GitHub's AI coding assistant. Source: `--from copilot`
 
+**Last verified online:** 2026-10-09, against Copilot CLI 1.0.94 and VS Code 1.141 (https://github.com/github/copilot-cli/blob/main/changelog.md, https://code.visualstudio.com/updates)
+
 ## Official docs
 
 - Custom instructions: https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-custom-instructions/add-repository-instructions
@@ -21,6 +23,16 @@
 - CLI hooks: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-hooks
 - CLI overview: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/overview
 - About Copilot: https://docs.github.com/en/copilot/get-started/about-github-copilot
+- Custom instructions support (which surface reads which file): https://docs.github.com/en/copilot/reference/custom-instructions-support
+- Customization cheat sheet (paths for instructions, agents, skills, MCP): https://docs.github.com/en/copilot/reference/customization-cheat-sheet
+- Copilot CLI command reference (`instruction list`, `mcp list`, `skill list`): https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference
+- Copilot CLI config directory (`~/.copilot`, precedence, `disabledSkills`): https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference
+- Copilot CLI custom agents (paths, `dir--name` ids): https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli
+- Configure Copilot CLI (trusted folders, `COPILOT_HOME`): https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/configure-copilot-cli
+- VS Code AI settings (`chat.useAgentsMdFile`, `chat.useClaudeMdFile`, discovery): https://code.visualstudio.com/docs/agents/reference/ai-settings
+- VS Code: migrate customizations (`.vscode/mcp.json` to `.mcp.json`): https://code.visualstudio.com/docs/agent-customization/migrate-customizations
+- VS Code trust and safety (MCP servers follow Workspace Trust): https://code.visualstudio.com/docs/agents/concepts/trust-and-safety
+- VS Code troubleshooting (Chat Diagnostics lists loaded instruction files): https://code.visualstudio.com/docs/agents/agent-troubleshooting/troubleshooting
 
 ## Config files
 
