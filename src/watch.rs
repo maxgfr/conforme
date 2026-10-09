@@ -233,6 +233,14 @@ fn source_locations(id: &str) -> &'static [&'static str] {
             ".amp/settings.jsonc",
         ],
         "deepseek" => &["AGENTS.md", "CLAUDE.md", ".dsh/skills", ".agents/skills"],
+        "vibe" => &[
+            "AGENTS.md",
+            ".vibe/skills",
+            ".vibe/agents",
+            ".vibe/prompts",
+            ".vibe/config.toml",
+            ".agents/skills",
+        ],
         _ => &[],
     }
 }

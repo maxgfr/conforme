@@ -8,6 +8,7 @@ pub mod devin;
 pub mod gemini;
 pub mod kiro;
 pub mod opencode;
+pub mod vibe;
 pub mod zed;
 pub mod zoocode;
 
@@ -398,6 +399,7 @@ pub fn all_adapters() -> Vec<Box<dyn AiToolAdapter>> {
         Box::new(kiro::KiroAdapter),
         Box::new(amp::AmpAdapter),
         Box::new(deepseek::DeepSeekAdapter),
+        Box::new(vibe::VibeAdapter),
     ]
 }
 

@@ -63,6 +63,7 @@ fn static_patterns(id: &str) -> Vec<&'static str> {
         "kiro" => vec![".kiro/steering/*.md", ".kiro/skills/", ".kiro/agents/*.md"],
         "amp" => vec![".agents/skills/"],
         "deepseek" => vec![".dsh/skills/"],
+        "vibe" => vec![".vibe/skills/", ".vibe/agents/*.toml"],
         _ => vec![],
     }
 }

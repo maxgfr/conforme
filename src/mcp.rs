@@ -177,6 +177,242 @@ fn set_string_map(
     entry.insert(key, item);
 }
 
+/// Merge normalized MCP servers into Mistral Vibe's project `.vibe/config.toml`,
+/// an array of `[[mcp_servers]]` tables matched by `name`. Every other setting,
+/// comment and server the source does not define is kept, and so are the
+/// per-server keys conforme does not own (`prompt`, timeouts, `cwd`,
+/// `disabled_tools`, an OAuth `auth`). Vibe expands no `${VAR}`: an
+/// `Authorization: Bearer ${VAR}` header becomes a static `auth` reading the
+/// token from `VAR` (`api_key_env`); any other value is written as it is.
+pub fn merge_vibe_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> Result<String> {
+    let mut document = if existing.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        existing
+            .parse::<DocumentMut>()
+            .context("failed to parse Vibe config TOML")?
+    };
+    if !document.as_table().contains_key("mcp_servers") {
+        document["mcp_servers"] = Item::ArrayOfTables(toml_edit::ArrayOfTables::new());
+    }
+    let entries = document["mcp_servers"]
+        .as_array_of_tables_mut()
+        .context("Vibe config `mcp_servers` must be an array of tables ([[mcp_servers]])")?;
+
+    for server in servers {
+        let position = entries
+            .iter()
+            .position(|t| t.get("name").and_then(Item::as_str) == Some(server.name.as_str()));
+        let index = match position {
+            Some(index) => index,
+            None => {
+                let mut table = Table::new();
+                table["name"] = value(server.name.clone());
+                entries.push(table);
+                entries.len() - 1
+            }
+        };
+        let entry = entries
+            .get_mut(index)
+            .context("newly inserted Vibe MCP server is missing")?;
+        // A synced server is enabled, as with every other target.
+        entry.remove("disabled");
+
+        match &server.transport {
+            McpTransport::Stdio { command, args } => {
+                for key in [
+                    "url",
+                    "headers",
+                    "api_key_env",
+                    "api_key_header",
+                    "api_key_format",
+                ] {
+                    entry.remove(key);
+                }
+                if entry
+                    .get("auth")
+                    .and_then(|a| a.get("type"))
+                    .and_then(Item::as_str)
+                    != Some("oauth")
+                {
+                    entry.remove("auth");
+                }
+                entry.insert("transport", value("stdio"));
+                entry.insert("command", value(command.clone()));
+                let mut toml_args = Array::new();
+                for arg in args {
+                    toml_args.push(arg);
+                }
+                entry.insert("args", value(toml_args));
+                set_string_map(entry, "env", &server.env, true);
+            }
+            McpTransport::Http { url, headers } => {
+                for key in [
+                    "command",
+                    "args",
+                    "env",
+                    "cwd",
+                    "headers",
+                    "api_key_env",
+                    "api_key_header",
+                    "api_key_format",
+                ] {
+                    entry.remove(key);
+                }
+                entry.insert("transport", value("streamable-http"));
+                entry.insert("url", value(url.clone()));
+
+                let mut bearer = None;
+                let mut literal = BTreeMap::new();
+                for (name, header_value) in headers {
+                    let bearer_ref = header_value
+                        .strip_prefix("Bearer ")
+                        .and_then(env_ref_name)
+                        .filter(|_| name.eq_ignore_ascii_case("Authorization"));
+                    match bearer_ref {
+                        Some(var) => bearer = Some(var.to_string()),
+                        None => {
+                            literal.insert(name.clone(), header_value.clone());
+                        }
+                    }
+                }
+                let oauth = entry
+                    .get("auth")
+                    .and_then(|a| a.get("type"))
+                    .and_then(Item::as_str)
+                    == Some("oauth");
+                if bearer.is_none() && literal.is_empty() {
+                    if !oauth {
+                        entry.remove("auth");
+                    }
+                } else {
+                    let mut auth = InlineTable::new();
+                    auth.insert("type", "static".into());
+                    if let Some(var) = bearer {
+                        auth.insert("api_key_env", var.into());
+                        auth.insert("api_key_header", "Authorization".into());
+                        auth.insert("api_key_format", "Bearer {token}".into());
+                    }
+                    if !literal.is_empty() {
+                        let mut table = InlineTable::new();
+                        for (name, header_value) in &literal {
+                            table.insert(name, header_value.as_str().into());
+                        }
+                        auth.insert("headers", Value::InlineTable(table));
+                    }
+                    entry.insert("auth", value(auth));
+                }
+            }
+        }
+    }
+
+    Ok(document.to_string())
+}
+
+/// Parse Vibe's `[[mcp_servers]]` tables into normalized servers (the inverse
+/// of [`merge_vibe_mcp_toml`]). A disabled server is skipped; a static
+/// `auth` reads back as headers (`api_key_env` as `Bearer ${VAR}`).
+pub fn parse_vibe_mcp_toml(content: &str) -> Result<Vec<NormalizedMcpServer>> {
+    if content.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let root: toml::Value = toml::from_str(content).context("failed to parse Vibe config TOML")?;
+    let Some(entries) = root.get("mcp_servers").and_then(toml::Value::as_array) else {
+        return Ok(Vec::new());
+    };
+    let strings = |value: Option<&toml::Value>| -> BTreeMap<String, String> {
+        value
+            .and_then(toml::Value::as_table)
+            .map(|t| {
+                t.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut result = Vec::new();
+    for entry in entries.iter().filter_map(toml::Value::as_table) {
+        let Some(name) = entry.get("name").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        if entry.get("disabled").and_then(toml::Value::as_bool) == Some(true) {
+            continue;
+        }
+        let transport = entry
+            .get("transport")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("stdio");
+        let (transport, env) = if transport == "stdio" {
+            // `command` is a string, or a list holding the arguments too.
+            let mut parts: Vec<String> = match entry.get("command") {
+                Some(toml::Value::String(command)) => vec![command.clone()],
+                Some(toml::Value::Array(items)) => items
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect(),
+                _ => continue,
+            };
+            if parts.is_empty() {
+                continue;
+            }
+            let command = parts.remove(0);
+            let args = entry
+                .get("args")
+                .and_then(toml::Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            parts.extend::<Vec<String>>(args);
+            (
+                McpTransport::Stdio {
+                    command,
+                    args: parts,
+                },
+                strings(entry.get("env")),
+            )
+        } else {
+            let Some(url) = entry.get("url").and_then(toml::Value::as_str) else {
+                continue;
+            };
+            // Legacy top-level `headers` / `api_key_env`, or a static `auth`.
+            let auth = entry
+                .get("auth")
+                .and_then(toml::Value::as_table)
+                .filter(|a| a.get("type").and_then(toml::Value::as_str) != Some("oauth"));
+            let field = |key: &str| {
+                auth.and_then(|a| a.get(key))
+                    .or_else(|| entry.get(key))
+                    .and_then(toml::Value::as_str)
+            };
+            let mut headers = strings(auth.and_then(|a| a.get("headers")).or(entry.get("headers")));
+            if let Some(var) = field("api_key_env") {
+                let header = field("api_key_header").unwrap_or("Authorization");
+                let format = field("api_key_format").unwrap_or("Bearer {token}");
+                headers.insert(
+                    header.to_string(),
+                    format.replace("{token}", &format!("${{{var}}}")),
+                );
+            }
+            (
+                McpTransport::Http {
+                    url: url.to_string(),
+                    headers,
+                },
+                BTreeMap::new(),
+            )
+        };
+        result.push(NormalizedMcpServer {
+            name: name.to_string(),
+            transport,
+            env,
+        });
+    }
+    Ok(result)
+}
+
 /// Parse Codex's TOML MCP tables into normalized server definitions.
 pub fn parse_codex_mcp_toml(content: &str) -> Result<Vec<NormalizedMcpServer>> {
     if content.trim().is_empty() {
@@ -1479,6 +1715,121 @@ command = "node"
 
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].name, "enabled");
+    }
+
+    fn vibe_servers() -> Vec<NormalizedMcpServer> {
+        vec![
+            NormalizedMcpServer {
+                name: "files".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@mcp/server-filesystem".to_string()],
+                },
+                env: BTreeMap::from([("ROOT".to_string(), "/workspace".to_string())]),
+            },
+            NormalizedMcpServer {
+                name: "github".to_string(),
+                transport: McpTransport::Http {
+                    url: "https://api.githubcopilot.com/mcp/".to_string(),
+                    headers: BTreeMap::from([
+                        (
+                            "Authorization".to_string(),
+                            "Bearer ${GITHUB_TOKEN}".to_string(),
+                        ),
+                        ("X-Region".to_string(), "eu".to_string()),
+                    ]),
+                },
+                env: BTreeMap::new(),
+            },
+        ]
+    }
+
+    #[test]
+    fn test_vibe_mcp_toml_round_trips() {
+        // Vibe expands no `${VAR}`: the bearer token is read from the named
+        // variable through a static `auth`, never written as text.
+        let toml = merge_vibe_mcp_toml("", &vibe_servers()).unwrap();
+        assert!(toml.contains("[[mcp_servers]]"), "{toml}");
+        assert!(toml.contains("transport = \"streamable-http\""), "{toml}");
+        assert!(toml.contains("api_key_env = \"GITHUB_TOKEN\""), "{toml}");
+        assert!(!toml.contains("${GITHUB_TOKEN}"), "{toml}");
+        assert_eq!(parse_vibe_mcp_toml(&toml).unwrap(), vibe_servers());
+    }
+
+    #[test]
+    fn test_merge_vibe_mcp_toml_keeps_the_users_settings() {
+        let existing = r#"# my Vibe settings
+active_model = "devstral"
+
+[[mcp_servers]]
+name = "files"
+transport = "stdio"
+command = "old"
+disabled = true
+tool_timeout_sec = 90
+
+[[mcp_servers]]
+name = "mine"
+transport = "stdio"
+command = "my-server"
+
+[[mcp_servers]]
+name = "github"
+transport = "streamable-http"
+url = "https://old.example.com/mcp"
+auth = { type = "oauth", scopes = ["repo"] }
+"#;
+        let servers = vec![
+            vibe_servers().remove(0),
+            NormalizedMcpServer {
+                name: "github".to_string(),
+                transport: McpTransport::Http {
+                    url: "https://api.githubcopilot.com/mcp/".to_string(),
+                    headers: BTreeMap::new(),
+                },
+                env: BTreeMap::new(),
+            },
+        ];
+
+        let toml = merge_vibe_mcp_toml(existing, &servers).unwrap();
+
+        assert!(toml.contains("# my Vibe settings"), "{toml}");
+        assert!(toml.contains("active_model = \"devstral\""), "{toml}");
+        assert!(toml.contains("tool_timeout_sec = 90"), "{toml}");
+        assert!(!toml.contains("disabled = true"), "{toml}");
+        assert!(toml.contains("command = \"npx\""), "{toml}");
+        assert!(toml.contains("name = \"mine\""), "{toml}");
+        // An OAuth login the user set up survives a server without headers.
+        assert!(toml.contains("type = \"oauth\""), "{toml}");
+        assert!(
+            toml.contains("https://api.githubcopilot.com/mcp/"),
+            "{toml}"
+        );
+        assert_eq!(parse_vibe_mcp_toml(&toml).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_parse_vibe_mcp_toml_reads_command_lists_and_skips_disabled() {
+        let toml = r#"[[mcp_servers]]
+name = "cmd"
+transport = "stdio"
+command = ["uvx", "server", "--flag"]
+
+[[mcp_servers]]
+name = "off"
+transport = "stdio"
+command = "x"
+disabled = true
+"#;
+        let parsed = parse_vibe_mcp_toml(toml).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(
+            parsed[0].transport,
+            McpTransport::Stdio {
+                command: "uvx".to_string(),
+                args: vec!["server".to_string(), "--flag".to_string()],
+            }
+        );
     }
 
     #[test]
