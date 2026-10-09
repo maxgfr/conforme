@@ -70,9 +70,98 @@ pub(crate) fn read_skills_from_dir(skills_dir: &Path) -> Result<Vec<NormalizedSk
             content: body.trim().to_string(),
             allowed_tools,
             manual_invocation: read_manual_invocation(&fields, &skill_dir)?,
+            files: read_bundled_files(&skill_dir)?,
         });
     }
     Ok(skills)
+}
+
+/// Files in a skill folder that are not part of the skill's content:
+/// conforme's Codex policy sidecar and system or editor litter.
+fn is_skill_metadata_file(rel: &str) -> bool {
+    let name = rel.rsplit('/').next().unwrap_or(rel);
+    rel == "agents/openai.yaml"
+        || name == ".DS_Store"
+        || name.ends_with('~')
+        || name.ends_with(".swp")
+}
+
+/// The files bundled in a skill folder besides `SKILL.md` (scripts,
+/// references, templates), by `/`-separated relative path. A sub-folder that
+/// holds its own `SKILL.md` is a nested skill, not part of this one. A file
+/// that is not UTF-8 text is not carried (see [`uncarried_skill_files`]).
+pub(crate) fn read_bundled_files(skill_dir: &Path) -> Result<BTreeMap<String, String>> {
+    let mut files = BTreeMap::new();
+    for path in skill_bundle_paths(skill_dir)? {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            files.insert(bundle_rel(skill_dir, &path), content);
+        }
+    }
+    Ok(files)
+}
+
+/// Bundled files of a skill folder that conforme cannot carry to the other
+/// tools (not UTF-8 text: images, binaries).
+pub fn uncarried_skill_files(skill_dir: &Path) -> Result<Vec<PathBuf>> {
+    Ok(skill_bundle_paths(skill_dir)?
+        .into_iter()
+        .filter(|path| std::fs::read_to_string(path).is_err())
+        .collect())
+}
+
+fn bundle_rel(skill_dir: &Path, path: &Path) -> String {
+    path.strip_prefix(skill_dir)
+        .unwrap_or(path)
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn skill_bundle_paths(skill_dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut found = Vec::new();
+    let mut stack = vec![skill_dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)?.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                if !path.join("SKILL.md").exists() {
+                    stack.push(path);
+                }
+            } else if path.is_file() {
+                let rel = bundle_rel(skill_dir, &path);
+                if rel != "SKILL.md" && !is_skill_metadata_file(&rel) {
+                    found.push(path);
+                }
+            }
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
+/// Bundled files left in a skill folder whose `SKILL.md` conforme generates
+/// but that the source no longer bundles: the copy must mirror the source.
+pub(crate) fn stale_bundled_files(
+    skill_dir: &Path,
+    expected: &std::collections::HashSet<PathBuf>,
+) -> Result<Vec<PathBuf>> {
+    if !expected.contains(&skill_dir.join("SKILL.md")) {
+        return Ok(Vec::new());
+    }
+    Ok(skill_bundle_paths(skill_dir)?
+        .into_iter()
+        .filter(|path| !expected.contains(path))
+        .collect())
+}
+
+/// The bundled files of `skill` written into a tool's `skill_dir`.
+fn bundled_outputs(skill_dir: &Path, skill: &NormalizedSkill) -> Vec<(PathBuf, String)> {
+    skill
+        .files
+        .iter()
+        .map(|(rel, content)| (skill_dir.join(rel), content.clone()))
+        .collect()
 }
 
 /// Depth used for tools that walk their skills root without a limit.
@@ -160,6 +249,7 @@ pub(crate) fn read_flat_skills_from_dir(skills_dir: &Path) -> Result<Vec<Normali
                 .get("disable-model-invocation")
                 .and_then(yaml_flag)
                 .unwrap_or(false),
+            files: Default::default(),
         });
     }
     Ok(skills)
@@ -378,6 +468,7 @@ pub fn generate_claude_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        files.extend(bundled_outputs(&skill_dir, skill));
         if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
@@ -410,6 +501,7 @@ pub fn generate_cursor_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        files.extend(bundled_outputs(&skill_dir, skill));
         if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
@@ -441,6 +533,7 @@ pub fn generate_codex_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        files.extend(bundled_outputs(&skill_dir, skill));
         if let Some(policy) = invocation_policy(&skill_dir, skill, true)? {
             files.push(policy);
         }
@@ -484,6 +577,7 @@ pub fn generate_copilot_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        files.extend(bundled_outputs(&skill_dir, skill));
         if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
@@ -1082,6 +1176,7 @@ pub fn generate_kiro_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        files.extend(bundled_outputs(&skill_dir, skill));
         if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
@@ -1121,6 +1216,7 @@ pub fn generate_devin_skills(
         }
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        files.extend(bundled_outputs(&skill_dir, skill));
         if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
@@ -1153,6 +1249,7 @@ pub fn generate_zoocode_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        files.extend(bundled_outputs(&skill_dir, skill));
         if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
@@ -1186,6 +1283,7 @@ pub fn generate_opencode_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        files.extend(bundled_outputs(&skill_dir, skill));
         if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
@@ -1319,6 +1417,7 @@ pub fn generate_deepseek_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        files.extend(bundled_outputs(&skill_dir, skill));
         if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
@@ -1352,6 +1451,7 @@ pub fn generate_gemini_skills(
         add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
         files.push((skill_path, content));
+        files.extend(bundled_outputs(&skill_dir, skill));
         if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
             files.push(policy);
         }
@@ -1562,5 +1662,32 @@ mod tests {
         .map(|t| t.to_string())
         .collect();
         assert_eq!(claude_tools(&tools), tools);
+    }
+
+    #[test]
+    fn test_bundled_files_skip_metadata_and_nested_skills() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill = dir.path().join("deploy");
+        std::fs::create_dir_all(skill.join("scripts")).unwrap();
+        std::fs::create_dir_all(skill.join("agents")).unwrap();
+        std::fs::create_dir_all(skill.join("nested")).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "---\nname: deploy\n---\nRun.\n").unwrap();
+        std::fs::write(skill.join("scripts/run.sh"), "echo\n").unwrap();
+        std::fs::write(skill.join("agents/openai.yaml"), "policy: {}\n").unwrap();
+        std::fs::write(skill.join(".DS_Store"), "x").unwrap();
+        std::fs::write(
+            skill.join("nested/SKILL.md"),
+            "---\nname: nested\n---\nN.\n",
+        )
+        .unwrap();
+        std::fs::write(skill.join("logo.png"), [0xffu8, 0xfe, 0x00]).unwrap();
+
+        let files = read_bundled_files(&skill).unwrap();
+
+        assert_eq!(files.keys().collect::<Vec<_>>(), vec!["scripts/run.sh"]);
+        assert_eq!(
+            uncarried_skill_files(&skill).unwrap(),
+            vec![skill.join("logo.png")]
+        );
     }
 }

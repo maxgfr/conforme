@@ -198,40 +198,35 @@ impl ManagedDir {
     }
 }
 
-/// Clean orphan files from managed directories.
-/// Removes top-level files that carry the directory's orphan suffix, exist on
-/// disk, and are not in the expected file list, plus legacy duplicates of
-/// generated files and skills (see [`ManagedDir::superseded_by`]).
-pub fn clean_orphans(
+/// The orphans of the managed directories, without removing anything: the
+/// top-level files that carry a directory's orphan suffix and that the
+/// expected file list lacks, and, inside a skill folder whose `SKILL.md` is
+/// expected, the bundled files the source no longer has. Skill folders
+/// themselves are never orphans (some may be the user's). `check` reports
+/// these, `sync` removes them through [`clean_orphans`].
+pub fn find_orphans(
     managed_dirs: &[ManagedDir],
     expected_files: &[(PathBuf, String)],
 ) -> Result<Vec<PathBuf>> {
     let expected_set: std::collections::HashSet<_> =
         expected_files.iter().map(|(p, _)| p.clone()).collect();
 
-    let mut cleaned = Vec::new();
+    let mut orphans = Vec::new();
     for dir in managed_dirs {
-        if !dir.path.is_dir() {
+        if !dir.path.is_dir() || dir.superseded_by.is_some() {
             continue;
         }
-        if let Some(current) = &dir.superseded_by {
-            if dir.path == *current {
-                continue;
-            }
-            cleaned.extend(match dir.orphan_suffix {
-                Some(suffix) => clean_superseded_files(&dir.path, current, suffix, &expected_set)?,
-                None => clean_superseded_skills(&dir.path, current, &expected_set)?,
-            });
-            continue;
-        }
-        let Some(suffix) = dir.orphan_suffix else {
-            continue;
-        };
         let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir.path)?
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .collect();
         paths.sort();
+        let Some(suffix) = dir.orphan_suffix else {
+            for folder in paths.iter().filter(|p| p.is_dir()) {
+                orphans.extend(crate::skills::stale_bundled_files(folder, &expected_set)?);
+            }
+            continue;
+        };
         for path in paths {
             let generated_kind = path
                 .file_name()
@@ -241,10 +236,39 @@ pub fn clean_orphans(
                 && !expected_set.contains(&path)
                 && !dir.keep.is_some_and(|keep| keep(&path))
             {
-                std::fs::remove_file(&path)?;
-                cleaned.push(path);
+                orphans.push(path);
             }
         }
+    }
+    Ok(orphans)
+}
+
+/// Clean orphan files from managed directories: every file
+/// [`find_orphans`] lists, plus legacy duplicates of generated files and
+/// skills (see [`ManagedDir::superseded_by`]).
+pub fn clean_orphans(
+    managed_dirs: &[ManagedDir],
+    expected_files: &[(PathBuf, String)],
+) -> Result<Vec<PathBuf>> {
+    let expected_set: std::collections::HashSet<_> =
+        expected_files.iter().map(|(p, _)| p.clone()).collect();
+
+    let mut cleaned = Vec::new();
+    for dir in managed_dirs {
+        let Some(current) = dir.superseded_by.as_ref().filter(|_| dir.path.is_dir()) else {
+            continue;
+        };
+        if dir.path == *current {
+            continue;
+        }
+        cleaned.extend(match dir.orphan_suffix {
+            Some(suffix) => clean_superseded_files(&dir.path, current, suffix, &expected_set)?,
+            None => clean_superseded_skills(&dir.path, current, &expected_set)?,
+        });
+    }
+    for path in find_orphans(managed_dirs, expected_files)? {
+        std::fs::remove_file(&path)?;
+        cleaned.push(path);
     }
     Ok(cleaned)
 }

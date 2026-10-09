@@ -682,7 +682,16 @@ pub fn run_check(project_root: &Path, from: Option<&str>, verbose: bool) -> Resu
 
     for adapter in targets {
         let generated = target_files(project_root, &source_id, adapter, &config, &source_files)?;
-        let tool_diffs = differing_files(&generated)?;
+        let mut tool_diffs = differing_files(&generated)?;
+        // An orphan sync would remove (a stale rule, a bundled file the source
+        // dropped) is out of sync too.
+        tool_diffs.extend(target_orphans(
+            project_root,
+            &source_id,
+            adapter,
+            &config,
+            &project_cfg,
+        )?);
 
         if !tool_diffs.is_empty() {
             out_of_sync.push((adapter.name().to_string(), tool_diffs));
@@ -811,7 +820,16 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
                     &source_files,
                 )
                 .and_then(|generated| differing_files(&generated))
-                {
+                .and_then(|mut differing| {
+                    differing.extend(target_orphans(
+                        project_root,
+                        source_id,
+                        adapter.as_ref(),
+                        cfg,
+                        &project_cfg,
+                    )?);
+                    Ok(differing)
+                }) {
                     Ok(differing) if differing.is_empty() => "In sync".green().to_string(),
                     Ok(_) => "Out of sync".yellow().to_string(),
                     Err(_) => "Error".red().to_string(),
@@ -826,6 +844,25 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
 
     println!();
     Ok(())
+}
+
+/// The orphans `sync` would remove from a target's managed directories (see
+/// [`adapters::find_orphans`]); none when cleaning is turned off.
+fn target_orphans(
+    project_root: &Path,
+    source_id: &str,
+    target: &dyn AiToolAdapter,
+    config: &NormalizedConfig,
+    project_cfg: &ProjectConfig,
+) -> Result<Vec<std::path::PathBuf>> {
+    if !project_cfg.clean {
+        return Ok(Vec::new());
+    }
+    let config = target_config(project_root, source_id, target, config);
+    adapters::find_orphans(
+        &target.managed_directories(project_root),
+        &target.generate(project_root, &config)?,
+    )
 }
 
 /// The generated files whose content on disk differs (or that are missing).
@@ -855,23 +892,42 @@ pub fn run_diff(
     let adapters = adapters::all_adapters();
     let mut any_diff = false;
     let source_files = source_files(project_root, &source_id);
-    let mut outputs: Vec<(String, Vec<(std::path::PathBuf, String)>)> = Vec::new();
+    type Output = (
+        String,
+        Vec<(std::path::PathBuf, String)>,
+        Vec<std::path::PathBuf>,
+    );
+    let mut outputs: Vec<Output> = Vec::new();
     if !config.is_empty() {
         for adapter in selected_targets(&adapters, project_root, &source_id, only, &project_cfg) {
             outputs.push((
                 adapter.name().to_string(),
                 target_files(project_root, &source_id, adapter, &config, &source_files)?,
+                target_orphans(project_root, &source_id, adapter, &config, &project_cfg)?,
             ));
         }
         if let Some(agents_md) =
             generated_agents_md(project_root, &source_id, &project_cfg, &config)
         {
-            outputs.push(("AGENTS.md".to_string(), vec![agents_md]));
+            outputs.push(("AGENTS.md".to_string(), vec![agents_md], Vec::new()));
         }
     }
 
-    for (name, generated) in &outputs {
+    for (name, generated, orphans) in &outputs {
         let mut tool_has_diff = false;
+        for path in orphans {
+            if !tool_has_diff {
+                println!("{} {}:", ">".cyan(), name.bold());
+                tool_has_diff = true;
+                any_diff = true;
+            }
+            let rel_path = path.strip_prefix(project_root).unwrap_or(path);
+            println!(
+                "  {}: {}",
+                rel_path.display().to_string().bold(),
+                "orphan, sync removes it".red()
+            );
+        }
 
         for (path, expected) in generated {
             let existing = if path.exists() {
@@ -1056,8 +1112,8 @@ pub fn run_migrate(
         .into_iter()
         .filter(|dir| !staying_dirs.contains(&dir.path))
         .collect();
-    // A skill folder that bundles other files (scripts, references) keeps
-    // them, and its SKILL.md with them: only SKILL.md reaches the output.
+    // A skill folder bundling a file conforme cannot carry (not text) stays,
+    // its SKILL.md with it; text files (scripts, references) are copied.
     let bundled_skill_dirs: Vec<std::path::PathBuf> = source_adapter
         .managed_directories(project_root)
         .iter()
@@ -1350,8 +1406,9 @@ fn migrated_agents_md(
     Ok(Some((path, content)))
 }
 
-/// Skill folders of a skills directory that hold files besides `SKILL.md`
-/// and conforme's `agents/openai.yaml`.
+/// Skill folders of a skills directory that bundle a file conforme cannot
+/// carry to the output (not UTF-8 text: an image, a binary). Text files are
+/// copied with the skill.
 fn bundled_skill_folders(skills_dir: &Path) -> Vec<std::path::PathBuf> {
     let Ok(entries) = std::fs::read_dir(skills_dir) else {
         return Vec::new();
@@ -1360,12 +1417,7 @@ fn bundled_skill_folders(skills_dir: &Path) -> Vec<std::path::PathBuf> {
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|folder| folder.is_dir())
         .filter(|folder| {
-            collect_files_recursive(folder).is_ok_and(|files| {
-                files.iter().any(|file| {
-                    let rel = file.strip_prefix(folder).unwrap_or(file);
-                    rel != Path::new("SKILL.md") && rel != Path::new("agents/openai.yaml")
-                })
-            })
+            crate::skills::uncarried_skill_files(folder).is_ok_and(|files| !files.is_empty())
         })
         .collect()
 }

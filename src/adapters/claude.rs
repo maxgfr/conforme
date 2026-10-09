@@ -225,6 +225,7 @@ impl AiToolAdapter for ClaudeAdapter {
                             manual_invocation: crate::skills::read_manual_invocation(
                                 &fields, &skill_dir,
                             )?,
+                            files: crate::skills::read_bundled_files(&skill_dir)?,
                         });
                     }
                 }
@@ -267,6 +268,7 @@ impl AiToolAdapter for ClaudeAdapter {
                     .get("disable-model-invocation")
                     .and_then(crate::skills::yaml_flag)
                     == Some(true),
+                files: Default::default(),
             });
         }
 

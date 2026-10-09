@@ -30,6 +30,11 @@ pub struct NormalizedSkill {
     pub allowed_tools: Vec<String>,
     /// Keep this skill available only through explicit user invocation.
     pub manual_invocation: bool,
+    /// Files bundled in the skill folder besides `SKILL.md` (scripts,
+    /// references, templates), by path relative to the folder with `/`
+    /// separators. Copied into every tool's copy of the skill, so a `SKILL.md`
+    /// that points at `scripts/check.sh` finds it everywhere.
+    pub files: BTreeMap<String, String>,
 }
 
 /// A normalized MCP server definition.

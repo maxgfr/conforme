@@ -2617,8 +2617,8 @@ fn test_migrate_refuses_to_overwrite_a_different_agents_md() {
 
 #[test]
 fn test_migrate_keeps_what_the_output_cannot_hold() {
-    // Bundled skill files are not copied (only SKILL.md is), and Zed has no
-    // agents: neither may be deleted with the source.
+    // A skill's text files travel with it; a file conforme cannot carry (not
+    // text) keeps its folder in place; Zed has no agents, so they stay.
     let dir = TempDir::new().unwrap();
     let root = dir.path();
     fs::write(root.join("GEMINI.md"), "Instr.\n").unwrap();
@@ -2630,6 +2630,18 @@ fn test_migrate_keeps_what_the_output_cannot_hold() {
     )
     .unwrap();
     fs::write(skill.join("scripts/run.sh"), "echo deploy\n").unwrap();
+    let logo = root.join(".gemini/skills/brand");
+    fs::create_dir_all(&logo).unwrap();
+    fs::write(
+        logo.join("SKILL.md"),
+        "---\nname: brand\ndescription: Brand\n---\nUse logo.png.\n",
+    )
+    .unwrap();
+    fs::write(
+        logo.join("logo.png"),
+        [0x89u8, 0x50, 0x4e, 0x47, 0xff, 0xfe],
+    )
+    .unwrap();
     fs::create_dir_all(root.join(".gemini/agents")).unwrap();
     let agent = "---\nname: rev\ndescription: Review\nkind: local\n---\nReview.\n";
     fs::write(root.join(".gemini/agents/rev.md"), agent).unwrap();
@@ -2637,15 +2649,90 @@ fn test_migrate_keeps_what_the_output_cannot_hold() {
     migrate(root, "gemini", "zed");
 
     assert_eq!(
-        fs::read_to_string(skill.join("scripts/run.sh")).unwrap(),
+        fs::read_to_string(root.join(".agents/skills/deploy/scripts/run.sh")).unwrap(),
         "echo deploy\n"
     );
-    assert!(skill.join("SKILL.md").exists());
+    assert!(!skill.join("SKILL.md").exists());
+    assert!(!skill.join("scripts/run.sh").exists());
+    assert!(logo.join("logo.png").exists());
+    assert!(logo.join("SKILL.md").exists());
     assert_eq!(
         fs::read_to_string(root.join(".gemini/agents/rev.md")).unwrap(),
         agent
     );
     assert!(!root.join("GEMINI.md").exists());
+}
+
+/// Every skills directory each tool reads, relative to the project root.
+const SKILL_ROOTS: &[&str] = &[
+    ".cursor/skills",
+    ".devin/skills",
+    ".github/skills",
+    ".agents/skills",
+    ".opencode/skills",
+    ".roo/skills",
+    ".gemini/skills",
+    ".kiro/skills",
+    ".dsh/skills",
+];
+
+#[test]
+fn test_bundled_skill_files_reach_every_tool_and_stay_in_step() {
+    // A skill's scripts and references are part of it: every tool's copy gets
+    // them, and a file removed from the source leaves every copy.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    let skill = root.join(".claude/skills/deploy");
+    fs::create_dir_all(skill.join("scripts")).unwrap();
+    fs::create_dir_all(skill.join("references")).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy\n---\nRun scripts/run.sh, see references/env.md.\n",
+    )
+    .unwrap();
+    fs::write(skill.join("scripts/run.sh"), "echo deploy\n").unwrap();
+    fs::write(skill.join("references/env.md"), "# Env\n").unwrap();
+    fs::write(root.join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    for tool_dir in [
+        ".cursor",
+        ".devin",
+        ".codex",
+        ".opencode",
+        ".roo",
+        ".gemini",
+        ".kiro",
+        ".dsh",
+    ] {
+        fs::create_dir_all(root.join(tool_dir)).unwrap();
+    }
+    fs::create_dir_all(root.join(".github/skills")).unwrap();
+
+    run(root, &["sync"]).success();
+    for skills_root in SKILL_ROOTS {
+        let copy = root.join(skills_root).join("deploy");
+        assert_eq!(
+            fs::read_to_string(copy.join("scripts/run.sh")).unwrap(),
+            "echo deploy\n",
+            "{skills_root}"
+        );
+        assert_eq!(
+            fs::read_to_string(copy.join("references/env.md")).unwrap(),
+            "# Env\n",
+            "{skills_root}"
+        );
+    }
+    run(root, &["check"]).success();
+
+    fs::remove_file(skill.join("references/env.md")).unwrap();
+    run(root, &["check"]).failure();
+    run(root, &["sync"]).success();
+    for skills_root in SKILL_ROOTS {
+        let copy = root.join(skills_root).join("deploy");
+        assert!(!copy.join("references/env.md").exists(), "{skills_root}");
+        assert!(copy.join("scripts/run.sh").exists(), "{skills_root}");
+    }
+    run(root, &["check"]).success();
 }
 
 #[test]

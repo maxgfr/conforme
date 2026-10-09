@@ -53,13 +53,15 @@ impl AiToolAdapter for OpenCodeAdapter {
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
-        // Only the agents directory is managed. The top-level `.opencode/`
-        // also holds user-owned files (`package.json` for plugins, commands,
-        // tools, …) and must never be swept for orphans.
-        vec![ManagedDir::files(
-            project_root.join(".opencode").join("agents"),
-            ".md",
-        )]
+        // The agents and skills directories are managed (skill folders are
+        // never swept, only the stale bundled files of the ones conforme
+        // writes). The top-level `.opencode/` also holds user-owned files
+        // (`package.json` for plugins, commands, tools, …) and must never be
+        // swept for orphans.
+        vec![
+            ManagedDir::files(project_root.join(".opencode").join("agents"), ".md"),
+            ManagedDir::subdirs(project_root.join(".opencode").join("skills")),
+        ]
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
