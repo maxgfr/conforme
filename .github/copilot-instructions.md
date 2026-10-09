@@ -368,13 +368,14 @@ conforme migrate --source X --output Y    # Migrate config between tools
 
 This project uses Claude Code skills in `.claude/skills/`:
 
-- **verify-providers** — Audit all 13 provider adapters against the tools as they ship today (upstream alive, docs and source read on the web, fact sheet vs adapter code, safety invariants), prove every tool's copy of every skill matches the source (`scripts/skills_conformity.py`), check with the tools' own CLIs (`references/live-cli.md`), run every command with every tool as source plus a second pass by concern, keep secrets out of the copies, check links, then fix with regression tests
+- **verify-providers** — Verify all 13 provider adapters online: what changed upstream since the last audit (web search, changelogs, releases), a fact sheet in which every line carries a proof URL fetched during the run (vendor docs, and the tool's source when public, which wins when they disagree; subagent brief in `references/online-brief.md`), compared with the adapter code and safety invariants; then prove every tool's copy of every skill matches the source (`scripts/skills_conformity.py`), check with the tools' own CLIs (`references/live-cli.md`), run every command with every tool as source plus a second pass by concern, keep secrets out of the copies, check links, then fix with regression tests
 
 ## Upstream documentation
 
-The project configures no MCP server. Upstream formats are checked against the
-vendors' own pages (the URLs in `docs/providers/<tool>.md`) with the
-`verify-providers` skill. An MCP server added to `.mcp.json` is synced into
+The project configures no MCP server. Upstream formats are checked online
+against the vendors' own pages, changelogs and source with the
+`verify-providers` skill; each `docs/providers/<tool>.md` says when and
+against which version (`Last verified online`). An MCP server added to `.mcp.json` is synced into
 tracked files of every tool: reference secrets as `${VAR}`, never as values.
 
 ## Dogfooding

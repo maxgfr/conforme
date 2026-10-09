@@ -2,6 +2,8 @@
 
 > AWS's AI IDE, successor to Amazon Q CLI. Source: `--from kiro`
 
+**Last verified online:** 2026-10-09, against Kiro CLI 2.28.0 and IDE 1.2.37 (https://kiro.dev/changelog/)
+
 ## Official docs
 
 - Steering: https://kiro.dev/docs/steering/
@@ -18,6 +20,14 @@
 - CLI 3.0 agent config: https://kiro.dev/docs/cli/v3/agent-config/
 - Built-in tools: https://kiro.dev/docs/reference/built-in-tools/
 - Workflows: https://kiro.dev/docs/workflows/
+- Configuration scopes (every `.kiro/` path): https://kiro.dev/docs/configuration/
+- CLI commands (`agent list|validate`, `mcp list workspace`, `KIRO_HOME`): https://kiro.dev/docs/reference/cli-commands/
+- Workspace trust: https://kiro.dev/docs/permissions/#workspace-trust
+- CLI V3 migration (JSON to Markdown agents, `includeMcpJson`): https://kiro.dev/docs/cli/v3/migration-guide/
+- IDE agent config (Markdown agent format): https://kiro.dev/docs/ide/whats-new-v1/agent-config/
+- MCP security (`${VAR}` expansion, approved env vars): https://kiro.dev/docs/mcp/security/
+- Chat context (`/context show` lists loaded steering): https://kiro.dev/docs/cli/chat/context/
+- Subagents: https://kiro.dev/docs/custom-agents/subagents/
 
 ## Config files
 

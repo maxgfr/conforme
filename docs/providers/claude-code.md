@@ -2,6 +2,8 @@
 
 > Anthropic's CLI agent. Source: `--from claude`
 
+**Last verified online:** 2026-10-09, against Claude Code 2.1.295 (https://code.claude.com/docs/en/changelog)
+
 ## Official docs
 
 - Overview: https://code.claude.com/docs/en/overview
@@ -13,6 +15,12 @@
 - Hooks guide: https://code.claude.com/docs/en/hooks-guide
 - Settings: https://code.claude.com/docs/en/settings
 - Changelog: https://code.claude.com/docs/en/changelog
+- Settings reference (every key: `enableAllProjectMcpServers`, `claudeMdExcludes`, `pluginConfigs`): https://code.claude.com/docs/en/settings-reference
+- `.claude/` directory map (every file and what reads it): https://code.claude.com/docs/en/claude-directory
+- Debug your config (`/context`, `claude doctor`, `.mcp.json` approval): https://code.claude.com/docs/en/debug-your-config
+- CLI reference (`claude doctor`, `--setting-sources`, `--mcp-config`): https://code.claude.com/docs/en/cli-reference
+- Commands (`/memory`, `/skills`, `/mcp`, `/import`): https://code.claude.com/docs/en/commands
+- Permissions and workspace trust: https://code.claude.com/docs/en/permissions
 
 ## Config files
 

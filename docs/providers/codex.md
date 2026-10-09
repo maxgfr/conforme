@@ -2,6 +2,8 @@
 
 > OpenAI's AI CLI agent. Source: `--from codex`
 
+**Last verified online:** 2026-10-09, against Codex CLI rust-v0.162.0 (https://github.com/openai/codex/releases)
+
 ## Official docs
 
 - AGENTS.md guide: https://learn.chatgpt.com/docs/agent-configuration/agents-md
@@ -15,6 +17,11 @@
 - Subagents: https://learn.chatgpt.com/docs/agent-configuration/subagents
 - Changelog: https://learn.chatgpt.com/docs/changelog
 - GitHub: https://github.com/openai/codex
+- Annotated `config.toml` (`[mcp_servers.*]`, `project_doc_fallback_filenames`, `trust_level`): https://learn.chatgpt.com/docs/config-file/config-sample
+- Approvals and security (`trust_level = "untrusted"` disables project config): https://learn.chatgpt.com/docs/agent-approvals-security
+- Environment variables (`CODEX_HOME`): https://learn.chatgpt.com/docs/config-file/environment-variables
+- Custom prompts (deprecated for skills, user-level only): https://learn.chatgpt.com/docs/custom-prompts
+- Command rules (Starlark `.codex/rules/*.rules`, not instruction rules): https://learn.chatgpt.com/docs/agent-configuration/rules
 
 ## Config files
 

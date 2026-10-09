@@ -2,6 +2,8 @@
 
 > AI code editor with .mdc rule files. Source: `--from cursor`
 
+**Last verified online:** 2026-10-09, against Cursor 3.24.9 (https://cursor.com/changelog)
+
 ## Official docs
 
 - Rules: https://cursor.com/docs/rules
@@ -12,6 +14,10 @@
 - Changelog (v2.4 - skills/subagents): https://cursor.com/changelog/2-4
 - Blog (agent best practices): https://cursor.com/blog/agent-best-practices
 - Forum: https://forum.cursor.com
+- Rules help (`.cursorrules` legacy, `CLAUDE.md` always applied, rules identified by path): https://cursor.com/help/customization/rules
+- CLI: what it loads (`AGENTS.md`, `CLAUDE.md`, `.cursor/rules`, `mcp.json`): https://cursor.com/docs/cli/using
+- CLI parameters (`agent mcp list`, `list-tools`, `enable`): https://cursor.com/docs/cli/reference/parameters
+- Security and workspace trust: https://cursor.com/docs/agent/security
 
 ## Config files
 
@@ -54,7 +60,8 @@
 - Skills use the standard SKILL.md format; `name` and `description` are required, and `paths`, `disable-model-invocation`, `icon`, `color` and `metadata` are optional (conforme emits only `name` + `description`)
 - Cursor discovers skills from `.cursor/skills/` and `.agents/skills/` and, for compatibility, `.claude/skills/` and `.codex/skills/`; subagents likewise from `.claude/agents/` and `.codex/agents/`. conforme writes the Cursor-native `.cursor/` locations, so a skill synced to several of those directories (Claude Code, Codex) may be loaded twice by Cursor
 - With Cursor as the source conforme reads only `.cursor/skills/`, and `gitignore install` with `source = "cursor"` ignores the `.agents/skills/` Codex output although Cursor loads it (known gaps, design pending)
-- A root `.cursorrules` still makes conforme detect Cursor, but it is not read, and Cursor's docs no longer mention it (known gap)
+- A root `.cursorrules` still makes conforme detect Cursor, but it is not read; Cursor calls it "legacy and will be deprecated" (known gap)
+- Cursor also applies a root `CLAUDE.md` to every conversation, "regardless of any `alwaysApply`": with the Claude Code target synced too, the instructions reach Cursor twice (in `CLAUDE.md` and in `general.mdc`). Cursor identifies rules by their full path, so same-named rules in different folders all apply; conforme writes them back flat, one file per name
 - Cursor walks the skills root recursively; conforme reads nested skill folders too (written back flat)
 - Cursor reads `AGENTS.md` natively at the root and in subdirectories, combined with the parent ones; it is loaded alongside rules, not as a fallback
 - MCP uses the standard `mcpServers` JSON format. Local servers use `type: "stdio"` + `command`/`args`; per Cursor's MCP docs, remote servers need only `url` (+ optional `headers`/`auth`) and omit `type`, which is what conforme writes. `env` is written on stdio servers only

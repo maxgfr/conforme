@@ -2,6 +2,8 @@
 
 > Cognition's AI IDE, formerly Windsurf. Source: `--from devin`
 
+**Last verified online:** 2026-10-09, against Devin Desktop 3.10.48 and Devin CLI 3000.11.3 (https://docs.devin.ai/desktop/changelog)
+
 Windsurf was renamed Devin Desktop in v3.0.12 (2026-06-02). Since v3.6.21
 (2026-07-29) new tabs defaulted to the **Devin Local** agent, and v3.9.19
 (2026-09-08) removed Cascade, Windsurf's original agent: "Devin Local is now
@@ -22,6 +24,11 @@ conforme's tool id was `windsurf` until 4.0.0 and is now `devin`.
 - CLI changelog: https://docs.devin.ai/cli/changelog/stable
 - Rename announcement: https://devin.ai/blog/windsurf-is-now-devin-desktop
 - Legacy Cascade pages (still online, describe the removed agent): https://docs.devin.ai/desktop/cascade/memories, https://docs.devin.ai/desktop/cascade/agents-md, https://docs.devin.ai/desktop/cascade/skills, https://docs.devin.ai/desktop/cascade/mcp, https://docs.devin.ai/desktop/cascade/hooks, https://docs.devin.ai/desktop/cascade/workflows
+- CLI: read config from other tools (`read_config_from`): https://docs.devin.ai/cli/reference/configuration/read-config-from
+- CLI: global versus local config (MCP merged by name): https://docs.devin.ai/cli/reference/configuration/global-vs-local
+- CLI: `config.json` keys: https://docs.devin.ai/cli/reference/configuration/config-file
+- CLI commands (`rules list`, `skills list`, `mcp list`, `migrate`): https://docs.devin.ai/cli/reference/commands
+- CLI extensibility (`.devin/` layout, imported files): https://docs.devin.ai/cli/extensibility/index
 
 ## Config files
 
@@ -61,7 +68,8 @@ conforme's tool id was `windsurf` until 4.0.0 and is now `devin`.
 - Manual-only skills are `triggers: [user]` (default `[user, model]`); conforme writes that, and reads a `triggers` list without `model` as manual. Devin documents no `disable-model-invocation`, so conforme does not write it here
 - Skill `allowed-tools` takes Devin's own names (`read`, `edit`, `grep`, `glob`, `exec`, `write`, `mcp__server__tool`) and only skips permission prompts ("Tools that are not listed remain available"), so conforme does not copy another tool's list into it
 - MCP: "The MCP config file location changed in v3000.3 … newer versions store them in dedicated files". conforme writes `transport: "http"` for remote servers (its normalized remote transport is streamable HTTP), `env` only on stdio servers, and `${env:VAR}` for environment references (read back as `${VAR}`)
-- The Devin Local page still shows `.devin/config.json` for MCP; the MCP configuration page (newer) gives `.devin/mcp_config.json`, which conforme follows
+- Project MCP servers live in `.devin/mcp_config.json`: the CLI configuration reference says "Only permissions, read_config_from, and hooks are available in `.devin/config.json`; MCP servers go in `.devin/mcp_config.json`" (the older Devin Local page still shows `config.json`)
+- Devin also imports other tools' files (`.cursor/rules`, `.claude/skills`, `.github/skills`, …): with those targets synced too, the same rules and skills reach Devin twice. `read_config_from` in `.devin/config.json` turns an import off per tool
 - Devin Local also reads `CLAUDE.md`, `.cursor/rules/`, `AGENTS.md`, `AGENT.md` and a personal `AGENTS.local.md` (https://docs.devin.ai/cli/extensibility/rules); AGENTS.md at the root is always-on, and in a subdirectory it applies to `<dir>/**`
 - Devin also loads skills from `.agents/skills/`, `.claude/skills/` and `.cursor/skills/`, so a skill can appear twice when Codex/Zed, Claude Code or Cursor are synced too
 - `globs` is written as one comma-separated string, the historical Windsurf form, with brace groups expanded (`src/*.{ts,tsx}` → `src/*.ts, src/*.tsx`); a YAML list is also read. Whether the current agent splits a comma-separated string is not documented (unverified)
