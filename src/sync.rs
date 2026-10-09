@@ -1389,11 +1389,10 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
     Ok(())
 }
 
-/// Recursively collect all files under a directory.
 /// The AGENTS.md `migrate` writes when the output keeps its instructions
 /// there (it reads AGENTS.md and generates nothing for instructions or
-/// rules), or `None`. An existing AGENTS.md that differs, and that the source
-/// does not read itself, is refused rather than overwritten.
+/// rules), or `None`. An existing AGENTS.md whose text the source lacks, and
+/// that the source does not read itself, is refused rather than overwritten.
 fn migrated_agents_md(
     project_root: &Path,
     source: &dyn AiToolAdapter,
@@ -1419,8 +1418,25 @@ fn migrated_agents_md(
         // The source already keeps its instructions there.
         return Ok(None);
     }
-    let content = markdown::export_as_agents_md(config);
-    if path.exists() && !crate::hash::contents_match(&std::fs::read_to_string(&path)?, &content) {
+    let Some(existing) = path
+        .exists()
+        .then(|| std::fs::read_to_string(&path))
+        .transpose()?
+    else {
+        return Ok(Some((path, markdown::export_as_agents_md(config))));
+    };
+    // An AGENTS.md left by an earlier switch (Codex, then Zed) is rewritten
+    // when its instructions and rules are already in the source (only the
+    // layout differs); its skill, agent and MCP sections the source lacks
+    // (an agent Zed cannot hold) are carried into the new one. Text the
+    // source lacks is the user's: refused.
+    let old = markdown::parse_agents_md(&existing).ok();
+    let carried = old.as_ref().map(|old| with_sections_of(config, old));
+    let merged = carried.as_ref().unwrap_or(config);
+    let content = markdown::export_as_agents_md(merged);
+    let text_kept = crate::hash::contents_match(&existing, &content)
+        || old.as_ref().is_some_and(|old| text_is_covered(old, config));
+    if !text_kept {
         bail!(
             "{} keeps its instructions in AGENTS.md, which already exists and differs from what {} holds. \
              Merge the two by hand (or remove AGENTS.md), then migrate again; nothing was changed.",
@@ -1429,6 +1445,46 @@ fn migrated_agents_md(
         );
     }
     Ok(Some((path, content)))
+}
+
+/// Whether the instructions and every rule body of an existing AGENTS.md
+/// are already in `config` (whitespace aside).
+fn text_is_covered(old: &NormalizedConfig, config: &NormalizedConfig) -> bool {
+    let normalize = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut text = config.instructions.clone();
+    for rule in &config.rules {
+        text.push('\n');
+        text.push_str(&rule.content);
+    }
+    let text = normalize(&text);
+    std::iter::once(old.instructions.as_str())
+        .chain(old.rules.iter().map(|r| r.content.as_str()))
+        .map(normalize)
+        .filter(|piece| !piece.is_empty())
+        .all(|piece| text.contains(&piece))
+}
+
+/// `config` plus the skill, agent and MCP sections of `old` it lacks.
+fn with_sections_of(config: &NormalizedConfig, old: &NormalizedConfig) -> NormalizedConfig {
+    let same =
+        |a: &str, b: &str| crate::config::sanitize_name(a) == crate::config::sanitize_name(b);
+    let mut merged = config.clone();
+    for skill in &old.skills {
+        if !merged.skills.iter().any(|s| same(&s.name, &skill.name)) {
+            merged.skills.push(skill.clone());
+        }
+    }
+    for agent in &old.agents {
+        if !merged.agents.iter().any(|a| same(&a.name, &agent.name)) {
+            merged.agents.push(agent.clone());
+        }
+    }
+    for server in &old.mcp_servers {
+        if !merged.mcp_servers.iter().any(|s| s.name == server.name) {
+            merged.mcp_servers.push(server.clone());
+        }
+    }
+    merged
 }
 
 /// Skill folders of a skills directory that bundle a file conforme cannot
@@ -1471,6 +1527,7 @@ fn migrated_files(dir: &adapters::ManagedDir) -> Result<Vec<std::path::PathBuf>>
     })
 }
 
+/// Recursively collect all files under a directory.
 fn collect_files_recursive(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
     let mut files = Vec::new();
     if !dir.is_dir() {
