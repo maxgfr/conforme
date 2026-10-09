@@ -1687,9 +1687,9 @@ environment_id = "local"
     #[test]
     fn test_generate_zoocode_mcp_json_http_uses_streamable_http() {
         let servers = vec![NormalizedMcpServer {
-            name: "context7".to_string(),
+            name: "remote".to_string(),
             transport: McpTransport::Http {
-                url: "https://mcp.context7.com/mcp".to_string(),
+                url: "https://example.com/mcp".to_string(),
                 headers: BTreeMap::from([("x-api-key".to_string(), "secret".to_string())]),
             },
             env: BTreeMap::new(),
@@ -1699,7 +1699,7 @@ environment_id = "local"
         assert!(result.contains("\"type\": \"streamable-http\""));
         assert!(!result.contains("\"type\": \"http\""));
         assert!(result.contains("mcpServers"));
-        assert!(result.contains("https://mcp.context7.com/mcp"));
+        assert!(result.contains("https://example.com/mcp"));
         assert!(result.contains("x-api-key"));
     }
 

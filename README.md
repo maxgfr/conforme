@@ -513,14 +513,16 @@ Run `cargo test && cargo clippy -- -D warnings`, bump version in Cargo.toml, cre
 ```json
 {
   "mcpServers": {
-    "context7": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"]
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" }
     }
   }
 }
 ```
+
+Every target tool gets this server in its own file, and those files are usually committed: keep secrets in environment variables (`${GITHUB_TOKEN}`), which conforme rewrites to each tool's syntax, never as literal values (`validate` warns about one).
 
 **Setup with pre-commit hook:**
 

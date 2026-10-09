@@ -347,11 +347,12 @@ This project uses Claude Code skills in `.claude/skills/`:
 
 - **verify-providers** — Audit all 12 provider adapters: upstream product alive, renamed, forked or retired; official docs vs adapter code; required fields and value vocabularies (tool names, models, names, env-var syntax); safety invariants (orphan suffixes, JSONC-safe shared settings, gitignore, round-trip, blank output); link check; then fix with regression tests
 
-## MCP servers (.mcp.json)
+## Upstream documentation
 
-This project has a `.mcp.json` with **Context7** configured. Use it to get up-to-date documentation for any library or framework when working on adapter logic.
-
-**When verifying or updating adapter formats**, use Context7 to check the latest docs for any AI coding tool.
+The project configures no MCP server. Upstream formats are checked against the
+vendors' own pages (the URLs in `docs/providers/<tool>.md`) with the
+`verify-providers` skill. An MCP server added to `.mcp.json` is synced into
+tracked files of every tool: reference secrets as `${VAR}`, never as values.
 
 ## Dogfooding
 
