@@ -63,7 +63,7 @@ pub fn print_help_ai() {
             "Skills synced to .github/skills/<name>/SKILL.md",
             "Agents synced to .github/agents/<name>.agent.md",
             "Detected from .github/copilot-instructions.md or a .github/instructions/, agents/ or skills/ directory",
-            "MCP merged into .vscode/mcp.json (`servers` key, ${env:VAR} references; VS Code `inputs`/`sandbox` kept)",
+            "MCP merged into .vscode/mcp.json (`servers` key, ${env:VAR} references; VS Code `inputs`/`sandbox` kept) and .github/mcp.json (`mcpServers`, read by Copilot CLI and the cloud agent)",
             "Reads AGENTS.md, CLAUDE.md, and GEMINI.md natively",
         ],
     );

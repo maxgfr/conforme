@@ -39,10 +39,12 @@ impl AiToolAdapter for CopilotAdapter {
     }
 
     /// `.vscode/mcp.json` also holds VS Code's `inputs` and `sandbox`
-    /// settings; conforme only merges `servers` into it, so `remove`/`migrate`
-    /// must never delete the file wholesale.
+    /// settings, and `.github/mcp.json` the CLI's own per-server keys
+    /// (`tools`); conforme only merges its servers into them, so
+    /// `remove`/`migrate` must never delete either wholesale.
     fn is_shared_file(&self, path: &Path) -> bool {
         path.ends_with(Path::new(".vscode/mcp.json"))
+            || path.ends_with(Path::new(".github/mcp.json"))
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
@@ -129,7 +131,8 @@ impl AiToolAdapter for CopilotAdapter {
             false,
         )?;
 
-        // Read MCP servers from .vscode/mcp.json (VS Code `servers` key).
+        // Read MCP servers from .vscode/mcp.json (VS Code `servers` key), then
+        // the ones only Copilot CLI's .github/mcp.json (`mcpServers`) holds.
         let mut mcp_servers = Vec::new();
         let mcp_path = project_root.join(".vscode").join("mcp.json");
         if mcp_path.exists() {
@@ -138,6 +141,15 @@ impl AiToolAdapter for CopilotAdapter {
                 crate::mcp::parse_mcp_json(&mcp_content)?,
                 crate::mcp::EnvRefStyle::EnvColon,
             );
+        }
+        let cli_path = project_root.join(".github").join("mcp.json");
+        if cli_path.exists() {
+            let cli_content = std::fs::read_to_string(&cli_path)?;
+            for server in crate::mcp::parse_mcp_json(&cli_content)? {
+                if !mcp_servers.iter().any(|s| s.name == server.name) {
+                    mcp_servers.push(server);
+                }
+            }
         }
 
         Ok(NormalizedConfig {
@@ -222,6 +234,16 @@ impl AiToolAdapter for CopilotAdapter {
             "servers",
             crate::mcp::build_copilot_servers_object(&config.mcp_servers),
             crate::mcp::COPILOT_OWNED_SERVER_KEYS,
+            &[],
+        )?);
+        // Copilot CLI and the cloud agent never read .vscode/mcp.json: they
+        // load .github/mcp.json (or .mcp.json) with `mcpServers`, the Claude
+        // Code shape. A server in both is listed once.
+        files.extend(crate::json_settings::server_settings_file(
+            &github_dir.join("mcp.json"),
+            "mcpServers",
+            crate::mcp::build_claude_servers_object(&config.mcp_servers),
+            crate::mcp::CLAUDE_OWNED_SERVER_KEYS,
             &[],
         )?);
 
@@ -421,13 +443,24 @@ mod tests {
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
 
-        let mcp_file = files.iter().find(|(p, _)| p.ends_with("mcp.json")).unwrap();
-        // Copilot uses .vscode/mcp.json with "servers" key (NOT mcpServers)
-        assert!(mcp_file.0.to_string_lossy().contains(".vscode/mcp.json"));
+        let mcp_file = files
+            .iter()
+            .find(|(p, _)| p.ends_with(".vscode/mcp.json"))
+            .unwrap();
+        // VS Code reads .vscode/mcp.json with the "servers" key (NOT mcpServers)
         assert!(mcp_file.1.contains("\"servers\""));
         assert!(!mcp_file.1.contains("mcpServers"));
         assert!(mcp_file.1.contains("test-server"));
         assert!(mcp_file.1.contains("npx"));
+        // Copilot CLI and the cloud agent ignore it: they read
+        // .github/mcp.json (or .mcp.json) with "mcpServers".
+        let cli_file = files
+            .iter()
+            .find(|(p, _)| p.ends_with(".github/mcp.json"))
+            .unwrap();
+        assert!(cli_file.1.contains("\"mcpServers\""));
+        assert!(cli_file.1.contains("test-server"));
+        assert!(cli_file.1.contains("\"type\": \"stdio\""));
     }
 
     #[test]

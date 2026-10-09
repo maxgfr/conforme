@@ -217,7 +217,7 @@ Review for bugs.
 | Claude, Kiro | `mcpServers` (`.mcp.json`, `.kiro/settings/mcp.json`) | `type: stdio/http`; merged (keeps `oauth`, Kiro `autoApprove`/`disabledTools`, Claude `type: "sdk"` entries) |
 | Cursor | `mcpServers` (`.cursor/mcp.json`) | `type: stdio` locally, no `type` on remote entries; `${env:VAR}`; merged |
 | Zoo Code | `mcpServers` (inside `.roo/mcp.json`) | HTTP uses `type: streamable-http` (not `http`), no `env` on remote servers; merged (keeps Zoo's `alwaysAllow`/`disabledTools`) |
-| Copilot | `servers` (inside `.vscode/mcp.json`) | VS Code format; `env` on stdio, `headers` on HTTP; merged (keeps `inputs`/`sandbox`) |
+| Copilot | `servers` (inside `.vscode/mcp.json`) + `mcpServers` (inside `.github/mcp.json`) | VS Code reads the first (`env` on stdio, `headers` on HTTP; keeps `inputs`/`sandbox`), Copilot CLI and the cloud agent only the second (Claude Code shape); both merged |
 | Devin | `mcpServers` (inside `.devin/mcp_config.json`) | No type field; remote `url` + `transport: http`; `${env:VAR}`; merged |
 | OpenCode | `mcp` (inside `opencode.json`) | `type: local/remote`; `command` is a single array; env key is `environment` (local only); `{env:VAR}`; merged (preserves user keys and `{ "enabled": false }` toggles) |
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; merged into existing settings (preserves theme/keybindings/etc. and extension servers configured only via `settings`) |
@@ -294,7 +294,7 @@ wherever an id is accepted.
 Every JSON file conforme merges into (`.mcp.json`, `.cursor/mcp.json`,
 `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`,
 `.zed/settings.json`, `.gemini/settings.json`, `.amp/settings.json(c)`,
-`.vscode/mcp.json`, `.roo/mcp.json`) goes through `json_settings`, and together
+`.vscode/mcp.json`, `.github/mcp.json`, `.roo/mcp.json`) goes through `json_settings`, and together
 with `.codex/config.toml` is declared by `is_shared_file()` so `remove`/`migrate`
 never delete it wholesale and `gitignore install` never ignores it.
 
