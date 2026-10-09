@@ -82,7 +82,9 @@ src/
                        - Amp: "amp.mcpServers" key merged into .amp/settings.json(c) — build_amp_mcp_object
                        - parse_mcp_json reads back mcpServers / servers / context_servers / amp.mcpServers
                        - OpenCode needs its own inverse (parse_opencode_mcp_object / parse_opencode_agent_object)
-  skills.rs         — Skills (SKILL.md) and agents generation per tool; shared read helpers
+  skills.rs         — Skills (SKILL.md plus the text files bundled beside it: read_bundled_files,
+                       written next to SKILL.md in every tool, stale ones found by stale_bundled_files)
+                       and agents generation per tool; shared read helpers
                        preserve manual_invocation (and Codex policy sidecars, created only in
                        .agents/skills) across sync (read_skills_from_dir, read_skills_recursive,
                        read_agents_from_dir, parse_frontmatter_tool_list) used by adapters to
@@ -96,7 +98,8 @@ src/
   adapters/
     mod.rs          — AiToolAdapter trait + registry + shared write_if_changed +
                        collect_rule_files (recursive rules-dir scan, sorted by base name) +
-                       ManagedDir / clean_orphans + source_files() (what read() loads outside the
+                       ManagedDir / find_orphans (what sync would remove; check, diff and status report it) /
+                       clean_orphans + source_files() (what read() loads outside the
                        managed dirs; see Orphan cleanup below)
     claude.rs       — Claude Code: CLAUDE.md (or .claude/CLAUDE.md when only that exists)
                        + .claude/rules/**/*.md, read recursively (paths: frontmatter); with no CLAUDE.md
@@ -345,7 +348,7 @@ conforme migrate --source X --output Y    # Migrate config between tools
 
 This project uses Claude Code skills in `.claude/skills/`:
 
-- **verify-providers** — Audit all 12 provider adapters: upstream product alive, renamed, forked or retired; official docs vs adapter code; required fields and value vocabularies (tool names, models, names, env-var syntax); safety invariants (orphan suffixes, JSONC-safe shared settings, gitignore, round-trip, blank output); link check; then fix with regression tests
+- **verify-providers** — Audit all 12 provider adapters against the tools as they ship today (upstream alive, docs and source read on the web, fact sheet vs adapter code, safety invariants), prove every tool's copy of every skill matches the source (`scripts/skills_conformity.py`), check with the tools' own CLIs (`references/live-cli.md`), run every command with every tool as source plus a second pass by concern, keep secrets out of the copies, check links, then fix with regression tests
 
 ## Upstream documentation
 
