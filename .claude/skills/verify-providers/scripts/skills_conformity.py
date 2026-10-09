@@ -13,10 +13,15 @@ holding `<name>/SKILL.md` folders (`.cursor/skills`, `.agents/skills`,
 - BODY         the copy's instructions differ from the source's
 - BUNDLE       a bundled file (script, reference) is missing or differs
 - EXTRA        the copy bundles a file the source does not have
-- STALE        the copy root has a skill the source does not (warning: it may
-               be one written by hand in that tool)
+- STALE        the copy root has a skill conforme generated (it holds the
+               `.conforme` marker) that the source no longer has: sync should
+               have deleted it
+- MISSING MARK a copy of a source skill lacks the `.conforme` marker, so
+               conforme could not delete it once the skill leaves the source
+- UNMANAGED    the copy root has a skill without the marker that the source
+               does not have: written by hand in that tool (warning)
 
-Exits 1 when any finding but STALE is reported. Standard library only.
+Exits 1 when any finding but UNMANAGED is reported. Standard library only.
 """
 
 import os
@@ -24,7 +29,7 @@ import re
 import sys
 
 SKIP_DIRS = {".git", "node_modules", "target", "worktrees"}
-METADATA = {"agents/openai.yaml"}
+METADATA = {"agents/openai.yaml", ".conforme"}
 MAX_DESCRIPTION = 1024
 
 
@@ -129,6 +134,8 @@ def main(argv):
                 continue
             with open(os.path.join(copies[name], "SKILL.md"), encoding="utf-8") as handle:
                 fields, copy_body = split_frontmatter(handle.read())
+            if not os.path.isfile(os.path.join(copies[name], ".conforme")):
+                errors.append(f"MISSING MARK {where}/.conforme")
             if fields.get("name", name) != name:
                 errors.append(f"NAME         {where}: name '{fields.get('name')}'")
             description = fields.get("description", "")
@@ -143,7 +150,10 @@ def main(argv):
             for rel in sorted(set(copy_files) - set(files)):
                 errors.append(f"EXTRA        {where}/{rel}: not in the source")
         for name in sorted(set(copies) - set(expected)):
-            warnings.append(f"STALE        {rel_root}/{name}: not in the source")
+            if os.path.isfile(os.path.join(copies[name], ".conforme")):
+                errors.append(f"STALE        {rel_root}/{name}: generated, not in the source")
+            else:
+                warnings.append(f"UNMANAGED    {rel_root}/{name}: not in the source, no marker")
 
     print(f"source {source_rel}: {len(expected)} skill(s); {len(roots)} copy root(s)")
     for root in roots:

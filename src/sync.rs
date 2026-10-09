@@ -68,6 +68,31 @@ fn target_config<'a>(
     }
 }
 
+/// A target's managed directories, minus those the source reads its own
+/// config from (`.agents/skills` shared by Codex, Zed and Amp, DeepSeek's
+/// fallback root): orphan cleanup there would delete the source's skills,
+/// conforme's marker or not.
+fn target_managed_dirs(
+    project_root: &Path,
+    source_id: &str,
+    target: &dyn AiToolAdapter,
+) -> Vec<adapters::ManagedDir> {
+    let mut source_dirs: Vec<std::path::PathBuf> = source_files(project_root, source_id);
+    if let Some(source) = find_adapter(source_id) {
+        source_dirs.extend(
+            source
+                .managed_directories(project_root)
+                .into_iter()
+                .map(|d| d.path),
+        );
+    }
+    target
+        .managed_directories(project_root)
+        .into_iter()
+        .filter(|dir| !source_dirs.contains(&dir.path))
+        .collect()
+}
+
 /// What the source reads outside its own managed directories (see
 /// [`AiToolAdapter::source_files`]); `AGENTS.md` itself when it is the source.
 /// No target writes these, and `remove`/`migrate` never delete them.
@@ -462,7 +487,7 @@ pub fn run_sync(
 
             // Clean orphans
             if should_clean {
-                let managed_dirs = adapter.managed_directories(project_root);
+                let managed_dirs = target_managed_dirs(project_root, &source_id, adapter);
                 if !managed_dirs.is_empty() {
                     let target_config = target_config(project_root, &source_id, adapter, &config);
                     let generated = adapter.generate(project_root, &target_config)?;
@@ -860,7 +885,7 @@ fn target_orphans(
     }
     let config = target_config(project_root, source_id, target, config);
     adapters::find_orphans(
-        &target.managed_directories(project_root),
+        &target_managed_dirs(project_root, source_id, target),
         &target.generate(project_root, &config)?,
     )
 }

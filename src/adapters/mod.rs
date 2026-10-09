@@ -200,10 +200,12 @@ impl ManagedDir {
 
 /// The orphans of the managed directories, without removing anything: the
 /// top-level files that carry a directory's orphan suffix and that the
-/// expected file list lacks, and, inside a skill folder whose `SKILL.md` is
-/// expected, the bundled files the source no longer has. Skill folders
-/// themselves are never orphans (some may be the user's). `check` reports
-/// these, `sync` removes them through [`clean_orphans`].
+/// expected file list lacks; inside a skill folder whose `SKILL.md` is
+/// expected, the bundled files the source no longer has; and every file of a
+/// skill folder conforme generated (it holds [`crate::skills::SKILL_MARKER`])
+/// whose skill left the source. A skill folder without the marker is the
+/// user's and never an orphan. `check` reports these, `sync` removes them
+/// through [`clean_orphans`].
 pub fn find_orphans(
     managed_dirs: &[ManagedDir],
     expected_files: &[(PathBuf, String)],
@@ -224,6 +226,10 @@ pub fn find_orphans(
         let Some(suffix) = dir.orphan_suffix else {
             for folder in paths.iter().filter(|p| p.is_dir()) {
                 orphans.extend(crate::skills::stale_bundled_files(folder, &expected_set)?);
+                orphans.extend(crate::skills::stale_skill_folder_files(
+                    folder,
+                    &expected_set,
+                )?);
             }
             continue;
         };
@@ -268,9 +274,31 @@ pub fn clean_orphans(
     }
     for path in find_orphans(managed_dirs, expected_files)? {
         std::fs::remove_file(&path)?;
+        remove_emptied_dirs(&path, managed_dirs);
         cleaned.push(path);
     }
     Ok(cleaned)
+}
+
+/// Remove the directories a deleted orphan leaves empty, up to (not
+/// including) the managed directory that holds it: a stale skill's folder
+/// goes with its last file.
+fn remove_emptied_dirs(removed: &Path, managed_dirs: &[ManagedDir]) {
+    let Some(root) = managed_dirs
+        .iter()
+        .map(|d| d.path.as_path())
+        .find(|root| removed.starts_with(root))
+    else {
+        return;
+    };
+    for dir in removed.ancestors().skip(1) {
+        if dir == root || !dir.starts_with(root) {
+            break;
+        }
+        if std::fs::remove_dir(dir).is_err() {
+            break;
+        }
+    }
 }
 
 /// Remove `<legacy>/<file>` for every `<current>/<file>` that is generated.
@@ -325,11 +353,13 @@ fn clean_superseded_skills(
         }
         let skill_md = skill_dir.join("SKILL.md");
         let sidecar = skill_dir.join("agents").join("openai.yaml");
+        let marker = skill_dir.join(crate::skills::SKILL_MARKER);
         let only_skill = std::fs::read_dir(&skill_dir)?
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .all(|p| {
                 p == skill_md
+                    || p == marker
                     || (p == skill_dir.join("agents")
                         && std::fs::read_dir(&p)
                             .map(|mut it| it.all(|e| e.is_ok_and(|e| e.path() == sidecar)))
@@ -338,7 +368,7 @@ fn clean_superseded_skills(
         if !only_skill {
             continue;
         }
-        for file in [&skill_md, &sidecar] {
+        for file in [&skill_md, &sidecar, &marker] {
             if file.is_file() {
                 std::fs::remove_file(file)?;
                 cleaned.push(file.clone());

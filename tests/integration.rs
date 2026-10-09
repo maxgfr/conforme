@@ -2736,6 +2736,102 @@ fn test_bundled_skill_files_reach_every_tool_and_stay_in_step() {
 }
 
 #[test]
+fn test_a_skill_removed_from_the_source_leaves_every_copy() {
+    // conforme marks the copies it generates; a marked copy whose skill left
+    // the source is deleted, a skill written by hand in a tool is kept.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    for name in ["deploy", "review"] {
+        let skill = root.join(".claude/skills").join(name);
+        fs::create_dir_all(skill.join("scripts")).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {name}\n---\nDo {name}.\n"),
+        )
+        .unwrap();
+        fs::write(skill.join("scripts/run.sh"), "echo\n").unwrap();
+    }
+    fs::write(root.join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    for tool_dir in [
+        ".cursor",
+        ".devin",
+        ".codex",
+        ".opencode",
+        ".roo",
+        ".gemini",
+        ".kiro",
+        ".dsh",
+    ] {
+        fs::create_dir_all(root.join(tool_dir)).unwrap();
+    }
+    fs::create_dir_all(root.join(".github/skills")).unwrap();
+    let own = root.join(".cursor/skills/my-own");
+    fs::create_dir_all(&own).unwrap();
+    fs::write(
+        own.join("SKILL.md"),
+        "---\nname: my-own\ndescription: Mine\n---\nMine.\n",
+    )
+    .unwrap();
+
+    run(root, &["sync"]).success();
+    for skills_root in SKILL_ROOTS {
+        assert!(
+            root.join(skills_root).join("review/.conforme").is_file(),
+            "{skills_root}"
+        );
+    }
+
+    fs::remove_dir_all(root.join(".claude/skills/review")).unwrap();
+    run(root, &["check"])
+        .failure()
+        .stdout(predicate::str::contains("review"));
+    run(root, &["sync"]).success();
+    run(root, &["check"]).success();
+
+    for skills_root in SKILL_ROOTS {
+        assert!(
+            !root.join(skills_root).join("review").exists(),
+            "{skills_root}"
+        );
+        assert!(
+            root.join(skills_root).join("deploy/SKILL.md").exists(),
+            "{skills_root}"
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(own.join("SKILL.md")).unwrap(),
+        "---\nname: my-own\ndescription: Mine\n---\nMine.\n"
+    );
+}
+
+#[test]
+fn test_marked_skills_in_the_sources_own_directory_are_kept() {
+    // With Codex as the source, `.agents/skills` is its config: Amp shares
+    // the directory, and the copies an earlier sync marked there are now
+    // the source's skills, never orphans.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::create_dir_all(root.join(".amp")).unwrap();
+    fs::write(root.join("AGENTS.md"), "Be helpful.\n").unwrap();
+    let skill = root.join(".agents/skills/deploy");
+    fs::create_dir_all(&skill).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy\n---\nRun.\n",
+    )
+    .unwrap();
+    fs::write(skill.join(".conforme"), "generated earlier\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"codex\"\n").unwrap();
+
+    run(root, &["sync"]).success();
+    run(root, &["check"]).success();
+
+    assert!(skill.join("SKILL.md").exists());
+}
+
+#[test]
 fn test_migrate_refuses_an_empty_source() {
     let dir = TempDir::new().unwrap();
     let root = dir.path();

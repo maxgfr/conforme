@@ -341,7 +341,7 @@ mod tests {
             ..Default::default()
         };
         let files = adapter.generate(Path::new("/tmp/test"), &config).unwrap();
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 3); // + conforme marker
         let skill_file = files
             .iter()
             .find(|(p, _)| p.to_string_lossy().contains(".gemini/skills/"))
