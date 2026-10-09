@@ -104,7 +104,8 @@ impl AiToolAdapter for VibeAdapter {
             if unresolved {
                 warnings.push(format!(
                     "MCP server {}: Vibe resolves no ${{VAR}} there and passes it as written; \
-                     set the value in ~/.vibe/config.toml",
+                     declare the server with its real value under another name in \
+                     ~/.vibe/config.toml (the project entry replaces one of the same name)",
                     server.name
                 ));
             }

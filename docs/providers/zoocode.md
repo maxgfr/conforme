@@ -18,6 +18,7 @@ under the `zoocode` id. The former `roocode` id no longer exists.
 - FAQ: https://docs.zoocode.dev/faq
 - Release notes (Roo-era, stops at 3.50.0): https://docs.zoocode.dev/update-notes
 - Releases: https://github.com/Zoo-Code-Org/Zoo-Code/releases
+- Roo to Zoo migration (settings export/import only; project `.roo/` files are read as they are): https://docs.zoocode.dev/roo-to-zoo-migration
 - Source: https://github.com/Zoo-Code-Org/Zoo-Code
 - Roo Code shutdown notice: https://roocodeinc.github.io/Roo-Code/
 

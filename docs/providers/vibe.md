@@ -41,9 +41,12 @@ None: `AGENTS.md` is always loaded.
 
 ## Notes
 
-- **No `${VAR}` expansion.** A stdio server gets only the variables its `env` sets, verbatim, so `TOKEN = "${TOKEN}"` passes the literal text; only a bearer token is read from a variable (`api_key_env`). `sync` and `migrate` warn for each server with such a reference; put the real value in the user's `~/.vibe/config.toml`
+- **No `${VAR}` expansion.** A stdio server gets only the variables its `env` sets, verbatim, so `TOKEN = "${TOKEN}"` passes the literal text; only a bearer token is read from a variable (`api_key_env`). `sync` and `migrate` warn for each server with such a reference. A project `[[mcp_servers]]` entry replaces a user entry of the same name as a whole, so declare the server with its real value in `~/.vibe/config.toml` under another name
 - `vibe` and `skill-creator` are the names of Vibe's built-in skills: a project skill with either name is skipped by Vibe (`sync` warns)
 - An untrusted folder loads none of the project files: trust it once before checking the result
+- Project subagents in `.vibe/agents` can be spawned since Vibe 2.25.8
+- Vibe replaces characters outside `[a-zA-Z0-9_-]` in a server name with `_`; conforme matches servers by the name as written (known gap for names with other characters)
+- Vibe's published docs lag its source: they still show `api_key_env` on the server entry rather than in `auth`, the tool name `search_replace` (now `edit`) and no `disable-model-invocation`. conforme follows the source (`vibe/core/config/models.py`, `vibe/core/tools/builtins/edit.py`, `vibe/core/skills/models.py`), and Vibe 2.26.0 loads what conforme writes
 
 ## Live check
 

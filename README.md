@@ -48,7 +48,7 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 | Tool | Primary file | Notes |
 |------|-------------|-------|
 | OpenAI Codex CLI | `AGENTS.md` | Also supports `AGENTS.override.md` (personal; not used as a conforme source) |
-| OpenCode | `AGENTS.md` | Falls back to `CLAUDE.md` |
+| OpenCode | `AGENTS.md` | Falls back to `CLAUDE.md`, then the deprecated `CONTEXT.md` |
 | Gemini CLI | `GEMINI.md` | Reads AGENTS.md when `context.fileName` in `.gemini/settings.json` names it; conforme writes the first other `context.fileName` entry (none when it names only `AGENTS.md`) |
 | Zed AI | `.rules` | First match wins: `.rules` → `.cursorrules` → `.windsurfrules` → `.clinerules` → `.github/copilot-instructions.md` → `AGENT.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` |
 | DeepSeek Harness (`dsh`) | `AGENTS.md` | Also loads `CLAUDE.md` when present; skills in `.dsh/skills/` |
@@ -248,7 +248,7 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | Claude Code | `.mcp.json` (merged) | `mcpServers` | `type: stdio/http`; `env` on stdio, `headers` on HTTP; `${VAR}` references |
 | Cursor | `.cursor/mcp.json` (merged) | `mcpServers` | `type: stdio` locally, remote is just `url` + `headers`; `${env:VAR}` references |
 | Devin Desktop | `.devin/mcp_config.json` (merged) | `mcpServers` | No `type`; remote is `url` + `transport: http` + `headers`; `${env:VAR}` references |
-| Copilot | `.vscode/mcp.json` + `.github/mcp.json` (both merged) | `servers` / `mcpServers` | VS Code reads `.vscode/mcp.json` (`servers` key, `env` on stdio, `headers` on HTTP, `inputs`/`sandbox` preserved, `${env:VAR}`); Copilot CLI and the cloud agent ignore it and read `.github/mcp.json` (`mcpServers`, Claude Code shape, `${VAR}`) |
+| Copilot | `.vscode/mcp.json` + `.github/mcp.json` (both merged) | `servers` / `mcpServers` | VS Code reads `.vscode/mcp.json` (`servers` key, `env` on stdio, `headers` on HTTP, `inputs`/`sandbox` preserved, `${env:VAR}`); Copilot CLI ignores it and reads `.github/mcp.json` (`mcpServers`, Claude Code shape, `${VAR}`); the cloud agent reads neither, its servers are set in the repository settings on GitHub.com |
 | Kiro | `.kiro/settings/mcp.json` (merged) | `mcpServers` | Standard format; `autoApprove`/`disabledTools`/`oauth` preserved |
 | Zoo Code | `.roo/mcp.json` (merged) | `mcpServers` | HTTP uses `type: streamable-http` (not `http`), no `env` on remote servers; Zoo's `alwaysAllow`/`disabledTools` preserved |
 | Gemini CLI | `.gemini/settings.json` (merged) | `mcpServers` | No `type` field, uses `httpUrl` (not `url`) for HTTP |

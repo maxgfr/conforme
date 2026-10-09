@@ -2,7 +2,7 @@
 //!
 //! `.mcp.json`, `.cursor/mcp.json`, `.kiro/settings/mcp.json`,
 //! `.devin/mcp_config.json`, `.zed/settings.json`, `.gemini/settings.json`,
-//! `.amp/settings.json`, `opencode.json`, `.vscode/mcp.json` and
+//! `opencode.json`, `kilo.jsonc`, `.vscode/mcp.json`, `.github/mcp.json` and
 //! `.roo/mcp.json` all hold settings conforme does not generate. Most of those tools parse them as JSONC, so a
 //! file may carry comments and trailing commas that `serde_json` rejects.
 //!

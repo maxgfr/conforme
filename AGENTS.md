@@ -53,7 +53,7 @@ src/
                        names that sanitize to nothing or collide, over-long skill descriptions,
                        a rule whose file name becomes `general` while there are instructions — Cursor,
                        Devin and Kiro write the instructions there; warns on skills Claude Code reserves:
-                       synced, anthropic-skills, claude-ai)
+                       synced, anthropic-skills)
   watch.rs           — File watcher for auto-sync (notify + debounce): watches every location the
                        source reads (per-tool source_locations + source_files()), .conformerc.toml and
                        AGENTS.md; an existing directory recursively, a file or missing path through its
@@ -229,7 +229,7 @@ Review for bugs.
 | Claude, Kiro | `mcpServers` (`.mcp.json`, `.kiro/settings/mcp.json`) | `type: stdio/http`; merged (keeps `oauth`, Kiro `autoApprove`/`disabledTools`, Claude `type: "sdk"` entries) |
 | Cursor | `mcpServers` (`.cursor/mcp.json`) | `type: stdio` locally, no `type` on remote entries; `${env:VAR}`; merged |
 | Zoo Code | `mcpServers` (inside `.roo/mcp.json`) | HTTP uses `type: streamable-http` (not `http`), no `env` on remote servers; merged (keeps Zoo's `alwaysAllow`/`disabledTools`) |
-| Copilot | `servers` (inside `.vscode/mcp.json`) + `mcpServers` (inside `.github/mcp.json`) | VS Code reads the first (`env` on stdio, `headers` on HTTP; keeps `inputs`/`sandbox`), Copilot CLI and the cloud agent only the second (Claude Code shape); both merged |
+| Copilot | `servers` (inside `.vscode/mcp.json`) + `mcpServers` (inside `.github/mcp.json`) | VS Code reads the first (`env` on stdio, `headers` on HTTP; keeps `inputs`/`sandbox`), Copilot CLI only the second (Claude Code shape); both merged. The cloud agent reads no file: its servers are set in the repository settings |
 | Devin | `mcpServers` (inside `.devin/mcp_config.json`) | No type field; remote `url` + `transport: http`; `${env:VAR}`; merged |
 | OpenCode | `mcp` (inside `opencode.json`: an existing root one, else `.opencode/opencode.json`) | `type: local/remote`; `command` is a single array; env key is `environment` (local only); `{env:VAR}`; merged (preserves user keys and `{ "enabled": false }` toggles) |
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; merged into existing settings (preserves theme/keybindings/etc. and extension servers configured only via `settings`) |
@@ -285,7 +285,7 @@ exists that the source does not read. `--dry-run` reports identical files as
 `AiToolAdapter::source_files(project_root)` lists what `read()` loads outside
 the tool's managed directories, only paths that exist and are used: Claude Code
 `CLAUDE.md` (or `AGENTS.md` + `.claude/AGENTS.md` in the fallback), Codex
-`AGENTS.md`, OpenCode the first of `AGENTS.md` / `CLAUDE.md`, Kilo the first of
+`AGENTS.md`, OpenCode the first of `AGENTS.md` / `CLAUDE.md` / `CONTEXT.md`, Kilo the first of
 `AGENTS.md` / `CLAUDE.md` / `CONTEXT.md` plus its rule directories, Vibe
 `AGENTS.md` plus `.agents/skills` when `.vibe/skills` has none, DeepSeek the first of `AGENTS.md` /
 `CLAUDE.md` plus `.agents/skills` when `.dsh/skills` has none, Gemini CLI its
@@ -421,7 +421,7 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - Tools with their own tool vocabulary (Claude Code, Gemini CLI, Kiro, Mistral Vibe) get translated `tools` lists (`TOOL_EQUIVALENTS`, MCP names respelled), never names copied verbatim from another host; a `model` another tool cannot use is left out (`claude_model`, `gemini_model`, `opencode_model`, `kiro_model`, `copilot_model`, `cursor_model`)
 - Skill and agent names go through `sanitize_name` (kebab-case ASCII, at most 64 characters), rule file names through `rule_file_name`, and MCP strings through `EnvRefStyle` so `${VAR}` becomes each tool's own reference syntax
 - A tool that reads `AGENTS.md` itself in a project returns `true` from `reads_agents_md(project_root)` (always for Codex, OpenCode, DeepSeek, Mistral Vibe, Kilo Code; Claude Code without `CLAUDE.md`; Gemini CLI when `context.fileName` names it) and reads it with `markdown::read_native_agents_md`; renaming a tool id adds it to `sync::RENAMED_IDS`
-- A file or directory `read()` loads outside the tool's managed directories (a native or fallback `AGENTS.md` / `CLAUDE.md`, Gemini's context files, Devin's `global_rules.md` / `.windsurfrules`, Zoo's `.roorules`, DeepSeek's `.agents/skills` fallback) MUST be returned by `source_files(project_root)` when it exists and is used, so that with the tool as source no target writes it, `remove`/`migrate` never delete it and `gitignore install` never ignores it; a new read location also goes into `watch::source_locations`
+- A file or directory `read()` loads outside the tool's managed directories (a native or fallback `AGENTS.md` / `CLAUDE.md`, Gemini's context files, Devin's `global_rules.md` / `.windsurfrules`, Zoo's `.roorules`, DeepSeek's and Vibe's `.agents/skills` fallback, Kilo's rule directories) MUST be returned by `source_files(project_root)` when it exists and is used, so that with the tool as source no target writes it, `remove`/`migrate` never delete it and `gitignore install` never ignores it; a new read location also goes into `watch::source_locations`
 - A server entry conforme cannot express (no `command`, no URL, or Claude `type: "sdk"`) is skipped on read and kept on write (`json_settings::is_expressible_server`)
 
 ## Rule: rust-conventions
@@ -582,6 +582,10 @@ Add these checks, which the fact sheet alone does not cover:
   does not write (nested directories, flat files, alternate spellings).
 - **Blank output**: an empty config yields no file, and a full config yields
   no blank file (`test_no_adapter_writes_blank_files` guards it).
+- **Warnings**: a value conforme writes that the tool will not use as written
+  (a `${VAR}` it does not expand, a reserved skill name, a project file it
+  refuses) is named by the adapter's `warnings()`, which `sync` and `migrate`
+  print; a silent loss is drift.
 
 Done when: the audit table has a finding for each fact-sheet line and each
 check above, for every adapter.
@@ -617,9 +621,16 @@ Every tool installed here reads the fixture and says what it loads, following
 their env and headers, skills and agents accepted, a manual skill kept out of
 automatic use. A witness file proves each validator actually checked.
 
+Then check switching, conforme's other job: set up the full fixture in each
+tool's own format (`migrate --source claude --output <tool>`), migrate it
+into every installed tool, and ask that tool's CLI the same questions.
+`tests/migrate_matrix.rs` covers every pair offline; this run proves each
+output is what the real tool loads.
+
 Done when: each adapter is **verified** (with the command), **not installed**
-or **needs login**, and every rejection or warning the tools print is a
-finding.
+or **needs login**, every source migrated into each installed tool loads its
+MCP servers, skills and agents there, and every rejection or warning the
+tools print is a finding.
 
 ## 7. Run every command, then a second pass
 

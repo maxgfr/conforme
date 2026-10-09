@@ -9,8 +9,9 @@ use crate::config::{
 /// them skip the skill.
 const MAX_DESCRIPTION_LEN: usize = 1024;
 
-/// Skill names Claude Code skips.
-const CLAUDE_RESERVED_SKILL_NAMES: &[&str] = &["synced", "anthropic-skills", "claude-ai"];
+/// Skill names Claude Code skips (`claude-ai`, reserved in 2.1.282 only,
+/// loads again since 2.1.283).
+const CLAUDE_RESERVED_SKILL_NAMES: &[&str] = &["synced", "anthropic-skills"];
 
 /// Every rule, skill and agent name becomes a file or folder name: through
 /// [`rule_file_name`] for rules, and [`sanitize_name`] (kebab-case ASCII, the

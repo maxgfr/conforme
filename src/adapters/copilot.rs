@@ -236,9 +236,9 @@ impl AiToolAdapter for CopilotAdapter {
             crate::mcp::COPILOT_OWNED_SERVER_KEYS,
             &[],
         )?);
-        // Copilot CLI and the cloud agent never read .vscode/mcp.json: they
-        // load .github/mcp.json (or .mcp.json) with `mcpServers`, the Claude
-        // Code shape. A server in both is listed once.
+        // Copilot CLI never reads .vscode/mcp.json: it loads .github/mcp.json
+        // (or .mcp.json) with `mcpServers`, the Claude Code shape. A server in
+        // both is listed once.
         files.extend(crate::json_settings::server_settings_file(
             &github_dir.join("mcp.json"),
             "mcpServers",
@@ -452,8 +452,8 @@ mod tests {
         assert!(!mcp_file.1.contains("mcpServers"));
         assert!(mcp_file.1.contains("test-server"));
         assert!(mcp_file.1.contains("npx"));
-        // Copilot CLI and the cloud agent ignore it: they read
-        // .github/mcp.json (or .mcp.json) with "mcpServers".
+        // Copilot CLI ignores it: it reads .github/mcp.json (or .mcp.json)
+        // with "mcpServers".
         let cli_file = files
             .iter()
             .find(|(p, _)| p.ends_with(".github/mcp.json"))

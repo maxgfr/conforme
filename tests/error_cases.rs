@@ -506,6 +506,28 @@ fn test_kilo_warns_about_a_root_opencode_json_it_refuses() {
 }
 
 #[test]
+fn test_only_the_skill_names_claude_code_reserves_warn() {
+    // Claude Code skips `synced` and `anthropic-skills`; `claude-ai`, reserved
+    // in 2.1.282 only, loads again.
+    let agents_md = "# Instructions\nBe helpful.\n\n## Skill: synced\n<!-- description: A -->\nA.\n\n## Skill: claude-ai\n<!-- description: B -->\nB.\n";
+    let dir = create_project_with_tools(agents_md, &["claude"]);
+    let output = conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "check"])
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        text.contains("Skill 'synced' uses a name Claude Code reserves"),
+        "{text}"
+    );
+    assert!(!text.contains("Skill 'claude-ai' uses a name"), "{text}");
+}
+
+#[test]
 fn test_sync_agents_to_opencode() {
     let agents_md = r#"# Instructions
 Be helpful.
