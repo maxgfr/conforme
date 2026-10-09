@@ -1712,6 +1712,12 @@ pub(crate) fn copilot_model(model: Option<&str>) -> Option<&str> {
     model.filter(|m| *m != "inherit" && !is_foreign_model_alias(m))
 }
 
+/// The `model` to write for an Antigravity subagent: only `inherit` and its
+/// `flash` / `pro` aliases; any other value is left out.
+pub(crate) fn antigravity_model(model: &str) -> Option<String> {
+    matches!(model, "inherit" | "flash" | "pro").then(|| model.to_string())
+}
+
 /// The `model` to write for a Cursor subagent: `inherit` or a model id;
 /// another host's alias is left out.
 pub(crate) fn cursor_model(model: Option<&str>) -> Option<&str> {

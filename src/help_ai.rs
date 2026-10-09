@@ -104,6 +104,18 @@ pub fn print_help_ai() {
             "Reads AGENTS.md natively",
         ],
     );
+    print_tool(
+        "Antigravity CLI",
+        "antigravity",
+        "AGENTS.md (native, else GEMINI.md) + .agents/rules/*.md + .agents/mcp_config.json",
+        &[
+            "Frontmatter: trigger (always_on|glob|model_decision|manual), description, globs (comma-separated); a rule file without a trigger is not read",
+            "Skills synced to the shared .agents/skills/<name>/SKILL.md (Codex and Zed write there too)",
+            "Agents synced to .agents/agents/<name>.md (model only inherit, flash or pro; no tools field; built-in research, browser, self and image-generator never written)",
+            "MCP merged into .agents/mcp_config.json (mcpServers, no type; remote servers use serverUrl, SSE included and read back as HTTP; ${VAR} written as is, expansion unconfirmed)",
+            "Manual skills are written but warned about: Antigravity has no manual-only skill",
+        ],
+    );
     println!();
     println!(
         "{}",

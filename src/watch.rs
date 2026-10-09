@@ -238,6 +238,14 @@ fn source_locations(id: &str) -> &'static [&'static str] {
             ".vibe/config.toml",
             ".agents/skills",
         ],
+        "antigravity" => &[
+            "AGENTS.md",
+            "GEMINI.md",
+            ".agents/rules",
+            ".agents/skills",
+            ".agents/agents",
+            ".agents/mcp_config.json",
+        ],
         "kilo" => &[
             "AGENTS.md",
             "CLAUDE.md",

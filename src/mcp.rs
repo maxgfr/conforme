@@ -1090,6 +1090,22 @@ const DEVIN_SHAPE: ServerShape = ServerShape {
     env_refs: EnvRefStyle::EnvColon,
 };
 
+/// Antigravity `.agents/mcp_config.json`: no `type`; every remote server (HTTP
+/// or SSE) is `serverUrl` + `headers`, no `env`. No variable reference is
+/// documented, so `${VAR}` is written as is.
+const ANTIGRAVITY_SHAPE: ServerShape = ServerShape {
+    stdio_type: None,
+    http_type: None,
+    url_key: "serverUrl",
+    http_extra: None,
+    env_on_http: false,
+    sse: Some(SseShape {
+        url_key: "serverUrl",
+        marker: None,
+    }),
+    env_refs: EnvRefStyle::Dollar,
+};
+
 fn string_map(map: &BTreeMap<String, String>) -> serde_json::Value {
     serde_json::Value::Object(
         map.iter()
@@ -1494,6 +1510,8 @@ pub const DEVIN_OWNED_SERVER_KEYS: &[&str] = &[
     "headers",
     "disabled",
 ];
+pub const ANTIGRAVITY_OWNED_SERVER_KEYS: &[&str] =
+    &["command", "args", "env", "url", "serverUrl", "headers"];
 /// Keys conforme writes into an OpenCode `agent.<name>` entry. Anything else
 /// (`permission`, `temperature`, `steps`, `color`, …) is the user's.
 pub const OPENCODE_OWNED_AGENT_KEYS: &[&str] = &["description", "mode", "model", "prompt"];
@@ -1523,6 +1541,14 @@ pub fn build_devin_servers_object(
     servers: &[NormalizedMcpServer],
 ) -> serde_json::Map<String, serde_json::Value> {
     build_servers_object(servers, &DEVIN_SHAPE)
+}
+
+/// Build Antigravity's `mcpServers` object of `.agents/mcp_config.json` (merged
+/// by the adapter so the user's own per-server settings survive).
+pub fn generate_antigravity_mcp(
+    servers: &[NormalizedMcpServer],
+) -> serde_json::Map<String, serde_json::Value> {
+    build_servers_object(servers, &ANTIGRAVITY_SHAPE)
 }
 
 /// Build the OpenCode `agent` object for `opencode.json` (merged by the adapter).
@@ -2963,5 +2989,53 @@ callback_port = 5555
         };
         let zed_http = build_servers_object(std::slice::from_ref(&http), &ZED_SHAPE);
         assert_eq!(build(&ZED_SHAPE), zed_http["legacy"]);
+    }
+
+    #[test]
+    fn test_antigravity_mcp_shape() {
+        use serde_json::json;
+        let servers = [
+            NormalizedMcpServer {
+                name: "fs".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@mcp/fs".to_string()],
+                },
+                env: BTreeMap::from([("ROOT".to_string(), "/tmp".to_string())]),
+            },
+            NormalizedMcpServer {
+                name: "api".to_string(),
+                transport: McpTransport::Http {
+                    url: "https://x.dev/mcp".to_string(),
+                    headers: BTreeMap::from([("X-Org".to_string(), "acme".to_string())]),
+                },
+                env: BTreeMap::new(),
+            },
+            NormalizedMcpServer {
+                name: "legacy".to_string(),
+                transport: McpTransport::Sse {
+                    url: "https://x.dev/sse".to_string(),
+                    headers: BTreeMap::from([("X-Org".to_string(), "acme".to_string())]),
+                },
+                env: BTreeMap::new(),
+            },
+        ];
+        let obj = generate_antigravity_mcp(&servers);
+        assert_eq!(
+            obj["fs"],
+            json!({"command": "npx", "args": ["-y", "@mcp/fs"], "env": {"ROOT": "/tmp"}})
+        );
+        assert_eq!(
+            obj["api"],
+            json!({"serverUrl": "https://x.dev/mcp", "headers": {"X-Org": "acme"}})
+        );
+        assert_eq!(
+            obj["legacy"],
+            json!({"serverUrl": "https://x.dev/sse", "headers": {"X-Org": "acme"}})
+        );
+        for entry in obj.values() {
+            assert!(entry.get("type").is_none());
+            assert!(entry.get("url").is_none());
+        }
     }
 }

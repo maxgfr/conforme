@@ -64,6 +64,11 @@ fn static_patterns(id: &str) -> Vec<&'static str> {
         "deepseek" => vec![".dsh/skills/"],
         "vibe" => vec![".vibe/skills/", ".vibe/agents/*.toml"],
         "kilo" => vec![".kilo/skills/", ".kilo/agents/*.md"],
+        "antigravity" => vec![
+            ".agents/rules/*.md",
+            ".agents/skills/",
+            ".agents/agents/*.md",
+        ],
         _ => vec![],
     }
 }
