@@ -1,3 +1,4 @@
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod copilot;
@@ -406,6 +407,7 @@ pub fn all_adapters() -> Vec<Box<dyn AiToolAdapter>> {
         Box::new(deepseek::DeepSeekAdapter),
         Box::new(vibe::VibeAdapter),
         Box::new(kilo::KiloAdapter),
+        Box::new(antigravity::AntigravityAdapter),
     ]
 }
 

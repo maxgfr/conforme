@@ -37,6 +37,7 @@ fn create_project_with_tools(agents_md: &str, tools: &[&str]) -> TempDir {
             "vibe" => fs::create_dir_all(dir.path().join(".vibe")).unwrap(),
             "kilo" => fs::create_dir_all(dir.path().join(".kilo")).unwrap(),
             "deepseek" => fs::create_dir_all(dir.path().join(".dsh")).unwrap(),
+            "antigravity" => fs::create_dir_all(dir.path().join(".agents/rules")).unwrap(),
             _ => {}
         }
     }
@@ -1766,6 +1767,235 @@ fn test_migrate_gemini_to_cursor() {
 }
 
 #[test]
+fn test_migrate_claude_to_antigravity_keeps_rules_out_of_agents_md() {
+    // Antigravity loads AGENTS.md whole as always-on and writes each rule as
+    // .agents/rules/<name>.md with its trigger: a rule left in AGENTS.md too
+    // would apply everywhere and load twice.
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("CLAUDE.md"), "Be nice.\n").unwrap();
+    fs::create_dir_all(dir.path().join(".claude/rules")).unwrap();
+    fs::write(
+        dir.path().join(".claude/rules/ts.md"),
+        "---\npaths: \"**/*.ts\"\n---\n\nUse strict mode.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "claude",
+            "--output",
+            "antigravity",
+        ])
+        .assert()
+        .success();
+
+    let rule = fs::read_to_string(dir.path().join(".agents/rules/ts.md")).unwrap();
+    assert!(rule.contains("trigger: glob"), "rule file: {rule}");
+    assert!(rule.contains("Use strict mode."), "rule file: {rule}");
+    let agents_md = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(agents_md.contains("Be nice."), "AGENTS.md: {agents_md}");
+    assert!(
+        !agents_md.contains("## Rule:") && !agents_md.contains("Use strict mode."),
+        "AGENTS.md must not repeat the rule Antigravity holds in its own file: {agents_md}"
+    );
+}
+
+#[test]
+fn test_migrate_claude_to_antigravity_keeps_rules_in_agents_md_for_codex() {
+    // Codex stays in the project and reads only AGENTS.md: the rule
+    // Antigravity writes in .agents/rules/ must stay in AGENTS.md too, or
+    // Codex loses it.
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("CLAUDE.md"), "# Proj\nBe nice.\n").unwrap();
+    fs::create_dir_all(dir.path().join(".claude/rules")).unwrap();
+    fs::write(
+        dir.path().join(".claude/rules/ts.md"),
+        "---\npaths: \"**/*.ts\"\n---\n\nUse strict mode.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join(".codex")).unwrap();
+    fs::write(dir.path().join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    let before = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(before.contains("## Rule: ts"), "AGENTS.md: {before}");
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "claude",
+            "--output",
+            "antigravity",
+        ])
+        .assert()
+        .success();
+
+    let rule = fs::read_to_string(dir.path().join(".agents/rules/ts.md")).unwrap();
+    assert!(rule.contains("Use strict mode."), "rule file: {rule}");
+    let agents_md = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(agents_md.contains("Be nice."), "AGENTS.md: {agents_md}");
+    assert!(
+        agents_md.contains("## Rule: ts") && agents_md.contains("Use strict mode."),
+        "Codex reads only AGENTS.md and must keep the rule: {agents_md}"
+    );
+}
+
+#[test]
+fn test_migrate_antigravity_to_codex_moves_rule_files_into_agents_md() {
+    // Antigravity keeps its instructions in AGENTS.md and its rules in
+    // .agents/rules/; Codex has no rule file, so the rules go to AGENTS.md
+    // rather than being deleted into nothing.
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("AGENTS.md"), "Be nice.\n").unwrap();
+    fs::create_dir_all(dir.path().join(".agents/rules")).unwrap();
+    fs::write(
+        dir.path().join(".agents/rules/db.md"),
+        "---\ntrigger: glob\nglobs: \"**/*.sql\"\n---\n\nDB rule.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "antigravity",
+            "--output",
+            "codex",
+        ])
+        .assert()
+        .success();
+
+    assert!(!dir.path().join(".agents/rules/db.md").exists());
+    let agents_md = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(agents_md.contains("Be nice."), "AGENTS.md: {agents_md}");
+    assert!(
+        agents_md.contains("## Rule: db") && agents_md.contains("DB rule."),
+        "the rule must survive in AGENTS.md: {agents_md}"
+    );
+}
+
+#[test]
+fn test_migrate_antigravity_to_codex_keeps_agents_md_rule_named_like_a_rule_file() {
+    // Antigravity loads both the AGENTS.md section and the rule file of the
+    // same name: migrating must keep the hand-written section untouched and
+    // add the file rule under a name that does not collide, with a warning.
+    let dir = TempDir::new().unwrap();
+    let original = "Be nice.\n\n## Rule: style\n\nUse tabs.\n";
+    fs::write(dir.path().join("AGENTS.md"), original).unwrap();
+    fs::create_dir_all(dir.path().join(".agents/rules")).unwrap();
+    fs::write(
+        dir.path().join(".agents/rules/style.md"),
+        "---\ntrigger: glob\nglobs: \"**/*.rs\"\n---\n\nUse spaces.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "antigravity",
+            "--output",
+            "codex",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("style (rules file)"));
+
+    assert!(!dir.path().join(".agents/rules/style.md").exists());
+    let agents_md = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(
+        agents_md.starts_with(original),
+        "the hand-written AGENTS.md must be kept as is: {agents_md}"
+    );
+    assert!(
+        agents_md.contains("## Rule: style (rules file)") && agents_md.contains("Use spaces."),
+        "the rule file must survive under a non-colliding name: {agents_md}"
+    );
+}
+
+#[test]
+fn test_sync_from_antigravity_warns_rules_do_not_reach_agents_md_readers() {
+    // AGENTS.md is Antigravity's own file, so sync never rewrites it: a rule
+    // in .agents/rules/ cannot reach Codex, and sync says so.
+    let dir = create_project_with_tools("Be nice.\n", &["antigravity", "codex", "claude"]);
+    fs::write(
+        dir.path().join(".conformerc.toml"),
+        "source = \"antigravity\"\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".agents/rules/db.md"),
+        "---\ntrigger: model_decision\ndescription: Database work\n---\n\nDB rule.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("Codex CLI reads only AGENTS.md")
+                .and(predicate::str::contains("(db)")),
+        );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(),
+        "Be nice.\n"
+    );
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "check"])
+        .assert()
+        .stderr(predicate::str::contains("Codex CLI reads only AGENTS.md"));
+}
+
+#[test]
+fn test_migrate_claude_to_codex_keeps_rules_in_agents_md() {
+    // Codex writes no rule file: AGENTS.md is where the rule goes.
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("CLAUDE.md"), "Be nice.\n").unwrap();
+    fs::create_dir_all(dir.path().join(".claude/rules")).unwrap();
+    fs::write(
+        dir.path().join(".claude/rules/ts.md"),
+        "---\npaths: \"**/*.ts\"\n---\n\nUse strict mode.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "migrate",
+            "--source",
+            "claude",
+            "--output",
+            "codex",
+        ])
+        .assert()
+        .success();
+
+    let agents_md = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(agents_md.contains("## Rule: ts"), "AGENTS.md: {agents_md}");
+    assert!(
+        agents_md.contains("Use strict mode."),
+        "AGENTS.md: {agents_md}"
+    );
+}
+
+#[test]
 fn test_migrate_dry_run_does_not_modify() {
     let dir = TempDir::new().unwrap();
     fs::create_dir_all(dir.path().join(".gemini")).unwrap();
@@ -3431,4 +3661,118 @@ fn test_migrate_keeps_an_agent_the_output_skips_as_a_built_in() {
         "the worker agent was lost by the migration"
     );
     assert!(!root.join(".codex/agents/worker.toml").exists());
+}
+
+/// An Antigravity project whose instructions are in GEMINI.md (no AGENTS.md),
+/// with a rule file and Codex detected.
+fn create_antigravity_gemini_md_project() -> TempDir {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("GEMINI.md"), "Be nice from gemini.\n").unwrap();
+    fs::create_dir_all(dir.path().join(".agents/rules")).unwrap();
+    fs::write(
+        dir.path().join(".agents/rules/db.md"),
+        "---\ntrigger: model_decision\ndescription: Database work\n---\n\nDB rule.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join(".codex")).unwrap();
+    fs::create_dir_all(dir.path().join(".gemini")).unwrap();
+    fs::write(
+        dir.path().join(".conformerc.toml"),
+        "source = \"antigravity\"\n",
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn test_add_refuses_agents_md_that_would_shadow_the_source_fallback_file() {
+    // Antigravity reads GEMINI.md only while AGENTS.md is missing: an
+    // AGENTS.md created by `add` would shadow it, and the next sync would
+    // rewrite GEMINI.md from AGENTS.md.
+    let dir = create_antigravity_gemini_md_project();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "add",
+            "rule",
+            "style",
+            "--content",
+            "Use tabs.",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("GEMINI.md"));
+    assert!(!dir.path().join("AGENTS.md").exists());
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(dir.path().join("GEMINI.md")).unwrap(),
+        "Be nice from gemini.\n"
+    );
+}
+
+#[test]
+fn test_sync_and_check_warn_agents_md_readers_when_the_source_reads_a_fallback_file() {
+    // Codex reads only AGENTS.md, which the project does not have: sync and
+    // check say so rather than calling Codex in sync, and never write it.
+    let dir = create_antigravity_gemini_md_project();
+    let warning = "Codex CLI reads only AGENTS.md, which this project does not have: \
+                   Antigravity CLI reads GEMINI.md";
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(warning));
+    assert!(!dir.path().join("AGENTS.md").exists());
+    assert_eq!(
+        fs::read_to_string(dir.path().join("GEMINI.md")).unwrap(),
+        "Be nice from gemini.\n"
+    );
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "check"])
+        .assert()
+        .stderr(predicate::str::contains(warning));
+    assert!(!dir.path().join("AGENTS.md").exists());
+}
+
+#[test]
+fn test_add_works_for_gemini_source_listing_gemini_md_and_agents_md() {
+    // Gemini CLI loads every file `context.fileName` names, so an AGENTS.md
+    // created by `add` sits beside GEMINI.md instead of shadowing it.
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".gemini")).unwrap();
+    fs::write(
+        dir.path().join(".gemini/settings.json"),
+        r#"{"context":{"fileName":["GEMINI.md","AGENTS.md"]}}"#,
+    )
+    .unwrap();
+    fs::write(dir.path().join("GEMINI.md"), "Be nice from gemini.\n").unwrap();
+    fs::write(dir.path().join(".conformerc.toml"), "source = \"gemini\"\n").unwrap();
+
+    conforme()
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "add",
+            "rule",
+            "ts",
+            "--content",
+            "Use strict mode.",
+        ])
+        .assert()
+        .success();
+    assert!(fs::read_to_string(dir.path().join("AGENTS.md"))
+        .unwrap()
+        .contains("## Rule: ts"));
+    assert_eq!(
+        fs::read_to_string(dir.path().join("GEMINI.md")).unwrap(),
+        "Be nice from gemini.\n"
+    );
 }

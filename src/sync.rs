@@ -312,17 +312,243 @@ fn unheld_skills_and_agents(
     Ok(unheld)
 }
 
-/// [`instructions_and_rules`] plus the skills, agents and MCP servers a tool
-/// cannot hold in files of its own (Codex agents named like a built-in,
-/// DeepSeek agents and MCP): after `migrate`, AGENTS.md is the only place left
-/// to keep them.
-fn instructions_rules_and_unheld(
+/// The rules `output` writes no file for. Each rule is tried on its own
+/// against what the output writes for an empty config: Codex or OpenCode write
+/// nothing for a rule (AGENTS.md holds it), Antigravity writes
+/// `.agents/rules/<name>.md` with its trigger.
+fn unheld_rules(
     project_root: &Path,
     output: &dyn AiToolAdapter,
     config: &NormalizedConfig,
+) -> Result<Vec<crate::config::NormalizedRule>> {
+    let baseline: std::collections::HashSet<std::path::PathBuf> = output
+        .generate(project_root, &NormalizedConfig::default())?
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    let mut unheld = Vec::new();
+    for rule in &config.rules {
+        let only = NormalizedConfig {
+            rules: vec![rule.clone()],
+            ..Default::default()
+        };
+        let held = output
+            .generate(project_root, &only)?
+            .iter()
+            .any(|(path, _)| !baseline.contains(path));
+        if !held {
+            unheld.push(rule.clone());
+        }
+    }
+    Ok(unheld)
+}
+
+/// The rules a source that keeps its instructions in AGENTS.md (its own
+/// file) reads from files of its own (Antigravity `.agents/rules/`, a Claude
+/// Code `.claude/rules/` beside a fallback AGENTS.md) and that `output` cannot
+/// hold: AGENTS.md is the only place a tool reading only it would find them,
+/// and they are not there. A rule AGENTS.md already holds as a `## Rule:`
+/// section with the same text does not count.
+fn rules_outside_agents_md(
+    project_root: &Path,
+    source: &dyn AiToolAdapter,
+    output: &dyn AiToolAdapter,
+    config: &NormalizedConfig,
+) -> Result<Vec<crate::config::NormalizedRule>> {
+    let path = project_root.join("AGENTS.md");
+    if config.rules.is_empty() || !source.source_files(project_root).contains(&path) {
+        return Ok(Vec::new());
+    }
+    let in_file = markdown::parse_agents_md(&std::fs::read_to_string(&path)?)?.rules;
+    let normalize = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    Ok(unheld_rules(project_root, output, config)?
+        .into_iter()
+        .filter(|rule| {
+            !in_file.iter().any(|section| {
+                crate::config::rule_file_name(&section.name)
+                    == crate::config::rule_file_name(&rule.name)
+                    && normalize(&section.content) == normalize(&rule.content)
+            })
+        })
+        .collect())
+}
+
+/// Warn about each rule the source holds outside AGENTS.md that `target`,
+/// which reads only AGENTS.md, will never see: AGENTS.md is the source's own
+/// file, so sync does not rewrite it.
+fn warn_rules_outside_agents_md(
+    project_root: &Path,
+    source_id: &str,
+    target: &dyn AiToolAdapter,
+    config: &NormalizedConfig,
+) -> Result<()> {
+    let Some(source) = find_adapter(source_id) else {
+        return Ok(());
+    };
+    if !target.reads_agents_md(project_root) {
+        return Ok(());
+    }
+    let missing = rules_outside_agents_md(project_root, source.as_ref(), target, config)?;
+    if !missing.is_empty() {
+        let names: Vec<String> = missing
+            .iter()
+            .map(|r| crate::config::rule_file_name(&r.name))
+            .collect();
+        eprintln!(
+            "  {} {} reads only AGENTS.md: the rules {} holds outside it ({}) do not reach it; \
+             add them to AGENTS.md as ## Rule: sections to share them",
+            "!".yellow(),
+            target.name(),
+            source.name(),
+            names.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// Whether `tool` keeps the config's instructions only in AGENTS.md: it reads
+/// AGENTS.md and writes no file for them (Codex, OpenCode, DeepSeek, Vibe,
+/// Kilo, Antigravity). With no instructions, the rules stand in for them.
+/// Only the instructions are asked about: a tool that keeps its rules in files
+/// but its instructions in AGENTS.md (Antigravity) must not look as if it held
+/// them because of the rule files.
+fn keeps_instructions_only_in_agents_md(
+    project_root: &Path,
+    tool: &dyn AiToolAdapter,
+    config: &NormalizedConfig,
+) -> Result<bool> {
+    if config.instructions.trim().is_empty() && config.rules.is_empty() {
+        return Ok(false);
+    }
+    if !tool.reads_agents_md(project_root) {
+        return Ok(false);
+    }
+    let has_instructions = !config.instructions.trim().is_empty();
+    let instructions_only = NormalizedConfig {
+        instructions: config.instructions.clone(),
+        rules: if has_instructions {
+            Vec::new()
+        } else {
+            config.rules.clone()
+        },
+        ..Default::default()
+    };
+    Ok(tool.generate(project_root, &instructions_only)?.is_empty())
+}
+
+/// Sources that load only the first existing file of an ordered list that
+/// starts with AGENTS.md (Antigravity: AGENTS.md, else GEMINI.md; OpenCode and
+/// Kilo: AGENTS.md, else CLAUDE.md, else CONTEXT.md; DeepSeek: AGENTS.md, else
+/// CLAUDE.md). Gemini CLI loads every file `context.fileName` names and Claude
+/// Code has its own fallback handling, so neither is listed.
+const AGENTS_MD_FIRST_SOURCES: &[&str] = &["antigravity", "opencode", "kilo", "deepseek"];
+
+/// The instruction file a source that reads AGENTS.md natively falls back to
+/// while the project has no AGENTS.md (Antigravity `GEMINI.md`; OpenCode and
+/// Kilo `CLAUDE.md`, else `CONTEXT.md`; DeepSeek `CLAUDE.md`). An AGENTS.md
+/// created then would shadow that file, and the next sync would rewrite it
+/// from AGENTS.md.
+fn agents_md_fallback_file(project_root: &Path, source_id: &str) -> Option<std::path::PathBuf> {
+    let source = find_adapter(source_id)?;
+    if !AGENTS_MD_FIRST_SOURCES.contains(&source.id()) {
+        return None;
+    }
+    if !source.reads_agents_md(project_root) || project_root.join("AGENTS.md").exists() {
+        return None;
+    }
+    source.source_files(project_root).into_iter().find(|path| {
+        path.parent() == Some(project_root)
+            && path.is_file()
+            && path.file_name().is_some_and(|name| name != "AGENTS.md")
+            && path.extension().is_some_and(|ext| ext == "md")
+    })
+}
+
+/// Warns, once, about the targets that keep their instructions only in
+/// AGENTS.md while the source reads a fallback file and AGENTS.md is missing:
+/// they get no instructions, and sync never writes AGENTS.md there (it would
+/// shadow the source's file).
+fn warn_agents_md_readers_without_agents_md(
+    project_root: &Path,
+    source_id: &str,
+    targets: &[&dyn AiToolAdapter],
+    config: &NormalizedConfig,
+) -> Result<()> {
+    let Some(fallback) = agents_md_fallback_file(project_root, source_id) else {
+        return Ok(());
+    };
+    let Some(source) = find_adapter(source_id) else {
+        return Ok(());
+    };
+    let mut names = Vec::new();
+    for target in targets {
+        if keeps_instructions_only_in_agents_md(project_root, *target, config)? {
+            names.push(target.name().to_string());
+        }
+    }
+    if names.is_empty() {
+        return Ok(());
+    }
+    let file = fallback
+        .strip_prefix(project_root)
+        .unwrap_or(&fallback)
+        .display()
+        .to_string();
+    eprintln!(
+        "  {} {} {} only AGENTS.md, which this project does not have: {} reads {}; \
+         rename it to AGENTS.md to share the instructions",
+        "!".yellow(),
+        names.join(", "),
+        if names.len() == 1 { "reads" } else { "read" },
+        source.name(),
+        file
+    );
+    Ok(())
+}
+
+/// The instructions plus the rules, skills, agents and MCP servers a tool
+/// cannot hold in files of its own (Codex rules, agents named like a built-in,
+/// DeepSeek agents and MCP): after `migrate`, AGENTS.md is the only place left
+/// to keep them. A rule the output writes in a file of its own (Antigravity
+/// `.agents/rules/`) stays out: AGENTS.md loads whole as always-on, so it
+/// would apply everywhere and load twice. It stays in, though, while a
+/// staying tool (`staying`: the output and every other detected tool) reads
+/// AGENTS.md and writes no file for that rule (Codex, OpenCode, Kilo, Vibe,
+/// DeepSeek): AGENTS.md is the only place that tool finds it.
+fn instructions_rules_and_unheld(
+    project_root: &Path,
+    output: &dyn AiToolAdapter,
+    staying: &[&dyn AiToolAdapter],
+    config: &NormalizedConfig,
 ) -> Result<NormalizedConfig> {
     let unheld = unheld_skills_and_agents(project_root, output, config)?;
+    let mut rules = unheld_rules(project_root, output, config)?;
+    for tool in staying {
+        if tool.id() == output.id() || !tool.reads_agents_md(project_root) {
+            continue;
+        }
+        // Another tool's unreadable settings file must not block the
+        // migration (as in `run_migrate`): a tool that cannot be probed is
+        // taken to hold no rule, so AGENTS.md keeps them all for it.
+        let needed = match unheld_rules(project_root, *tool, config) {
+            Ok(needed) => needed,
+            Err(_) => config.rules.clone(),
+        };
+        for rule in needed {
+            if !rules.iter().any(|r| r.name == rule.name) {
+                rules.push(rule);
+            }
+        }
+    }
+    // Keep the source order.
+    let rules = config
+        .rules
+        .iter()
+        .filter(|rule| rules.iter().any(|r| r.name == rule.name))
+        .cloned()
+        .collect();
     Ok(NormalizedConfig {
+        rules,
         skills: unheld.skills,
         agents: unheld.agents,
         mcp_servers: if output.capabilities().mcp {
@@ -556,11 +782,13 @@ pub fn run_sync(
     }
 
     let targets = selected_targets(&adapters, project_root, &source_id, only, &project_cfg);
+    warn_agents_md_readers_without_agents_md(project_root, &source_id, &targets, &config)?;
     let codex_reads_agents_md =
         source_id == "codex" || targets.iter().any(|adapter| adapter.id() == "codex");
     for adapter in targets {
         // Warn about capability loss
         warn_capability_loss(adapter, project_root, &config);
+        warn_rules_outside_agents_md(project_root, &source_id, adapter, &config)?;
 
         if dry_run {
             let generated =
@@ -886,8 +1114,10 @@ pub fn run_check(project_root: &Path, from: Option<&str>, verbose: bool) -> Resu
     } else {
         selected_targets(&adapters, project_root, &source_id, None, &project_cfg)
     };
+    warn_agents_md_readers_without_agents_md(project_root, &source_id, &targets, &config)?;
 
     for adapter in targets {
+        warn_rules_outside_agents_md(project_root, &source_id, adapter, &config)?;
         let generated = target_files(project_root, &source_id, adapter, &config, &source_files)?;
         let mut tool_diffs = differing_files(&generated)?;
         // An orphan sync would remove (a stale rule, a bundled file the source
@@ -1254,10 +1484,18 @@ pub fn run_migrate(
     // Codex, OpenCode, DeepSeek, Vibe and Kilo (and Gemini CLI when it only loads
     // AGENTS.md) keep their instructions in AGENTS.md: generating nothing
     // for them would delete the source's instructions and rules into nothing.
+    // Tools that keep using the project after the migration: the output and
+    // every other detected tool.
+    let staying: Vec<&Box<dyn AiToolAdapter>> = adapters
+        .iter()
+        .filter(|a| a.id() == output || (a.id() != source && a.detect(project_root)))
+        .collect();
+    let staying_tools: Vec<&dyn AiToolAdapter> = staying.iter().map(|a| a.as_ref()).collect();
     let (agents_md, carried) = migrated_agents_md(
         project_root,
         source_adapter.as_ref(),
         output_adapter.as_ref(),
+        &staying_tools,
         &config,
     )?;
     // The sections carried from an earlier switch's AGENTS.md that the output
@@ -1269,13 +1507,8 @@ pub fn run_migrate(
 
     // Collect source files to delete (generated files for the source adapter)
     let source_files = source_adapter.generate(project_root, &config)?;
-    // Tools that keep using the project after the migration: the output and
-    // every other detected tool. A file one of them generates is never
-    // deleted, even when it sits in a directory it shares with the source.
-    let staying: Vec<&Box<dyn AiToolAdapter>> = adapters
-        .iter()
-        .filter(|a| a.id() == output || (a.id() != source && a.detect(project_root)))
-        .collect();
+    // A file a staying tool generates is never deleted, even when it sits in
+    // a directory it shares with the source.
     let mut kept_paths = std::collections::HashSet::new();
     let mut staying_dirs = Vec::new();
     for adapter in &staying {
@@ -1478,6 +1711,21 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
                  add the entry in {source}'s own files instead"
             );
         }
+        // A source that reads AGENTS.md but, without one, reads a fallback
+        // file (Antigravity GEMINI.md, OpenCode CLAUDE.md): an AGENTS.md
+        // created here would shadow that file, and the next sync would
+        // rewrite it from AGENTS.md.
+        if let Some(fallback) = agents_md_fallback_file(project_root, &source) {
+            let file = fallback
+                .strip_prefix(project_root)
+                .unwrap_or(&fallback)
+                .display()
+                .to_string();
+            bail!(
+                "the source is {source}, which reads {file} because this project has no AGENTS.md; \
+                 creating AGENTS.md would shadow {file}: add the entry to {file} or to {source}'s own rules instead"
+            );
+        }
     }
 
     // Read existing AGENTS.md or start fresh
@@ -1591,27 +1839,60 @@ fn migrated_agents_md(
     project_root: &Path,
     source: &dyn AiToolAdapter,
     output: &dyn AiToolAdapter,
+    staying: &[&dyn AiToolAdapter],
     config: &NormalizedConfig,
 ) -> Result<(Option<(std::path::PathBuf, String)>, NormalizedConfig)> {
     let none = || (None, NormalizedConfig::default());
-    if config.instructions.trim().is_empty() && config.rules.is_empty() {
-        return Ok(none());
-    }
-    let instructions_only = NormalizedConfig {
-        instructions: config.instructions.clone(),
-        rules: config.rules.clone(),
-        ..Default::default()
-    };
-    let output_holds_instructions = !output
-        .generate(project_root, &instructions_only)?
-        .is_empty();
-    if !output.reads_agents_md(project_root) || output_holds_instructions {
+    if !keeps_instructions_only_in_agents_md(project_root, output, config)? {
         return Ok(none());
     }
     let path = project_root.join("AGENTS.md");
     if source.source_files(project_root).contains(&path) {
-        // The source already keeps its instructions there.
-        return Ok(none());
+        // The source already keeps its instructions there; the rules it
+        // holds in files of its own (Antigravity `.agents/rules/`) that the
+        // output cannot hold join them as `## Rule:` sections, or migrate
+        // would delete them into nothing. AGENTS.md is the user's own file:
+        // its text is kept exactly and the rules are only appended.
+        let missing = rules_outside_agents_md(project_root, source, output, config)?;
+        if missing.is_empty() {
+            return Ok(none());
+        }
+        let existing = std::fs::read_to_string(&path)?;
+        let mut taken: std::collections::HashSet<String> = markdown::parse_agents_md(&existing)?
+            .rules
+            .iter()
+            .map(|r| crate::config::rule_file_name(&r.name))
+            .collect();
+        let mut appended = NormalizedConfig::default();
+        for mut rule in missing {
+            if taken.contains(&crate::config::rule_file_name(&rule.name)) {
+                let original = rule.name.clone();
+                let mut candidate = format!("{original} (rules file)");
+                let mut n = 2;
+                while taken.contains(&crate::config::rule_file_name(&candidate)) {
+                    candidate = format!("{original} (rules file {n})");
+                    n += 1;
+                }
+                eprintln!(
+                    "  {} AGENTS.md already has a '## Rule: {}' section that differs from the {} rule file '{}': \
+                     the section is kept as is and the file rule is added as '## Rule: {}'; merge them by hand",
+                    "!".yellow(),
+                    original,
+                    source.name(),
+                    original,
+                    candidate
+                );
+                rule.name = candidate;
+            }
+            taken.insert(crate::config::rule_file_name(&rule.name));
+            appended.rules.push(rule);
+        }
+        let mut content = existing;
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(&markdown::export_as_agents_md(&appended));
+        return Ok((Some((path, content)), NormalizedConfig::default()));
     }
     let Some(existing) = path
         .exists()
@@ -1621,6 +1902,7 @@ fn migrated_agents_md(
         let content = markdown::export_as_agents_md(&instructions_rules_and_unheld(
             project_root,
             output,
+            staying,
             config,
         )?);
         return Ok((Some((path, content)), NormalizedConfig::default()));
@@ -1645,6 +1927,7 @@ fn migrated_agents_md(
     let content = markdown::export_as_agents_md(&instructions_rules_and_unheld(
         project_root,
         output,
+        staying,
         &merged,
     )?);
     let text_kept = crate::hash::contents_match(&existing, &content)

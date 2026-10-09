@@ -237,7 +237,9 @@ impl AiToolAdapter for DevinAdapter {
     }
 }
 
-fn parse_devin_activation(fields: &BTreeMap<String, serde_yaml_ng::Value>) -> ActivationMode {
+pub(crate) fn parse_devin_activation(
+    fields: &BTreeMap<String, serde_yaml_ng::Value>,
+) -> ActivationMode {
     let trigger = fields
         .get("trigger")
         .and_then(|v| v.as_str())
@@ -277,7 +279,7 @@ fn parse_devin_activation(fields: &BTreeMap<String, serde_yaml_ng::Value>) -> Ac
     }
 }
 
-fn build_devin_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_ng::Value> {
+pub(crate) fn build_devin_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_ng::Value> {
     let mut fields = BTreeMap::new();
     let mut set = |key: &str, value: String| {
         fields.insert(key.to_string(), serde_yaml_ng::Value::String(value));

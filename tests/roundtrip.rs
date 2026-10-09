@@ -480,6 +480,27 @@ fn test_roundtrip_opencode_skills_agents_mcp() {
 }
 
 #[test]
+fn test_roundtrip_antigravity_rules_skills_agents_mcp() {
+    let adapter = conforme::adapters::antigravity::AntigravityAdapter;
+    let dir = tempfile::tempdir().unwrap();
+    adapter.write(dir.path(), &rich_config()).unwrap();
+    assert!(dir.path().join(".agents/skills/deploy/SKILL.md").exists());
+    assert!(dir.path().join(".agents/agents/reviewer.md").exists());
+    assert!(dir.path().join(".agents/mcp_config.json").exists());
+
+    let read_config = adapter.read(dir.path()).unwrap();
+    assert_eq!(read_config.skills.len(), 1);
+    assert_eq!(read_config.skills[0].name, "deploy");
+    assert_eq!(read_config.agents.len(), 1);
+    assert_eq!(read_config.agents[0].name, "reviewer");
+    assert_eq!(mcp_names(&read_config), vec!["api", "fs"]);
+    assert_eq!(
+        find_http_url(&read_config, "api").as_deref(),
+        Some("https://example.com/mcp")
+    );
+}
+
+#[test]
 fn test_roundtrip_kilo_skills_agents_mcp() {
     let adapter = conforme::adapters::kilo::KiloAdapter;
     let dir = TempDir::new().unwrap();
@@ -733,7 +754,7 @@ fn test_sse_survives_where_the_tool_can_hold_it() {
                     server.transport
                 );
             }
-            "kiro" | "opencode" | "kilo" | "codex" | "zed" | "vibe" => {
+            "kiro" | "opencode" | "kilo" | "codex" | "zed" | "vibe" | "antigravity" => {
                 assert!(
                     matches!(&server.transport, McpTransport::Http { url, .. } if url == URL),
                     "{}: expected HTTP, got {:?}",
