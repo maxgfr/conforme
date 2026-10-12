@@ -136,7 +136,7 @@ impl AiToolAdapter for KiloAdapter {
         // file when it holds the `{env:VAR}` references OpenCode resolves.
         for name in ["opencode.json", "opencode.jsonc"] {
             let path = project_root.join(name);
-            if std::fs::read_to_string(&path).is_ok_and(|text| text.contains("{env:")) {
+            if crate::config::read_text(&path).is_ok_and(|text| text.contains("{env:")) {
                 warnings.push(format!(
                     "{name} holds {{env:VAR}} references, and Kilo refuses that file in a project; \
                      move OpenCode's settings to .opencode/opencode.json, which OpenCode reads and Kilo does not"
@@ -255,7 +255,7 @@ impl AiToolAdapter for KiloAdapter {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            let content = std::fs::read_to_string(&path)
+            let content = crate::config::read_text(&path)
                 .with_context(|| format!("failed to read {}", path.display()))?;
             config.rules.retain(|r| r.name != name);
             config.rules.push(NormalizedRule {

@@ -55,7 +55,7 @@ fn is_builtin_agent_file(path: &Path) -> bool {
 
 /// The frontmatter of an agent file, when it exists and parses.
 fn agent_file_fields(path: &Path) -> Option<BTreeMap<String, serde_yaml_ng::Value>> {
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = crate::config::read_text(path).ok()?;
     frontmatter::parse(&content).ok().map(|(fields, _)| fields)
 }
 
@@ -170,9 +170,7 @@ impl AiToolAdapter for AntigravityAdapter {
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let mut file_rules = Vec::new();
         for path in top_level_rule_files(&rules_dir(project_root))? {
-            let content = std::fs::read_to_string(&path)
-                .with_context(|| format!("failed to read {}", path.display()))?;
-            let (fields, body) = frontmatter::parse(&content)?;
+            let (fields, body) = frontmatter::read(&path)?;
             // A file without a `trigger` is not a rule Antigravity loads.
             if !fields.contains_key("trigger") {
                 continue;
@@ -197,7 +195,7 @@ impl AiToolAdapter for AntigravityAdapter {
         let mut mcp_servers = Vec::new();
         let mcp_path = mcp_path(project_root);
         if mcp_path.exists() {
-            mcp_servers = crate::mcp::parse_mcp_json(&std::fs::read_to_string(&mcp_path)?)?;
+            mcp_servers = crate::mcp::parse_mcp_json(&crate::config::read_text(&mcp_path)?)?;
         }
         // Antigravity loads `AGENTS.md` (else `GEMINI.md`) as its instructions.
         let mut config = crate::markdown::read_native_agents_md(
@@ -283,8 +281,9 @@ impl AiToolAdapter for AntigravityAdapter {
 /// Whether `path` is a rule Antigravity loads: its frontmatter parses and has
 /// a `trigger`.
 fn is_antigravity_rule_file(path: &Path) -> bool {
-    std::fs::read_to_string(path)
+    crate::config::read_text(path)
         .ok()
+        .filter(|content| frontmatter::is_strict_yaml(content))
         .and_then(|content| frontmatter::parse(&content).ok())
         .is_some_and(|(fields, _)| fields.contains_key("trigger"))
 }

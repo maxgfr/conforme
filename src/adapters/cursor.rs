@@ -58,9 +58,7 @@ impl AiToolAdapter for CursorAdapter {
         // Cursor documents that `.cursor/rules/` may be organised in
         // subdirectories, so the scan has to recurse.
         for path in crate::adapters::collect_rule_files(&rules_dir, "mdc")? {
-            let content = std::fs::read_to_string(&path)
-                .with_context(|| format!("failed to read {}", path.display()))?;
-            let (fields, body) = frontmatter::parse(&content)?;
+            let (fields, body) = frontmatter::read(&path)?;
             let name = path
                 .file_stem()
                 .unwrap_or_default()
@@ -69,7 +67,7 @@ impl AiToolAdapter for CursorAdapter {
 
             let activation = parse_cursor_activation(&fields);
 
-            if name == "general" && activation == ActivationMode::Always {
+            if crate::adapters::is_instructions_file(&rules_dir, &path, &name, &activation) {
                 instructions = body.trim().to_string();
             } else {
                 rules.push(NormalizedRule {
@@ -84,7 +82,7 @@ impl AiToolAdapter for CursorAdapter {
         // always-applied rule next to `.cursor/rules/`.
         let cursorrules = project_root.join(".cursorrules");
         if cursorrules.is_file() {
-            let legacy = std::fs::read_to_string(&cursorrules)
+            let legacy = crate::config::read_text(&cursorrules)
                 .with_context(|| format!("failed to read {}", cursorrules.display()))?
                 .trim()
                 .to_string();
@@ -108,14 +106,17 @@ impl AiToolAdapter for CursorAdapter {
             for entry in entries {
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "md") {
-                    let content = std::fs::read_to_string(&path)
-                        .with_context(|| format!("failed to read {}", path.display()))?;
-                    let (fields, body) = frontmatter::parse(&content)?;
+                    let (fields, body) = frontmatter::read(&path)?;
                     let name = fields
                         .get("name")
                         .and_then(|v| v.as_str())
-                        .unwrap_or_else(|| path.file_stem().unwrap().to_str().unwrap())
-                        .to_string();
+                        .map(str::to_string)
+                        .unwrap_or_else(|| {
+                            path.file_stem()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned()
+                        });
                     let description = fields
                         .get("description")
                         .and_then(|v| v.as_str())
@@ -142,7 +143,7 @@ impl AiToolAdapter for CursorAdapter {
         let mut mcp_servers = Vec::new();
         let mcp_path = project_root.join(".cursor").join("mcp.json");
         if mcp_path.exists() {
-            let mcp_content = std::fs::read_to_string(&mcp_path)?;
+            let mcp_content = crate::config::read_text(&mcp_path)?;
             mcp_servers = crate::mcp::canonicalize_env_refs(
                 crate::mcp::parse_mcp_json(&mcp_content)?,
                 crate::mcp::EnvRefStyle::EnvColon,

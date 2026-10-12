@@ -4011,3 +4011,83 @@ fn test_hook_refuses_a_non_shell_hook() {
         .stderr(predicate::str::contains("node"));
     assert_eq!(fs::read_to_string(&hook_path).unwrap(), original);
 }
+
+// ===== Audit pass 3: reading what users write =====
+
+#[test]
+fn test_frontmatter_cursor_unquoted_glob_is_read() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    fs::write(
+        root.join(".cursor/rules/ts.mdc"),
+        "---\ndescription: Use when: editing TS\nglobs: **/*.ts\nalwaysApply: false\n---\n\nStrict TS.\n",
+    )
+    .unwrap();
+    fs::write(root.join(".cursor/rules/short.mdc"), "Rx\n").unwrap();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    run(root, &["sync", "--from", "cursor"]).success();
+    let ts = fs::read_to_string(root.join(".claude/rules/ts.md")).unwrap();
+    assert!(ts.contains("**/*.ts"), "{ts}");
+    assert!(ts.contains("Strict TS."), "{ts}");
+    let claude = fs::read_to_string(root.join(".claude/rules/short.md"))
+        .or_else(|_| fs::read_to_string(root.join("CLAUDE.md")))
+        .unwrap();
+    assert!(claude.contains("Rx"), "{claude}");
+}
+
+#[test]
+fn test_frontmatter_read_error_names_the_file() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    fs::write(
+        root.join(".cursor/rules/bad.mdc"),
+        "---\nalwaysApply: true\n[[[ not yaml\n---\nx\n",
+    )
+    .unwrap();
+    run(root, &["sync", "--from", "cursor"])
+        .failure()
+        .stderr(predicate::str::contains("bad.mdc"));
+}
+
+#[test]
+fn test_bom_and_crlf_in_a_source_do_not_leak() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(
+        root.join("CLAUDE.md"),
+        "\u{feff}# Project\r\n\r\nBe careful.\r\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    run(root, &["sync"]).success();
+    for file in [".cursor/rules/general.mdc", "AGENTS.md"] {
+        let text = fs::read_to_string(root.join(file)).unwrap();
+        assert!(
+            !text.contains('\u{feff}') && !text.contains('\r'),
+            "{file}: {text:?}"
+        );
+        assert_eq!(text.matches("# Project").count(), 1, "{file}: {text}");
+    }
+    // The marker is still seen behind a BOM.
+    let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+    fs::write(root.join("AGENTS.md"), format!("\u{feff}{agents}")).unwrap();
+    run(root, &["sync"]).success();
+}
+
+#[test]
+fn test_crlf_only_difference_is_in_sync() {
+    let dir = create_project_with_tools("# Rules\n\nBe careful.\n", &["cursor"]);
+    let root = dir.path();
+    run(root, &["sync"]).success();
+    let path = root.join(".cursor/rules/general.mdc");
+    let crlf = fs::read_to_string(&path).unwrap().replace('\n', "\r\n");
+    fs::write(&path, &crlf).unwrap();
+    run(root, &["check"]).success();
+    run(root, &["sync"])
+        .success()
+        .stdout(predicate::str::contains("All configs already in sync."));
+    assert_eq!(fs::read_to_string(&path).unwrap(), crlf);
+}

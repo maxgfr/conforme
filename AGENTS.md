@@ -424,7 +424,7 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - Use `anyhow::Result` for fallible functions, `anyhow::Context` for error messages
 - Use `BTreeMap` (not `HashMap`) for deterministic output ordering in generated files
 - Parse frontmatter fields defensively: use `.and_then(|v| v.as_str())` chains, never `.unwrap()` on user input
-- When parsing tool-separated lists (e.g. `allowed-tools`, `tools`), handle both space-separated AND comma-separated formats: `split_whitespace().flat_map(|t| t.split(','))`
+- When parsing tool-separated lists (e.g. `allowed-tools`, `tools`), use `skills::parse_frontmatter_tool_list`: it handles space- and comma-separated strings and YAML lists, and keeps `Bash(git add:*)` whole
 - Keep adapter `read()` and `generate()` symmetric: if `generate()` writes a field, `read()` must parse it back correctly (round-trip guarantee)
 
 ## Rule: testing

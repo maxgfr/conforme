@@ -64,7 +64,7 @@ impl AiToolAdapter for CopilotAdapter {
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let instructions_file = project_root.join(".github").join("copilot-instructions.md");
         let instructions = if instructions_file.exists() {
-            std::fs::read_to_string(&instructions_file)
+            crate::config::read_text(&instructions_file)
                 .with_context(|| format!("failed to read {}", instructions_file.display()))?
                 .trim()
                 .to_string()
@@ -84,9 +84,7 @@ impl AiToolAdapter for CopilotAdapter {
             else {
                 continue;
             };
-            let content = std::fs::read_to_string(&path)
-                .with_context(|| format!("failed to read {}", path.display()))?;
-            let (fields, body) = frontmatter::parse(&content)?;
+            let (fields, body) = frontmatter::read(&path)?;
 
             // VS Code loads a file without `applyTo` on demand when its
             // `description` matches the task, and only when attached by hand
@@ -136,7 +134,7 @@ impl AiToolAdapter for CopilotAdapter {
         let mut mcp_servers = Vec::new();
         let mcp_path = project_root.join(".vscode").join("mcp.json");
         if mcp_path.exists() {
-            let mcp_content = std::fs::read_to_string(&mcp_path)?;
+            let mcp_content = crate::config::read_text(&mcp_path)?;
             mcp_servers = crate::mcp::canonicalize_env_refs(
                 crate::mcp::parse_mcp_json(&mcp_content)?,
                 crate::mcp::EnvRefStyle::EnvColon,
@@ -144,7 +142,7 @@ impl AiToolAdapter for CopilotAdapter {
         }
         let cli_path = project_root.join(".github").join("mcp.json");
         if cli_path.exists() {
-            let cli_content = std::fs::read_to_string(&cli_path)?;
+            let cli_content = crate::config::read_text(&cli_path)?;
             for server in crate::mcp::parse_mcp_json(&cli_content)? {
                 if !mcp_servers.iter().any(|s| s.name == server.name) {
                     mcp_servers.push(server);

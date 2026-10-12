@@ -507,6 +507,20 @@ pub fn collect_rule_files(dir: &Path, extension: &str) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+/// Whether a rule file read from `rules_dir` holds the instructions: the
+/// always-applied `general` file conforme writes at the top level of the
+/// rules directory. A `general` file in a sub-directory is an ordinary rule.
+pub(crate) fn is_instructions_file(
+    rules_dir: &Path,
+    path: &Path,
+    name: &str,
+    activation: &crate::config::ActivationMode,
+) -> bool {
+    name == "general"
+        && *activation == crate::config::ActivationMode::Always
+        && path.parent() == Some(rules_dir)
+}
+
 /// Whether `path` is a directory itself, not a symbolic link to one. Every
 /// recursive walk descends only into those: a link to a directory may loop
 /// back on itself, or lead out of the project where `migrate` would delete.

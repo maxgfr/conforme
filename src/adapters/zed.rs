@@ -87,7 +87,7 @@ impl AiToolAdapter for ZedAdapter {
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let rules_file = project_root.join(".rules");
         let instructions = if rules_file.exists() {
-            std::fs::read_to_string(&rules_file)
+            crate::config::read_text(&rules_file)
                 .with_context(|| format!("failed to read {}", rules_file.display()))?
                 .trim()
                 .to_string()
@@ -101,7 +101,7 @@ impl AiToolAdapter for ZedAdapter {
         let mut mcp_servers = Vec::new();
         let settings_path = project_root.join(".zed").join("settings.json");
         if settings_path.exists() {
-            let settings = std::fs::read_to_string(&settings_path)?;
+            let settings = crate::config::read_text(&settings_path)?;
             mcp_servers = crate::mcp::parse_mcp_json(&settings)?;
         }
 

@@ -24,15 +24,32 @@ fn strip_order_prefix(stem: &str) -> &str {
     }
 }
 
-/// Read back the scope comment `generate` writes above a glob rule, so the
-/// rule keeps its globs when Zoo Code is the source.
+/// The comment `generate` puts above an agent-decision rule: when it applies.
+const APPLY_WHEN_COMMENT: &str = "<!-- Apply when: ";
+
+/// Read back the scope or apply-when comment `generate` writes above a glob or
+/// agent-decision rule, so the rule keeps its activation when Zoo Code is the
+/// source.
 fn parse_scope_comment(content: &str) -> (ActivationMode, String) {
-    let scoped = content.strip_prefix(SCOPE_COMMENT).and_then(|rest| {
+    let first_line = |prefix: &str| {
+        let rest = content.strip_prefix(prefix)?;
         let (line, body) = rest.split_once('\n').unwrap_or((rest, ""));
-        let globs = crate::config::split_globs(line.trim_end().strip_suffix("-->")?);
-        (!globs.is_empty()).then(|| (ActivationMode::GlobMatch(globs), body.trim().to_string()))
-    });
-    scoped.unwrap_or_else(|| (ActivationMode::Always, content.to_string()))
+        Some((line.trim_end().strip_suffix("-->")?.trim(), body.trim()))
+    };
+    if let Some((line, body)) = first_line(SCOPE_COMMENT) {
+        let globs = crate::config::split_globs(line);
+        if !globs.is_empty() {
+            return (ActivationMode::GlobMatch(globs), body.to_string());
+        }
+    }
+    if let Some((line, body)) = first_line(APPLY_WHEN_COMMENT).filter(|(l, _)| !l.is_empty()) {
+        let description = line.to_string();
+        return (
+            ActivationMode::AgentDecision { description },
+            body.to_string(),
+        );
+    }
+    (ActivationMode::Always, content.to_string())
 }
 
 /// Zoo Code (community fork of Roo Code) adapter.
@@ -124,14 +141,14 @@ impl AiToolAdapter for ZooCodeAdapter {
         // Zoo Code reads `.roo/rules/` recursively, sorting by base name only.
         let rule_files = crate::adapters::collect_rule_files(&rules_dir, "md")?;
         for path in &rule_files {
-            let content = std::fs::read_to_string(path)
+            let content = crate::config::read_text(path)
                 .with_context(|| format!("failed to read {}", path.display()))?;
             let stem = path.file_stem().unwrap_or_default().to_string_lossy();
             // `NN-` only orders the files; it is not part of the rule's name.
             let name = strip_order_prefix(&stem).to_string();
             let (activation, body) = parse_scope_comment(content.trim());
 
-            if name == "general" && activation == ActivationMode::Always {
+            if crate::adapters::is_instructions_file(&rules_dir, path, &name, &activation) {
                 instructions = body;
             } else {
                 rules.push(NormalizedRule {
@@ -145,7 +162,7 @@ impl AiToolAdapter for ZooCodeAdapter {
         // empty.
         let roorules = project_root.join(".roorules");
         if rule_files.is_empty() && roorules.is_file() {
-            instructions = std::fs::read_to_string(&roorules)
+            instructions = crate::config::read_text(&roorules)
                 .with_context(|| format!("failed to read {}", roorules.display()))?
                 .trim()
                 .to_string();
@@ -157,7 +174,7 @@ impl AiToolAdapter for ZooCodeAdapter {
         let mut mcp_servers = Vec::new();
         let mcp_path = project_root.join(".roo").join("mcp.json");
         if mcp_path.exists() {
-            let mcp_content = std::fs::read_to_string(&mcp_path)?;
+            let mcp_content = crate::config::read_text(&mcp_path)?;
             mcp_servers = crate::mcp::canonicalize_env_refs(
                 crate::mcp::parse_mcp_json(&mcp_content)?,
                 crate::mcp::EnvRefStyle::EnvColon,
@@ -203,7 +220,9 @@ impl AiToolAdapter for ZooCodeAdapter {
                     content.push_str(&format!("{SCOPE_COMMENT}{} -->\n\n", globs.join(", ")));
                 }
                 ActivationMode::AgentDecision { description } if !description.is_empty() => {
-                    content.push_str(&format!("<!-- {description} -->\n\n"));
+                    let description = description.split_whitespace().collect::<Vec<_>>().join(" ");
+                    let description = description.replace("-->", "- ->");
+                    content.push_str(&format!("{APPLY_WHEN_COMMENT}{description} -->\n\n"));
                 }
                 _ => {}
             }

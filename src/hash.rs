@@ -7,9 +7,10 @@ pub fn content_hash(content: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// Check if two contents are identical by hash.
+/// Check if two contents are identical by hash, line ends aside: a file
+/// checked out with CRLF (`core.autocrlf`) is in sync.
 pub fn contents_match(a: &str, b: &str) -> bool {
-    content_hash(a) == content_hash(b)
+    content_hash(&a.replace("\r\n", "\n")) == content_hash(&b.replace("\r\n", "\n"))
 }
 
 #[cfg(test)]

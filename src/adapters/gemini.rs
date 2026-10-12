@@ -16,7 +16,7 @@ fn is_gemini_user_agent(path: &Path) -> bool {
     {
         return true;
     }
-    let Ok(content) = std::fs::read_to_string(path) else {
+    let Ok(content) = crate::config::read_text(path) else {
         return false;
     };
     match crate::frontmatter::parse(&content) {
@@ -131,7 +131,7 @@ impl AiToolAdapter for GeminiAdapter {
         for name in context_files.iter().filter(|n| *n != "AGENTS.md") {
             let path = project_root.join(name);
             if path.is_file() {
-                let text = std::fs::read_to_string(&path)
+                let text = crate::config::read_text(&path)
                     .with_context(|| format!("failed to read {}", path.display()))?;
                 if !text.trim().is_empty() {
                     parts.push(text.trim().to_string());
@@ -153,7 +153,7 @@ impl AiToolAdapter for GeminiAdapter {
         let mut mcp_servers = Vec::new();
         let settings_path = project_root.join(".gemini").join("settings.json");
         if settings_path.exists() {
-            let settings = std::fs::read_to_string(&settings_path)?;
+            let settings = crate::config::read_text(&settings_path)?;
             mcp_servers = crate::mcp::canonicalize_env_refs(
                 crate::mcp::parse_mcp_json(&settings)?,
                 crate::mcp::EnvRefStyle::DollarOrBare,

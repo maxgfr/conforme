@@ -1767,3 +1767,105 @@ fn test_agent_decision_rules_always_carry_a_description() {
         );
     }
 }
+
+#[test]
+fn test_roundtrip_zoocode_agent_decision_rule() {
+    let adapter = conforme::adapters::zoocode::ZooCodeAdapter;
+    let dir = TempDir::new().unwrap();
+    let config = NormalizedConfig {
+        instructions: "Be helpful.".into(),
+        rules: vec![NormalizedRule {
+            name: "docs".into(),
+            content: "Write short docs.".into(),
+            activation: ActivationMode::AgentDecision {
+                description: "When editing docs".into(),
+            },
+        }],
+        ..Default::default()
+    };
+    adapter.write(dir.path(), &config).unwrap();
+    let read = adapter.read(dir.path()).unwrap();
+    assert_eq!(read.rules.len(), 1);
+    assert_eq!(read.rules[0].content, "Write short docs.");
+    assert_eq!(
+        read.rules[0].activation,
+        ActivationMode::AgentDecision {
+            description: "When editing docs".into()
+        }
+    );
+}
+
+#[test]
+fn test_roundtrip_nested_general_file_is_a_rule() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor/rules/team")).unwrap();
+    fs::write(
+        root.join(".cursor/rules/general.mdc"),
+        "---\nalwaysApply: true\n---\n\nTop.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".cursor/rules/team/general.mdc"),
+        "---\nalwaysApply: true\n---\n\nTeam.\n",
+    )
+    .unwrap();
+    let read = conforme::adapters::cursor::CursorAdapter
+        .read(root)
+        .unwrap();
+    assert_eq!(read.instructions, "Top.");
+    assert_eq!(read.rules.len(), 1);
+    assert_eq!(read.rules[0].content, "Team.");
+
+    fs::create_dir_all(root.join(".roo/rules/team")).unwrap();
+    fs::write(root.join(".roo/rules/00-general.md"), "Top.\n").unwrap();
+    fs::write(root.join(".roo/rules/team/general.md"), "Team.\n").unwrap();
+    let read = conforme::adapters::zoocode::ZooCodeAdapter
+        .read(root)
+        .unwrap();
+    assert_eq!(read.instructions, "Top.");
+    assert_eq!(read.rules.len(), 1);
+    assert_eq!(read.rules[0].content, "Team.");
+}
+
+#[test]
+fn test_roundtrip_devin_duplicate_stems_are_kept_for_validation() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    for sub in ["a", "b"] {
+        fs::create_dir_all(root.join(format!(".devin/rules/{sub}"))).unwrap();
+        fs::write(
+            root.join(format!(".devin/rules/{sub}/x.md")),
+            format!("---\ntrigger: always_on\n---\n\nRule {sub}.\n"),
+        )
+        .unwrap();
+    }
+    let read = conforme::adapters::devin::DevinAdapter.read(root).unwrap();
+    assert_eq!(read.rules.len(), 2);
+    assert!(!conforme::validate::validate(&read, false));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn test_roundtrip_non_utf8_names_do_not_panic() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    let name = std::ffi::OsStr::from_bytes(b"bad\xffname");
+    let skill = root.join(".claude/skills").join(name);
+    fs::create_dir_all(&skill).unwrap();
+    fs::write(skill.join("SKILL.md"), "---\ndescription: d\n---\nBody.\n").unwrap();
+    let agents = root.join(".cursor/agents");
+    fs::create_dir_all(&agents).unwrap();
+    fs::write(
+        agents.join(std::ffi::OsStr::from_bytes(b"bad\xff.md")),
+        "---\ndescription: d\n---\nBody.\n",
+    )
+    .unwrap();
+    conforme::adapters::claude::ClaudeAdapter
+        .read(root)
+        .unwrap();
+    conforme::adapters::cursor::CursorAdapter
+        .read(root)
+        .unwrap();
+}

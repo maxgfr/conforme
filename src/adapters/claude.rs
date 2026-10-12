@@ -9,27 +9,7 @@ use crate::config::{
 };
 use crate::frontmatter;
 
-/// Parse a frontmatter tool list that may be either a scalar string
-/// (space- or comma-separated, e.g. `Read, Bash Write`) or a YAML sequence
-/// (`- Read` / `- Bash`). Claude Code accepts all of these forms for the
-/// `tools` (subagents) and `allowed-tools` (skills/commands) fields, so the
-/// reader must handle every one to round-trip correctly.
-fn parse_tool_list(value: Option<&serde_yaml_ng::Value>) -> Vec<String> {
-    match value {
-        Some(serde_yaml_ng::Value::String(s)) => s
-            .split_whitespace()
-            .flat_map(|t| t.split(','))
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
-            .collect(),
-        Some(serde_yaml_ng::Value::Sequence(seq)) => seq
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
-            .filter(|s| !s.is_empty())
-            .collect(),
-        _ => Vec::new(),
-    }
-}
+use crate::skills::parse_frontmatter_tool_list as parse_tool_list;
 
 pub struct ClaudeAdapter;
 
@@ -37,7 +17,7 @@ pub struct ClaudeAdapter;
 /// non-empty `name` and `description` (a file without `name` is documentation
 /// kept beside the agents, one without `description` is skipped).
 fn is_claude_agent_file(path: &Path) -> bool {
-    std::fs::read_to_string(path)
+    crate::config::read_text(path)
         .ok()
         .and_then(|content| frontmatter::parse(&content).ok())
         .is_some_and(|(fields, _)| {
@@ -153,7 +133,7 @@ impl AiToolAdapter for ClaudeAdapter {
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let claude_md = claude_md_path(project_root);
         let instructions = if claude_md.exists() {
-            std::fs::read_to_string(&claude_md)
+            crate::config::read_text(&claude_md)
                 .with_context(|| format!("failed to read {}", claude_md.display()))?
                 .trim()
                 .to_string()
@@ -165,8 +145,7 @@ impl AiToolAdapter for ClaudeAdapter {
         let rules_dir = project_root.join(".claude").join("rules");
         // `.claude/rules/` is discovered recursively by Claude Code.
         for path in crate::adapters::collect_rule_files(&rules_dir, "md")? {
-            let content = std::fs::read_to_string(&path)?;
-            let (fields, body) = frontmatter::parse(&content)?;
+            let (fields, body) = frontmatter::read(&path)?;
             let name = path
                 .file_stem()
                 .unwrap_or_default()
@@ -204,13 +183,18 @@ impl AiToolAdapter for ClaudeAdapter {
                 if skill_dir.is_dir() {
                     let skill_file = skill_dir.join("SKILL.md");
                     if skill_file.exists() {
-                        let content = std::fs::read_to_string(&skill_file)?;
-                        let (fields, body) = frontmatter::parse(&content)?;
+                        let (fields, body) = frontmatter::read(&skill_file)?;
                         let name = fields
                             .get("name")
                             .and_then(|v| v.as_str())
-                            .unwrap_or_else(|| skill_dir.file_name().unwrap().to_str().unwrap())
-                            .to_string();
+                            .map(str::to_string)
+                            .unwrap_or_else(|| {
+                                skill_dir
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .into_owned()
+                            });
                         let description = fields
                             .get("description")
                             .and_then(|v| v.as_str())
@@ -239,8 +223,7 @@ impl AiToolAdapter for ClaudeAdapter {
         let mut command_paths = crate::adapters::collect_rule_files(&commands_dir, "md")?;
         command_paths.sort();
         for path in command_paths {
-            let content = std::fs::read_to_string(&path)?;
-            let (fields, body) = frontmatter::parse(&content)?;
+            let (fields, body) = frontmatter::read(&path)?;
             let name = path
                 .strip_prefix(&commands_dir)
                 .unwrap_or(&path)
@@ -277,8 +260,7 @@ impl AiToolAdapter for ClaudeAdapter {
         let mut agents = Vec::new();
         let agents_dir = project_root.join(".claude").join("agents");
         for path in crate::adapters::collect_rule_files(&agents_dir, "md")? {
-            let content = std::fs::read_to_string(&path)?;
-            let (fields, body) = frontmatter::parse(&content)?;
+            let (fields, body) = frontmatter::read(&path)?;
             // Claude Code treats a file without `name` as documentation kept
             // beside the agents (a README), and skips one without
             // `description`; neither is an agent to propagate.
@@ -321,7 +303,7 @@ impl AiToolAdapter for ClaudeAdapter {
         let mut mcp_servers = Vec::new();
         let mcp_path = project_root.join(".mcp.json");
         if mcp_path.exists() {
-            let mcp_content = std::fs::read_to_string(&mcp_path)?;
+            let mcp_content = crate::config::read_text(&mcp_path)?;
             mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
         }
 
@@ -722,33 +704,5 @@ mod tests {
 
         // No blank CLAUDE.md is dropped into the project for an empty config.
         assert!(files.is_empty());
-    }
-
-    #[test]
-    fn test_parse_tool_list_all_forms() {
-        use serde_yaml_ng::Value;
-        // Comma-separated string
-        assert_eq!(
-            parse_tool_list(Some(&Value::String("Read, Bash, Write".to_string()))),
-            vec!["Read", "Bash", "Write"]
-        );
-        // Space-separated string (the form conforme writes for subagents/skills)
-        assert_eq!(
-            parse_tool_list(Some(&Value::String("Read Bash Write".to_string()))),
-            vec!["Read", "Bash", "Write"]
-        );
-        // Mixed comma + space (must not collapse into one token)
-        assert_eq!(
-            parse_tool_list(Some(&Value::String("Read, Bash Write".to_string()))),
-            vec!["Read", "Bash", "Write"]
-        );
-        // YAML sequence (Claude's own `--agents` JSON / list-style frontmatter)
-        let seq = Value::Sequence(vec![
-            Value::String("Read".to_string()),
-            Value::String("Grep".to_string()),
-        ]);
-        assert_eq!(parse_tool_list(Some(&seq)), vec!["Read", "Grep"]);
-        // Missing field
-        assert!(parse_tool_list(None).is_empty());
     }
 }

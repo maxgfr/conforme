@@ -183,7 +183,7 @@ impl AiToolAdapter for VibeAdapter {
         }
         let path = config_path(project_root);
         let mcp_servers = if path.exists() {
-            crate::mcp::parse_vibe_mcp_toml(&std::fs::read_to_string(&path)?)?
+            crate::mcp::parse_vibe_mcp_toml(&crate::config::read_text(&path)?)?
         } else {
             Vec::new()
         };
@@ -221,7 +221,7 @@ impl AiToolAdapter for VibeAdapter {
         if !config.mcp_servers.is_empty() {
             let path = config_path(project_root);
             let existing = if path.exists() {
-                std::fs::read_to_string(&path)?
+                crate::config::read_text(&path)?
             } else {
                 String::new()
             };

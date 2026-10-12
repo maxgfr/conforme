@@ -105,12 +105,14 @@ impl AiToolAdapter for DevinAdapter {
         let mut instructions = None;
         let mut rules: Vec<NormalizedRule> = Vec::new();
 
-        // `.devin/rules/` first: on a name clash it is the copy that wins.
+        // `.devin/rules/` first: on a name clash with the legacy directory it
+        // is the copy that wins. Two rules of the same name in one directory
+        // are both kept, for validation to report.
         for dir in [devin_dir(project_root), legacy_dir(project_root)] {
-            for path in crate::adapters::collect_rule_files(&dir.join("rules"), "md")? {
-                let content = std::fs::read_to_string(&path)
-                    .with_context(|| format!("failed to read {}", path.display()))?;
-                let (fields, body) = frontmatter::parse(&content)?;
+            let current: Vec<String> = rules.iter().map(|r| r.name.clone()).collect();
+            let rules_dir = dir.join("rules");
+            for path in crate::adapters::collect_rule_files(&rules_dir, "md")? {
+                let (fields, body) = frontmatter::read(&path)?;
                 let name = path
                     .file_stem()
                     .unwrap_or_default()
@@ -118,9 +120,9 @@ impl AiToolAdapter for DevinAdapter {
                     .to_string();
                 let activation = parse_devin_activation(&fields);
 
-                if name == "general" && activation == ActivationMode::Always {
+                if crate::adapters::is_instructions_file(&rules_dir, &path, &name, &activation) {
                     instructions.get_or_insert_with(|| body.trim().to_string());
-                } else if !rules.iter().any(|r| r.name == name) {
+                } else if !current.contains(&name) {
                     rules.push(NormalizedRule {
                         name,
                         content: body.trim().to_string(),
@@ -137,7 +139,7 @@ impl AiToolAdapter for DevinAdapter {
             .into_iter()
             .find(|path| path.is_file());
         if let Some(path) = global_rules {
-            let global = std::fs::read_to_string(&path)
+            let global = crate::config::read_text(&path)
                 .with_context(|| format!("failed to read {}", path.display()))?
                 .trim()
                 .to_string();
@@ -153,7 +155,7 @@ impl AiToolAdapter for DevinAdapter {
         // files, always on and loaded next to the others.
         let windsurfrules = project_root.join(".windsurfrules");
         if windsurfrules.is_file() {
-            let legacy = std::fs::read_to_string(&windsurfrules)
+            let legacy = crate::config::read_text(&windsurfrules)
                 .with_context(|| format!("failed to read {}", windsurfrules.display()))?
                 .trim()
                 .to_string();
@@ -178,7 +180,7 @@ impl AiToolAdapter for DevinAdapter {
         let mcp_path = mcp_path(project_root);
         if mcp_path.exists() {
             mcp_servers = crate::mcp::canonicalize_env_refs(
-                crate::mcp::parse_mcp_json(&std::fs::read_to_string(&mcp_path)?)?,
+                crate::mcp::parse_mcp_json(&crate::config::read_text(&mcp_path)?)?,
                 crate::mcp::EnvRefStyle::EnvColon,
             );
         }

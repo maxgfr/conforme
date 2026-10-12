@@ -1,5 +1,25 @@
 use std::collections::BTreeMap;
 
+/// Text as conforme reads it: without a leading byte-order mark, and with
+/// CRLF line ends turned into LF, so neither leaks into generated files.
+pub fn normalize_text(text: &str) -> std::borrow::Cow<'_, str> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    if text.contains('\r') {
+        std::borrow::Cow::Owned(text.replace("\r\n", "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
+/// Read a text file the tools' users write (see [`normalize_text`]); errors
+/// name the file.
+pub fn read_text(path: &std::path::Path) -> anyhow::Result<String> {
+    use anyhow::Context;
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    Ok(normalize_text(&text).into_owned())
+}
+
 /// Activation mode for a rule — determines when/where the rule applies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivationMode {

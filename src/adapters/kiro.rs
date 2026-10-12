@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -62,9 +62,7 @@ impl AiToolAdapter for KiroAdapter {
             for entry in entries {
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "md") {
-                    let content = std::fs::read_to_string(&path)
-                        .with_context(|| format!("failed to read {}", path.display()))?;
-                    let (fields, body) = frontmatter::parse(&content)?;
+                    let (fields, body) = frontmatter::read(&path)?;
                     let name = path
                         .file_stem()
                         .unwrap_or_default()
@@ -94,7 +92,7 @@ impl AiToolAdapter for KiroAdapter {
         let mut mcp_servers = Vec::new();
         let mcp_path = project_root.join(".kiro").join("settings").join("mcp.json");
         if mcp_path.exists() {
-            let mcp_content = std::fs::read_to_string(&mcp_path)?;
+            let mcp_content = crate::config::read_text(&mcp_path)?;
             mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
         }
 

@@ -21,7 +21,7 @@ fn is_builtin_agent_override(path: &Path) -> bool {
         .file_stem()
         .is_some_and(|stem| crate::skills::is_codex_builtin_agent(&stem.to_string_lossy()));
     stem_is_builtin
-        || std::fs::read_to_string(path)
+        || crate::config::read_text(path)
             .ok()
             .and_then(|content| content.parse::<toml::Table>().ok())
             .and_then(|table| {
@@ -47,7 +47,7 @@ fn is_conforme_written_agent(path: &Path) -> bool {
     });
     in_agents_dir
         && crate::skills::is_conforme_codex_agent_file(path)
-        && std::fs::read_to_string(path)
+        && crate::config::read_text(path)
             .ok()
             .and_then(|content| content.parse::<toml::Table>().ok())
             .and_then(|table| {
@@ -176,7 +176,7 @@ impl AiToolAdapter for CodexAdapter {
             crate::skills::read_skills_recursive(&project_root.join(".agents").join("skills"), 6)?;
         let codex_config = project_root.join(".codex").join("config.toml");
         let mcp_servers = if codex_config.exists() {
-            let content = std::fs::read_to_string(&codex_config)?;
+            let content = crate::config::read_text(&codex_config)?;
             crate::mcp::parse_codex_mcp_toml(&content)?
         } else {
             Vec::new()
@@ -217,7 +217,7 @@ impl AiToolAdapter for CodexAdapter {
         if !config.mcp_servers.is_empty() {
             let path = project_root.join(".codex").join("config.toml");
             let existing = if path.exists() {
-                std::fs::read_to_string(&path)?
+                crate::config::read_text(&path)?
             } else {
                 String::new()
             };

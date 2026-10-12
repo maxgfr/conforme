@@ -19,6 +19,7 @@ pub fn generated_marker(source_id: &str) -> String {
 /// The source an AGENTS.md was generated from, when its first line is the
 /// [`generated_marker`].
 pub fn generated_from(content: &str) -> Option<&str> {
+    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
     let rest = content.lines().next()?.strip_prefix(GENERATED_PREFIX)?;
     let id = rest.split(['.', ' ']).next()?;
     (!id.is_empty()).then_some(id)
@@ -33,6 +34,7 @@ pub fn generated_from(content: &str) -> Option<&str> {
 /// - `## Agent: <name>` → NormalizedAgent with model/tools comments
 /// - `## MCP: <name>` → NormalizedMcpServer with transport comments
 pub fn parse_agents_md(content: &str) -> Result<NormalizedConfig> {
+    let content = &*crate::config::normalize_text(content);
     let mut config = NormalizedConfig::new();
     let mut current_section: Option<Section> = None;
 
@@ -104,7 +106,12 @@ fn next_fence(open: Option<(char, usize)>, line: &str) -> Option<(char, usize)> 
             None
         }
         (Some(open), _) => Some(open),
-        (None, Some(m)) if indent <= 3 && run >= 3 => Some((m, run)),
+        // A backtick fence's info string holds no backtick (CommonMark).
+        (None, Some(m))
+            if indent <= 3 && run >= 3 && !(m == '`' && trimmed[run..].contains('`')) =>
+        {
+            Some((m, run))
+        }
         (None, _) => None,
     }
 }
@@ -146,7 +153,7 @@ pub fn read_agents_md_files(
     let mut rules: Vec<crate::config::NormalizedRule> = Vec::new();
     let mut sections = NormalizedConfig::default();
     for path in files.iter().filter(|path| path.is_file()) {
-        let md = parse_agents_md(&std::fs::read_to_string(path)?)?;
+        let md = parse_agents_md(&crate::config::read_text(path)?)?;
         if !md.instructions.trim().is_empty() {
             instructions.push(md.instructions);
         }
@@ -211,25 +218,139 @@ fn flush_section(config: &mut NormalizedConfig, section: Option<Section>) -> Res
     Ok(())
 }
 
+/// A metadata comment, `<!-- key: value -->` with any spacing and any case of
+/// the key.
+fn meta_comment(line: &str) -> Option<(String, &str)> {
+    let inner = line.trim().strip_prefix("<!--")?.strip_suffix("-->")?;
+    let (key, value) = inner.split_once(':')?;
+    let key = key.trim();
+    let is_key = !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    is_key.then(|| (key.to_ascii_lowercase(), value.trim()))
+}
+
+/// A section's metadata and its body. Metadata is read only from the comment
+/// lines right after the heading (blank lines between them allowed), and only
+/// for the `keys` that kind of section has: the same comment further down, in
+/// a code example for instance, is text.
+fn split_section<'a>(lines: &'a [String], keys: &[&str]) -> (Vec<(String, &'a str)>, String) {
+    let mut meta = Vec::new();
+    let mut body_start = lines.len();
+    for (i, line) in lines.iter().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match meta_comment(line) {
+            Some((key, value)) if keys.contains(&key.as_str()) => meta.push((key, value)),
+            _ => {
+                body_start = i;
+                break;
+            }
+        }
+    }
+    let body = lines[body_start..].join("\n").trim().to_string();
+    (meta, body)
+}
+
+/// Whether a value must be written in its JSON form to read back as is.
+fn needs_json(value: &str) -> bool {
+    value.contains(['\n', '\r']) || value.contains("-->") || value != value.trim()
+}
+
+/// A value in JSON, with `-->` escaped so it cannot end the comment.
+fn to_json<T: serde::Serialize + ?Sized>(value: &T) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_default()
+        .replace("-->", "--\\u003e")
+}
+
+/// A text value: as written, or in JSON (`"line 1\nline 2"`) when plain text
+/// would not read back the same.
+fn encode_text(value: &str) -> String {
+    if needs_json(value) || value.starts_with('"') {
+        to_json(value)
+    } else {
+        value.to_string()
+    }
+}
+
+fn decode_text(value: &str) -> String {
+    if value.starts_with('"') {
+        if let Ok(text) = serde_json::from_str::<String>(value) {
+            return text;
+        }
+    }
+    value.to_string()
+}
+
+/// A list value: `a, b`, or `["a,b", "c"]` when an item holds a comma, is
+/// empty or padded, or would not read back as is.
+fn encode_list(items: &[String]) -> String {
+    let plain = !items.first().is_some_and(|i| i.starts_with('['))
+        && items
+            .iter()
+            .all(|i| !i.is_empty() && !i.contains(',') && !needs_json(i));
+    if plain {
+        items.join(", ")
+    } else {
+        to_json(items)
+    }
+}
+
+fn decode_list(value: &str) -> Vec<String> {
+    if value.starts_with('[') {
+        if let Ok(items) = serde_json::from_str::<Vec<String>>(value) {
+            return items;
+        }
+    }
+    value
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// A map value: `K=v, L=w`, or `{"K":"a,b"}` when a key or value would not
+/// read back as is.
+fn encode_map(map: &std::collections::BTreeMap<String, String>) -> String {
+    let plain = !map.keys().next().is_some_and(|k| k.starts_with('{'))
+        && map.iter().all(|(k, v)| {
+            !k.is_empty()
+                && !k.contains([',', '='])
+                && !v.contains(',')
+                && !needs_json(k)
+                && !needs_json(v)
+        });
+    if plain {
+        map.iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        to_json(map)
+    }
+}
+
+fn decode_map(value: &str) -> std::collections::BTreeMap<String, String> {
+    if value.starts_with('{') {
+        if let Ok(map) = serde_json::from_str(value) {
+            return map;
+        }
+    }
+    value
+        .split(',')
+        .filter_map(|pair| pair.trim().split_once('='))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect()
+}
+
 fn build_rule(name: &str, lines: &[String]) -> Result<NormalizedRule> {
+    let (meta, content) = split_section(lines, &["activation", "description"]);
     let mut activation = ActivationMode::Always;
     let mut description: Option<String> = None;
-    let mut content_lines = Vec::new();
-
-    for line in lines {
-        let trimmed = line.trim();
-        if let Some(inner) = trimmed
-            .strip_prefix("<!-- activation:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            activation = parse_activation(inner.trim())?;
-        } else if let Some(inner) = trimmed
-            .strip_prefix("<!-- description:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            description = Some(inner.trim().to_string());
-        } else {
-            content_lines.push(line.as_str());
+    for (key, value) in meta {
+        match key.as_str() {
+            "activation" => activation = parse_activation(value)?,
+            _ => description = Some(decode_text(value)),
         }
     }
 
@@ -245,159 +366,69 @@ fn build_rule(name: &str, lines: &[String]) -> Result<NormalizedRule> {
 
     Ok(NormalizedRule {
         name: name.to_string(),
-        content: content_lines.join("\n").trim().to_string(),
+        content,
         activation,
     })
 }
 
 fn build_skill(name: &str, lines: &[String]) -> NormalizedSkill {
-    let mut description = String::new();
-    let mut allowed_tools = Vec::new();
-    let mut manual_invocation = false;
-    let mut content_lines = Vec::new();
-
-    for line in lines {
-        let trimmed = line.trim();
-        if let Some(inner) = trimmed
-            .strip_prefix("<!-- description:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            description = inner.trim().to_string();
-        } else if trimmed == "<!-- invocation: manual -->" {
-            manual_invocation = true;
-        } else if let Some(inner) = trimmed
-            .strip_prefix("<!-- tools:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            allowed_tools = inner
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-        } else {
-            content_lines.push(line.as_str());
+    let (meta, content) = split_section(lines, &["description", "invocation", "tools"]);
+    let mut skill = NormalizedSkill {
+        name: name.to_string(),
+        content,
+        ..Default::default()
+    };
+    for (key, value) in meta {
+        match key.as_str() {
+            "description" => skill.description = decode_text(value),
+            "invocation" => skill.manual_invocation = value.eq_ignore_ascii_case("manual"),
+            _ => skill.allowed_tools = decode_list(value),
         }
     }
-
-    NormalizedSkill {
-        name: name.to_string(),
-        description,
-        content: content_lines.join("\n").trim().to_string(),
-        allowed_tools,
-        manual_invocation,
-        files: Default::default(),
-    }
+    skill
 }
 
 fn build_agent(name: &str, lines: &[String]) -> NormalizedAgent {
-    let mut description = String::new();
-    let mut model = None;
-    let mut tools = Vec::new();
-    let mut color = None;
-    let mut permission_mode = None;
-    let mut content_lines = Vec::new();
-
-    for line in lines {
-        let trimmed = line.trim();
-        if let Some(inner) = trimmed
-            .strip_prefix("<!-- description:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            description = inner.trim().to_string();
-        } else if let Some(inner) = trimmed
-            .strip_prefix("<!-- model:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            model = Some(inner.trim().to_string());
-        } else if let Some(inner) = trimmed
-            .strip_prefix("<!-- tools:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            tools = inner
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-        } else if let Some(inner) = trimmed
-            .strip_prefix("<!-- color:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            color = Some(inner.trim().to_string());
-        } else if let Some(inner) = trimmed
-            .strip_prefix("<!-- permission-mode:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            permission_mode = Some(inner.trim().to_string());
-        } else {
-            content_lines.push(line.as_str());
+    let (meta, content) = split_section(
+        lines,
+        &["description", "model", "tools", "color", "permission-mode"],
+    );
+    let mut agent = NormalizedAgent {
+        name: name.to_string(),
+        content,
+        ..Default::default()
+    };
+    for (key, value) in meta {
+        match key.as_str() {
+            "description" => agent.description = decode_text(value),
+            "model" => agent.model = Some(decode_text(value)),
+            "tools" => agent.tools = decode_list(value),
+            "color" => agent.color = Some(decode_text(value)),
+            _ => agent.permission_mode = Some(decode_text(value)),
         }
     }
-
-    NormalizedAgent {
-        name: name.to_string(),
-        description,
-        content: content_lines.join("\n").trim().to_string(),
-        model,
-        tools,
-        color,
-        permission_mode,
-    }
+    agent
 }
 
 fn build_mcp(name: &str, lines: &[String]) -> Option<NormalizedMcpServer> {
+    let (meta, _) = split_section(
+        lines,
+        &["command", "args", "url", "transport", "env", "headers"],
+    );
     let mut command = None;
     let mut args = Vec::new();
     let mut url = None;
     let mut env = std::collections::BTreeMap::new();
     let mut headers = std::collections::BTreeMap::new();
     let mut transport_kind: Option<String> = None;
-
-    for line in lines {
-        let trimmed = line.trim();
-        if let Some(inner) = trimmed
-            .strip_prefix("<!-- command:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            command = Some(inner.trim().to_string());
-        } else if let Some(inner) = trimmed
-            .strip_prefix("<!-- args:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            args = inner
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-        } else if let Some(inner) = trimmed
-            .strip_prefix("<!-- url:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            url = Some(inner.trim().to_string());
-        } else if let Some(inner) = trimmed
-            .strip_prefix("<!-- transport:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            transport_kind = Some(inner.trim().to_string());
-        } else if let Some(inner) = trimmed
-            .strip_prefix("<!-- env:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            // Format: KEY=VALUE
-            for pair in inner.split(',') {
-                if let Some((k, v)) = pair.trim().split_once('=') {
-                    env.insert(k.trim().to_string(), v.trim().to_string());
-                }
-            }
-        } else if let Some(inner) = trimmed
-            .strip_prefix("<!-- headers:")
-            .and_then(|s| s.strip_suffix("-->"))
-        {
-            // Format: Name=Value, for remote servers
-            for pair in inner.split(',') {
-                if let Some((k, v)) = pair.trim().split_once('=') {
-                    headers.insert(k.trim().to_string(), v.trim().to_string());
-                }
-            }
+    for (key, value) in meta {
+        match key.as_str() {
+            "command" => command = Some(decode_text(value)),
+            "args" => args = decode_list(value),
+            "url" => url = Some(decode_text(value)),
+            "transport" => transport_kind = Some(value.to_ascii_lowercase()),
+            "env" => env.extend(decode_map(value)),
+            _ => headers.extend(decode_map(value)),
         }
     }
 
@@ -424,15 +455,18 @@ fn build_mcp(name: &str, lines: &[String]) -> Option<NormalizedMcpServer> {
 }
 
 fn parse_activation(s: &str) -> Result<ActivationMode> {
-    if s == "always" {
+    let s = s.trim();
+    let (mode, rest) = s.split_once(char::is_whitespace).unwrap_or((s, ""));
+    let mode = mode.to_ascii_lowercase();
+    if mode == "always" {
         Ok(ActivationMode::Always)
-    } else if s == "manual" {
+    } else if mode == "manual" {
         Ok(ActivationMode::Manual)
-    } else if s == "agent-decision" {
+    } else if mode == "agent-decision" {
         Ok(ActivationMode::AgentDecision {
             description: String::new(),
         })
-    } else if let Some(globs) = s.strip_prefix("glob ") {
+    } else if let Some(globs) = (mode == "glob").then_some(rest) {
         let patterns = crate::config::split_globs(globs);
         if patterns.is_empty() {
             bail!("glob activation requires at least one pattern");
@@ -484,7 +518,10 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
             ActivationMode::AgentDecision { description } => {
                 out.push_str("<!-- activation: agent-decision -->\n");
                 if !description.is_empty() {
-                    out.push_str(&format!("<!-- description: {} -->\n", description));
+                    out.push_str(&format!(
+                        "<!-- description: {} -->\n",
+                        encode_text(description)
+                    ));
                 }
             }
             ActivationMode::Manual => {
@@ -499,7 +536,10 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
     for skill in &config.skills {
         out.push_str(&format!("\n## Skill: {}\n", skill.name));
         if !skill.description.is_empty() {
-            out.push_str(&format!("<!-- description: {} -->\n", skill.description));
+            out.push_str(&format!(
+                "<!-- description: {} -->\n",
+                encode_text(&skill.description)
+            ));
         }
         if skill.manual_invocation {
             out.push_str("<!-- invocation: manual -->\n");
@@ -507,7 +547,7 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
         if !skill.allowed_tools.is_empty() {
             out.push_str(&format!(
                 "<!-- tools: {} -->\n",
-                skill.allowed_tools.join(", ")
+                encode_list(&skill.allowed_tools)
             ));
         }
         out.push('\n');
@@ -518,19 +558,25 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
     for agent in &config.agents {
         out.push_str(&format!("\n## Agent: {}\n", agent.name));
         if !agent.description.is_empty() {
-            out.push_str(&format!("<!-- description: {} -->\n", agent.description));
+            out.push_str(&format!(
+                "<!-- description: {} -->\n",
+                encode_text(&agent.description)
+            ));
         }
         if let Some(model) = &agent.model {
-            out.push_str(&format!("<!-- model: {} -->\n", model));
+            out.push_str(&format!("<!-- model: {} -->\n", encode_text(model)));
         }
         if !agent.tools.is_empty() {
-            out.push_str(&format!("<!-- tools: {} -->\n", agent.tools.join(", ")));
+            out.push_str(&format!("<!-- tools: {} -->\n", encode_list(&agent.tools)));
         }
         if let Some(color) = &agent.color {
-            out.push_str(&format!("<!-- color: {} -->\n", color));
+            out.push_str(&format!("<!-- color: {} -->\n", encode_text(color)));
         }
         if let Some(permission_mode) = &agent.permission_mode {
-            out.push_str(&format!("<!-- permission-mode: {} -->\n", permission_mode));
+            out.push_str(&format!(
+                "<!-- permission-mode: {} -->\n",
+                encode_text(permission_mode)
+            ));
         }
         out.push('\n');
         out.push_str(&agent.content);
@@ -541,26 +587,23 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
         out.push_str(&format!("\n## MCP: {}\n", mcp.name));
         match &mcp.transport {
             McpTransport::Stdio { command, args } => {
-                out.push_str(&format!("<!-- command: {} -->\n", command));
+                out.push_str(&format!("<!-- command: {} -->\n", encode_text(command)));
                 if !args.is_empty() {
-                    out.push_str(&format!("<!-- args: {} -->\n", args.join(", ")));
+                    out.push_str(&format!("<!-- args: {} -->\n", encode_list(args)));
                 }
             }
             McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
-                out.push_str(&format!("<!-- url: {} -->\n", url));
+                out.push_str(&format!("<!-- url: {} -->\n", encode_text(url)));
                 if matches!(&mcp.transport, McpTransport::Sse { .. }) {
                     out.push_str("<!-- transport: sse -->\n");
                 }
                 if !headers.is_empty() {
-                    let pairs: Vec<String> =
-                        headers.iter().map(|(k, v)| format!("{k}={v}")).collect();
-                    out.push_str(&format!("<!-- headers: {} -->\n", pairs.join(", ")));
+                    out.push_str(&format!("<!-- headers: {} -->\n", encode_map(headers)));
                 }
             }
         }
         if !mcp.env.is_empty() {
-            let env_str: Vec<String> = mcp.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
-            out.push_str(&format!("<!-- env: {} -->\n", env_str.join(", ")));
+            out.push_str(&format!("<!-- env: {} -->\n", encode_map(&mcp.env)));
         }
         out.push('\n');
     }
@@ -584,6 +627,125 @@ mod tests {
         assert!(config.instructions.contains("## MCP: github"));
         assert_eq!(config.rules.len(), 1);
         assert!(config.rules[0].content.contains("## Agent: fenced"));
+    }
+
+    #[test]
+    fn test_markdown_metadata_only_in_the_leading_comment_block() {
+        let text = "## Rule: docs\n<!-- activation: always -->\n\nWrite docs like this:\n\n```markdown\n<!-- activation: manual -->\n```\n\n<!-- description: not metadata here -->\n";
+        let rule = &parse_agents_md(text).unwrap().rules[0];
+        assert_eq!(rule.activation, ActivationMode::Always);
+        assert!(
+            rule.content.contains("<!-- activation: manual -->"),
+            "{}",
+            rule.content
+        );
+        assert!(rule
+            .content
+            .contains("<!-- description: not metadata here -->"));
+    }
+
+    #[test]
+    fn test_markdown_metadata_spacing_and_case() {
+        for comment in [
+            "<!--activation:manual-->",
+            "<!--   activation :   MANUAL   -->",
+            "<!-- Activation: Manual -->",
+        ] {
+            let text = format!("## Rule: x\n{comment}\nBody.\n");
+            let rule = &parse_agents_md(&text).unwrap().rules[0];
+            assert_eq!(rule.activation, ActivationMode::Manual, "{comment}");
+            assert_eq!(rule.content, "Body.");
+        }
+        let text = "## Rule: x\n<!-- activation: Glob **/*.ts -->\nBody.\n";
+        assert_eq!(
+            parse_agents_md(text).unwrap().rules[0].activation,
+            ActivationMode::GlobMatch(vec!["**/*.ts".into()])
+        );
+    }
+
+    #[test]
+    fn test_markdown_backtick_info_string_with_a_backtick_is_no_fence() {
+        let text = "Intro ``` not`a fence\n\n## Rule: real\nBody.\n";
+        let text = text.replacen("Intro ", "", 1);
+        let config = parse_agents_md(&text).unwrap();
+        assert_eq!(config.rules.len(), 1);
+    }
+
+    #[test]
+    fn test_markdown_values_round_trip_losslessly() {
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("LIST".to_string(), "a,b".to_string());
+        env.insert("PAD".to_string(), " x ".to_string());
+        let mut headers = std::collections::BTreeMap::new();
+        headers.insert("X-Tags".to_string(), "a, b".to_string());
+        let config = NormalizedConfig {
+            skills: vec![NormalizedSkill {
+                name: "s".into(),
+                description: "line one\nline two --> end".into(),
+                content: "Body.".into(),
+                allowed_tools: vec!["Bash(git add:*, x)".into(), "Read".into()],
+                ..Default::default()
+            }],
+            agents: vec![NormalizedAgent {
+                name: "a".into(),
+                description: "\"quoted\"".into(),
+                content: "Body.".into(),
+                ..Default::default()
+            }],
+            mcp_servers: vec![
+                NormalizedMcpServer {
+                    name: "db".into(),
+                    transport: McpTransport::Stdio {
+                        command: "db-mcp".into(),
+                        args: vec!["--tables=users,orders".into(), "".into()],
+                    },
+                    env,
+                },
+                NormalizedMcpServer {
+                    name: "api".into(),
+                    transport: McpTransport::Http {
+                        url: "https://example.com/mcp".into(),
+                        headers,
+                    },
+                    env: Default::default(),
+                },
+            ],
+            ..Default::default()
+        };
+        let text = export_as_agents_md(&config);
+        let back = parse_agents_md(&text).unwrap();
+        assert_eq!(
+            back.skills[0].description, config.skills[0].description,
+            "{text}"
+        );
+        assert_eq!(
+            back.skills[0].allowed_tools, config.skills[0].allowed_tools,
+            "{text}"
+        );
+        assert_eq!(
+            back.agents[0].description, config.agents[0].description,
+            "{text}"
+        );
+        assert_eq!(
+            back.mcp_servers[0].transport, config.mcp_servers[0].transport,
+            "{text}"
+        );
+        assert_eq!(back.mcp_servers[0].env, config.mcp_servers[0].env, "{text}");
+        assert_eq!(
+            back.mcp_servers[1].transport, config.mcp_servers[1].transport,
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn test_markdown_plain_values_keep_their_spelling() {
+        let text = "## Skill: s\n<!-- description: Deploy -->\n<!-- tools: Bash, Read -->\n\nRun.\n\n## MCP: fs\n<!-- command: npx -->\n<!-- args: -y, @mcp/fs -->\n<!-- env: TOKEN=${GH_TOKEN} -->\n\n";
+        // Without instructions, the export starts with the blank line before
+        // the first section.
+        assert_eq!(
+            export_as_agents_md(&parse_agents_md(text).unwrap()),
+            format!("\n{text}")
+        );
     }
 
     #[test]

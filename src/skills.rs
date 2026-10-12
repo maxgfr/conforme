@@ -6,15 +6,12 @@ use crate::config::{sanitize_name, NormalizedAgent, NormalizedSkill};
 use crate::frontmatter;
 
 /// Parse a frontmatter tool list that may be a scalar string (space- or
-/// comma-separated) or a YAML sequence. Shared by the per-tool skill/agent readers.
+/// comma-separated, e.g. `Read, Bash Write`) or a YAML sequence. Spaces and
+/// commas inside parentheses belong to the tool (`Bash(git add:*)`). Shared
+/// by the per-tool skill/agent readers.
 pub(crate) fn parse_frontmatter_tool_list(value: Option<&serde_yaml_ng::Value>) -> Vec<String> {
     match value {
-        Some(serde_yaml_ng::Value::String(s)) => s
-            .split_whitespace()
-            .flat_map(|t| t.split(','))
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
-            .collect(),
+        Some(serde_yaml_ng::Value::String(s)) => split_tool_list(s),
         Some(serde_yaml_ng::Value::Sequence(seq)) => seq
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
@@ -22,6 +19,32 @@ pub(crate) fn parse_frontmatter_tool_list(value: Option<&serde_yaml_ng::Value>) 
             .collect(),
         _ => Vec::new(),
     }
+}
+
+/// Split a tool list on spaces and commas outside parentheses.
+fn split_tool_list(text: &str) -> Vec<String> {
+    let mut tools = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    for c in text.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth == 0 && (c == ',' || c.is_whitespace()) {
+            if !current.trim().is_empty() {
+                tools.push(current.trim().to_string());
+            }
+            current.clear();
+        } else {
+            current.push(c);
+        }
+    }
+    if !current.trim().is_empty() {
+        tools.push(current.trim().to_string());
+    }
+    tools
 }
 
 /// Read `<dir>/<name>/SKILL.md` skill files into `NormalizedSkill`s.
@@ -45,8 +68,7 @@ pub(crate) fn read_skills_from_dir(skills_dir: &Path) -> Result<Vec<NormalizedSk
         if !skill_file.exists() {
             continue;
         }
-        let content = std::fs::read_to_string(&skill_file)?;
-        let (fields, body) = frontmatter::parse(&content)?;
+        let (fields, body) = frontmatter::read(&skill_file)?;
         let name = fields
             .get("name")
             .and_then(|v| v.as_str())
@@ -275,8 +297,7 @@ pub(crate) fn read_flat_skills_from_dir(skills_dir: &Path) -> Result<Vec<Normali
         .collect();
     paths.sort();
     for path in paths {
-        let content = std::fs::read_to_string(&path)?;
-        let Ok((fields, body)) = frontmatter::parse(&content) else {
+        let Ok((fields, body)) = frontmatter::read(&path) else {
             continue;
         };
         // A flat file is a skill only with a kebab-case `name` and a
@@ -352,7 +373,7 @@ pub(crate) fn read_manual_invocation(
     let policy_path = skill_dir.join("agents/openai.yaml");
     if policy_path.exists() {
         let value: serde_yaml_ng::Value =
-            serde_yaml_ng::from_str(&std::fs::read_to_string(policy_path)?)?;
+            serde_yaml_ng::from_str(&crate::config::read_text(&policy_path)?)?;
         return Ok(value
             .get("policy")
             .and_then(|v| v.get("allow_implicit_invocation"))
@@ -405,7 +426,7 @@ fn invocation_policy(
         return Ok(None);
     }
     let mut fields: BTreeMap<String, serde_yaml_ng::Value> = if path.exists() {
-        serde_yaml_ng::from_str(&std::fs::read_to_string(&path)?)?
+        serde_yaml_ng::from_str(&crate::config::read_text(&path)?)?
     } else {
         BTreeMap::new()
     };
@@ -454,8 +475,7 @@ pub(crate) fn agent_files(agents_dir: &Path, recursive: bool) -> Result<Vec<Path
 pub(crate) fn read_agent_files(paths: &[PathBuf]) -> Result<Vec<NormalizedAgent>> {
     let mut agents = Vec::new();
     for path in paths {
-        let content = std::fs::read_to_string(path)?;
-        let (fields, body) = frontmatter::parse(&content)?;
+        let (fields, body) = frontmatter::read(path)?;
         let name = fields
             .get("name")
             .and_then(|v| v.as_str())
@@ -675,7 +695,7 @@ pub fn generate_codex_agents(
 /// parses as TOML and holds only `name`, `description` and
 /// `developer_instructions` (any other key is the user's own setting).
 pub(crate) fn is_conforme_codex_agent_file(path: &Path) -> bool {
-    std::fs::read_to_string(path)
+    crate::config::read_text(path)
         .ok()
         .and_then(|content| content.parse::<toml::Table>().ok())
         .is_some_and(|table| {
@@ -695,7 +715,7 @@ pub(crate) fn read_codex_agents(project_root: &Path) -> Result<Vec<NormalizedAge
     let agents_dir = project_root.join(".codex").join("agents");
     let mut agents = Vec::new();
     for path in crate::adapters::collect_rule_files(&agents_dir, "toml")? {
-        let Ok(content) = std::fs::read_to_string(&path) else {
+        let Ok(content) = crate::config::read_text(&path) else {
             continue;
         };
         let Ok(table) = content.parse::<toml::Table>() else {
@@ -727,7 +747,7 @@ pub(crate) fn read_codex_agents(project_root: &Path) -> Result<Vec<NormalizedAge
 /// "subagent"`), the kind conforme writes; anything else is a mode the user
 /// defined.
 pub(crate) fn is_vibe_subagent_file(path: &Path) -> bool {
-    std::fs::read_to_string(path)
+    crate::config::read_text(path)
         .ok()
         .and_then(|content| content.parse::<toml::Value>().ok())
         .is_some_and(|value| {
@@ -749,7 +769,7 @@ pub(crate) fn read_vibe_agents(project_root: &Path) -> Result<Vec<NormalizedAgen
         .collect();
     paths.sort();
     for path in paths {
-        let value: toml::Value = std::fs::read_to_string(&path)?.parse()?;
+        let value: toml::Value = crate::config::read_text(&path)?.parse()?;
         let text = |key: &str| {
             value
                 .get(key)
@@ -760,8 +780,8 @@ pub(crate) fn read_vibe_agents(project_root: &Path) -> Result<Vec<NormalizedAgen
             Some(instructions) => instructions,
             None => text("system_prompt_id")
                 .and_then(|id| {
-                    std::fs::read_to_string(
-                        project_root
+                    crate::config::read_text(
+                        &project_root
                             .join(".vibe")
                             .join("prompts")
                             .join(format!("{id}.md")),
@@ -1817,6 +1837,44 @@ pub fn generate_gemini_skills(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_tool_list_all_forms() {
+        use serde_yaml_ng::Value;
+        // Comma-separated string
+        assert_eq!(
+            parse_frontmatter_tool_list(Some(&Value::String("Read, Bash, Write".to_string()))),
+            vec!["Read", "Bash", "Write"]
+        );
+        // Space-separated string (the form conforme writes for subagents/skills)
+        assert_eq!(
+            parse_frontmatter_tool_list(Some(&Value::String("Read Bash Write".to_string()))),
+            vec!["Read", "Bash", "Write"]
+        );
+        // Mixed comma + space (must not collapse into one token)
+        assert_eq!(
+            parse_frontmatter_tool_list(Some(&Value::String("Read, Bash Write".to_string()))),
+            vec!["Read", "Bash", "Write"]
+        );
+        // YAML sequence (Claude's own `--agents` JSON / list-style frontmatter)
+        let seq = Value::Sequence(vec![
+            Value::String("Read".to_string()),
+            Value::String("Grep".to_string()),
+        ]);
+        assert_eq!(
+            parse_frontmatter_tool_list(Some(&seq)),
+            vec!["Read", "Grep"]
+        );
+        // Spaces and commas inside parentheses belong to the tool
+        assert_eq!(
+            parse_frontmatter_tool_list(Some(&Value::String(
+                "Bash(git add:*), Bash(git status:*) Read".to_string()
+            ))),
+            vec!["Bash(git add:*)", "Bash(git status:*)", "Read"]
+        );
+        // Missing field
+        assert!(parse_frontmatter_tool_list(None).is_empty());
+    }
 
     #[test]
     fn test_codex_agent_file_round_trips() {
