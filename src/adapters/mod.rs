@@ -425,6 +425,12 @@ pub fn write_files<A: AiToolAdapter + ?Sized>(
     Ok(report)
 }
 
+/// Whether a file's content on disk is the generated content, line ends
+/// aside: a file checked out with CRLF (`core.autocrlf`) is in sync.
+pub fn contents_match(a: &str, b: &str) -> bool {
+    a == b || a.replace("\r\n", "\n") == b.replace("\r\n", "\n")
+}
+
 /// Write a file only if its content differs from what's already on disk.
 pub fn write_if_changed(path: &Path, content: &str, report: &mut WriteReport) -> Result<()> {
     if let Some(parent) = path.parent() {
@@ -433,7 +439,7 @@ pub fn write_if_changed(path: &Path, content: &str, report: &mut WriteReport) ->
 
     if path.exists() {
         let existing = std::fs::read_to_string(path)?;
-        if crate::hash::contents_match(&existing, content) {
+        if contents_match(&existing, content) {
             report.files_unchanged.push(path.to_path_buf());
             return Ok(());
         }
@@ -466,7 +472,7 @@ pub fn write_if_changed_atomic(path: &Path, content: &str, report: &mut WriteRep
 
     if write_path.exists() {
         let existing = std::fs::read_to_string(&write_path)?;
-        if crate::hash::contents_match(&existing, content) {
+        if contents_match(&existing, content) {
             report.files_unchanged.push(path.to_path_buf());
             return Ok(());
         }
@@ -521,6 +527,16 @@ pub fn collect_rule_files(dir: &Path, extension: &str) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+/// Append a rule to a single instruction file as a `## <name>` section (the
+/// way Claude Code, Copilot, Gemini CLI and Zed AI hold the rules they load
+/// with the instructions).
+pub(crate) fn push_inline_rule(content: &mut String, rule: &crate::config::NormalizedRule) {
+    content.push_str("\n\n## ");
+    content.push_str(&rule.name);
+    content.push_str("\n\n");
+    content.push_str(&rule.content);
+}
+
 /// Whether a rule file read from `rules_dir` holds the instructions: the
 /// always-applied `general` file conforme writes at the top level of the
 /// rules directory. A `general` file in a sub-directory is an ordinary rule.
@@ -568,6 +584,14 @@ fn collect_rule_files_into(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_contents_match_ignores_line_ends_only() {
+        assert!(contents_match("hello world", "hello world"));
+        assert!(contents_match("a\r\nb\r\n", "a\nb\n"));
+        assert!(!contents_match("hello", "world"));
+        assert!(!contents_match("a\n", "a"));
+    }
 
     #[cfg(unix)]
     #[test]

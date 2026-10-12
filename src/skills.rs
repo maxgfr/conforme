@@ -514,18 +514,106 @@ fn agent_name_from_path(path: &Path) -> String {
         .to_string()
 }
 
-/// Generate Claude Code skill files in `.claude/skills/<name>/SKILL.md`.
-pub fn generate_claude_skills(
+/// How a manual-only skill is marked in its frontmatter.
+#[derive(Clone, Copy)]
+pub enum ManualInvocation {
+    /// `disable-model-invocation: true`, with OpenCode's
+    /// `metadata.opencode/autoinvoke: "false"` (the other tools ignore it).
+    DisableModelInvocation,
+    /// Devin's `triggers: [user]` (the default is `[user, model]`).
+    UserTrigger,
+}
+
+/// How one tool writes a skill folder: `<dir>/<name>/SKILL.md` with `name`
+/// and `description`, the skill's bundled files and conforme's marker.
+pub struct SkillShape {
+    /// Skills directory, relative to the project root.
+    pub dir: &'static str,
+    /// Whether `allowed-tools` is written (space-separated): only Claude Code
+    /// and Copilot read it as a list of tool names.
+    pub allowed_tools: bool,
+    pub manual: ManualInvocation,
+    /// Whether the Codex policy sidecar (`agents/openai.yaml`) is created for
+    /// a manual skill; elsewhere an existing one is only kept in step (see
+    /// [`invocation_policy`]).
+    pub create_policy: bool,
+}
+
+const fn shape(dir: &'static str) -> SkillShape {
+    SkillShape {
+        dir,
+        allowed_tools: false,
+        manual: ManualInvocation::DisableModelInvocation,
+        create_policy: false,
+    }
+}
+
+/// Claude Code `.claude/skills/`.
+pub const CLAUDE_SKILLS: SkillShape = SkillShape {
+    allowed_tools: true,
+    ..shape(".claude/skills")
+};
+/// GitHub Copilot `.github/skills/` (the same location for Copilot CLI and the
+/// cloud agent): `name` and `description` required, `allowed-tools`
+/// pre-approves tools. Prompt files (`.github/prompts/`) are a separate VS
+/// Code feature, not Copilot's skills format.
+pub const COPILOT_SKILLS: SkillShape = SkillShape {
+    allowed_tools: true,
+    ..shape(".github/skills")
+};
+/// The shared `.agents/skills/` Codex scans (Zed and Antigravity CLI read it
+/// too): the only place the Codex policy sidecar is created.
+pub const CODEX_SKILLS: SkillShape = SkillShape {
+    create_policy: true,
+    ..shape(".agents/skills")
+};
+/// Devin `.devin/skills/`: no `disable-model-invocation`, a manual-only skill
+/// is `triggers: [user]`. `allowed-tools` only pre-approves Devin's own tool
+/// names (`read`, `edit`, `exec`, …) and restricts nothing, so it is not
+/// copied.
+pub const DEVIN_SKILLS: SkillShape = SkillShape {
+    manual: ManualInvocation::UserTrigger,
+    ..shape(".devin/skills")
+};
+/// Cursor `.cursor/skills/`.
+pub const CURSOR_SKILLS: SkillShape = shape(".cursor/skills");
+/// Mistral Vibe `.vibe/skills/`: a kebab-case `name` and a `description`
+/// required, `disable-model-invocation: true` keeps a skill out of automatic
+/// use.
+pub const VIBE_SKILLS: SkillShape = shape(".vibe/skills");
+/// Kiro `.kiro/skills/`.
+pub const KIRO_SKILLS: SkillShape = shape(".kiro/skills");
+/// Zoo Code `.roo/skills/`.
+pub const ZOOCODE_SKILLS: SkillShape = shape(".roo/skills");
+/// OpenCode `.opencode/skills/`: OpenCode recognizes only `name`,
+/// `description`, `license`, `compatibility` and `metadata`.
+pub const OPENCODE_SKILLS: SkillShape = shape(".opencode/skills");
+/// Kilo Code `.kilo/skills/`, read like OpenCode's.
+pub const KILO_SKILLS: SkillShape = shape(".kilo/skills");
+/// DeepSeek Harness `.dsh/skills/`: required `name` (kebab-case) and
+/// `description`, optional `disable-model-invocation`; no `allowed-tools`.
+pub const DEEPSEEK_SKILLS: SkillShape = shape(".dsh/skills");
+/// Gemini CLI `.gemini/skills/`: its loader reads only `name` and
+/// `description`. A manual skill still gets `disable-model-invocation` and
+/// `metadata`, shared with the other tools reading the same skill; Gemini
+/// ignores them and has no manual-only mechanism.
+pub const GEMINI_SKILLS: SkillShape = shape(".gemini/skills");
+
+/// Generate a tool's skill folders (see [`SkillShape`]).
+pub fn generate_skills(
     project_root: &Path,
     skills: &[NormalizedSkill],
+    shape: &SkillShape,
 ) -> Result<Vec<(PathBuf, String)>> {
-    let skills_dir = project_root.join(".claude").join("skills");
+    let skills_dir = shape
+        .dir
+        .split('/')
+        .fold(project_root.to_path_buf(), |dir, part| dir.join(part));
     let mut files = Vec::new();
 
     for skill in skills {
         let skill_name = sanitize_name(&skill.name);
         let skill_dir = skills_dir.join(&skill_name);
-        let skill_path = skill_dir.join("SKILL.md");
 
         let mut fields = BTreeMap::new();
         fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
@@ -533,52 +621,27 @@ pub fn generate_claude_skills(
             "description".to_string(),
             serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
         );
-        if !skill.allowed_tools.is_empty() {
+        if shape.allowed_tools && !skill.allowed_tools.is_empty() {
             fields.insert(
                 "allowed-tools".to_string(),
                 serde_yaml_ng::Value::String(skill.allowed_tools.join(" ")),
             );
         }
-
-        add_invocation_fields(&mut fields, skill);
-        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
-        files.push((skill_path, content));
-        files.extend(bundled_outputs(&skill_dir, skill));
-        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
-            files.push(policy);
+        match shape.manual {
+            ManualInvocation::DisableModelInvocation => add_invocation_fields(&mut fields, skill),
+            ManualInvocation::UserTrigger if skill.manual_invocation => {
+                fields.insert(
+                    "triggers".to_string(),
+                    serde_yaml_ng::Value::Sequence(vec!["user".into()]),
+                );
+            }
+            ManualInvocation::UserTrigger => {}
         }
-    }
 
-    Ok(files)
-}
-
-/// Generate Mistral Vibe skill files in `.vibe/skills/<name>/SKILL.md`. Vibe
-/// requires a kebab-case `name` and a `description`, and keeps a skill out of
-/// automatic use with `disable-model-invocation: true`.
-pub fn generate_vibe_skills(
-    project_root: &Path,
-    skills: &[NormalizedSkill],
-) -> Result<Vec<(PathBuf, String)>> {
-    let skills_dir = project_root.join(".vibe").join("skills");
-    let mut files = Vec::new();
-
-    for skill in skills {
-        let skill_name = sanitize_name(&skill.name);
-        let skill_dir = skills_dir.join(&skill_name);
-        let skill_path = skill_dir.join("SKILL.md");
-
-        let mut fields = BTreeMap::new();
-        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        fields.insert(
-            "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
-        );
-
-        add_invocation_fields(&mut fields, skill);
         let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
-        files.push((skill_path, content));
+        files.push((skill_dir.join("SKILL.md"), content));
         files.extend(bundled_outputs(&skill_dir, skill));
-        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
+        if let Some(policy) = invocation_policy(&skill_dir, skill, shape.create_policy)? {
             files.push(policy);
         }
     }
@@ -812,115 +875,6 @@ pub(crate) fn read_vibe_agents(project_root: &Path) -> Result<Vec<NormalizedAgen
         });
     }
     Ok(agents)
-}
-
-/// Generate Cursor skill files in `.cursor/skills/<name>/SKILL.md`.
-/// Cursor skills use `name` and `description` in frontmatter.
-pub fn generate_cursor_skills(
-    project_root: &Path,
-    skills: &[NormalizedSkill],
-) -> Result<Vec<(PathBuf, String)>> {
-    let skills_dir = project_root.join(".cursor").join("skills");
-    let mut files = Vec::new();
-
-    for skill in skills {
-        let skill_name = sanitize_name(&skill.name);
-        let skill_dir = skills_dir.join(&skill_name);
-        let skill_path = skill_dir.join("SKILL.md");
-
-        let mut fields = BTreeMap::new();
-        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        fields.insert(
-            "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
-        );
-
-        add_invocation_fields(&mut fields, skill);
-        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
-        files.push((skill_path, content));
-        files.extend(bundled_outputs(&skill_dir, skill));
-        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
-            files.push(policy);
-        }
-    }
-
-    Ok(files)
-}
-
-/// Generate Codex/OpenCode skill files in `.agents/skills/<name>/SKILL.md`.
-pub fn generate_codex_skills(
-    project_root: &Path,
-    skills: &[NormalizedSkill],
-) -> Result<Vec<(PathBuf, String)>> {
-    let skills_dir = project_root.join(".agents").join("skills");
-    let mut files = Vec::new();
-
-    for skill in skills {
-        let skill_name = sanitize_name(&skill.name);
-        let skill_dir = skills_dir.join(&skill_name);
-        let skill_path = skill_dir.join("SKILL.md");
-
-        let mut fields = BTreeMap::new();
-        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        fields.insert(
-            "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
-        );
-
-        add_invocation_fields(&mut fields, skill);
-        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
-        files.push((skill_path, content));
-        files.extend(bundled_outputs(&skill_dir, skill));
-        if let Some(policy) = invocation_policy(&skill_dir, skill, true)? {
-            files.push(policy);
-        }
-    }
-
-    Ok(files)
-}
-
-/// Generate GitHub Copilot skill files in `.github/skills/<name>/SKILL.md`.
-///
-/// Copilot documents skills at `.github/skills/<skill-name>/SKILL.md` (the same
-/// location for Copilot CLI and the cloud agent), with `name` and `description`
-/// required and `allowed-tools` available to pre-approve tools. This supersedes
-/// the older `.github/prompts/<name>.prompt.md` layout conforme used to emit —
-/// prompt files are a separate VS Code feature, not Copilot's skills format.
-pub fn generate_copilot_skills(
-    project_root: &Path,
-    skills: &[NormalizedSkill],
-) -> Result<Vec<(PathBuf, String)>> {
-    let skills_dir = project_root.join(".github").join("skills");
-    let mut files = Vec::new();
-
-    for skill in skills {
-        let skill_name = sanitize_name(&skill.name);
-        let skill_dir = skills_dir.join(&skill_name);
-        let skill_path = skill_dir.join("SKILL.md");
-
-        let mut fields = BTreeMap::new();
-        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        fields.insert(
-            "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
-        );
-        if !skill.allowed_tools.is_empty() {
-            fields.insert(
-                "allowed-tools".to_string(),
-                serde_yaml_ng::Value::String(skill.allowed_tools.join(" ")),
-            );
-        }
-
-        add_invocation_fields(&mut fields, skill);
-        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
-        files.push((skill_path, content));
-        files.extend(bundled_outputs(&skill_dir, skill));
-        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
-            files.push(policy);
-        }
-    }
-
-    Ok(files)
 }
 
 /// Generate Copilot agent files in `.github/agents/<name>.agent.md`.
@@ -1491,160 +1445,6 @@ pub fn generate_gemini_agents(
     Ok(files)
 }
 
-/// Generate Kiro skill files in `.kiro/skills/<name>/SKILL.md`.
-pub fn generate_kiro_skills(
-    project_root: &Path,
-    skills: &[NormalizedSkill],
-) -> Result<Vec<(PathBuf, String)>> {
-    let skills_dir = project_root.join(".kiro").join("skills");
-    let mut files = Vec::new();
-
-    for skill in skills {
-        let skill_name = sanitize_name(&skill.name);
-        let skill_dir = skills_dir.join(&skill_name);
-        let skill_path = skill_dir.join("SKILL.md");
-
-        let mut fields = BTreeMap::new();
-        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        fields.insert(
-            "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
-        );
-
-        add_invocation_fields(&mut fields, skill);
-        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
-        files.push((skill_path, content));
-        files.extend(bundled_outputs(&skill_dir, skill));
-        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
-            files.push(policy);
-        }
-    }
-
-    Ok(files)
-}
-
-/// Generate Devin skill files in `<skills_dir>/<name>/SKILL.md`
-/// (`.devin/skills/`). Devin documents no `disable-model-invocation`; a
-/// manual-only skill is `triggers: [user]` instead (the default is
-/// `[user, model]`). `allowed-tools` only pre-approves Devin's own tool names
-/// (`read`, `edit`, `exec`, …) and restricts nothing, so it is not copied.
-pub fn generate_devin_skills(
-    skills_dir: &Path,
-    skills: &[NormalizedSkill],
-) -> Result<Vec<(PathBuf, String)>> {
-    let mut files = Vec::new();
-
-    for skill in skills {
-        let skill_name = sanitize_name(&skill.name);
-        let skill_dir = skills_dir.join(&skill_name);
-        let skill_path = skill_dir.join("SKILL.md");
-
-        let mut fields = BTreeMap::new();
-        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        fields.insert(
-            "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
-        );
-
-        if skill.manual_invocation {
-            fields.insert(
-                "triggers".to_string(),
-                serde_yaml_ng::Value::Sequence(vec!["user".into()]),
-            );
-        }
-        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
-        files.push((skill_path, content));
-        files.extend(bundled_outputs(&skill_dir, skill));
-        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
-            files.push(policy);
-        }
-    }
-
-    Ok(files)
-}
-
-/// Generate Zoo Code skill files in `.roo/skills/<name>/SKILL.md`.
-/// Zoo Code skills use `name` and `description` in frontmatter.
-pub fn generate_zoocode_skills(
-    project_root: &Path,
-    skills: &[NormalizedSkill],
-) -> Result<Vec<(PathBuf, String)>> {
-    let skills_dir = project_root.join(".roo").join("skills");
-    let mut files = Vec::new();
-
-    for skill in skills {
-        let skill_name = sanitize_name(&skill.name);
-        let skill_dir = skills_dir.join(&skill_name);
-        let skill_path = skill_dir.join("SKILL.md");
-
-        let mut fields = BTreeMap::new();
-        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        fields.insert(
-            "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
-        );
-
-        add_invocation_fields(&mut fields, skill);
-        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
-        files.push((skill_path, content));
-        files.extend(bundled_outputs(&skill_dir, skill));
-        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
-            files.push(policy);
-        }
-    }
-
-    Ok(files)
-}
-
-/// Generate OpenCode skill files in `.opencode/skills/<name>/SKILL.md`.
-/// OpenCode skills recognize only `name`, `description`, `license`, `compatibility`,
-/// and `metadata`. `allowed-tools` is not a recognized field.
-pub fn generate_opencode_skills(
-    project_root: &Path,
-    skills: &[NormalizedSkill],
-) -> Result<Vec<(PathBuf, String)>> {
-    generate_opencode_style_skills(&project_root.join(".opencode").join("skills"), skills)
-}
-
-/// Generate Kilo Code skill files in `.kilo/skills/<name>/SKILL.md`. Kilo is
-/// an OpenCode fork and reads the same `name` and `description` frontmatter.
-pub fn generate_kilo_skills(
-    project_root: &Path,
-    skills: &[NormalizedSkill],
-) -> Result<Vec<(PathBuf, String)>> {
-    generate_opencode_style_skills(&project_root.join(".kilo").join("skills"), skills)
-}
-
-fn generate_opencode_style_skills(
-    skills_dir: &Path,
-    skills: &[NormalizedSkill],
-) -> Result<Vec<(PathBuf, String)>> {
-    let mut files = Vec::new();
-
-    for skill in skills {
-        let skill_name = sanitize_name(&skill.name);
-        let skill_dir = skills_dir.join(&skill_name);
-        let skill_path = skill_dir.join("SKILL.md");
-
-        let mut fields = BTreeMap::new();
-        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        fields.insert(
-            "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
-        );
-
-        add_invocation_fields(&mut fields, skill);
-        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
-        files.push((skill_path, content));
-        files.extend(bundled_outputs(&skill_dir, skill));
-        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
-            files.push(policy);
-        }
-    }
-
-    Ok(files)
-}
-
 /// Generate OpenCode subagent markdown files in `.opencode/agents/<name>.md`.
 /// OpenCode reads per-project agent markdown files from `.opencode/agents/`.
 pub fn generate_opencode_agents_md(
@@ -1764,76 +1564,6 @@ pub(crate) fn gemini_model(model: Option<&str>) -> Option<&str> {
     })
 }
 
-/// Generate DeepSeek Harness skill files in `.dsh/skills/<name>/SKILL.md`.
-/// The harness filesystem skill provider scans `<projectRoot>/.dsh/skills` first
-/// and interprets required `name` and `description`, plus optional `whenToUse`,
-/// `metadata`, `disable-model-invocation` and `user-invocable`. `allowed-tools`
-/// is not a recognized field, and names must be kebab-case.
-pub fn generate_deepseek_skills(
-    project_root: &Path,
-    skills: &[NormalizedSkill],
-) -> Result<Vec<(PathBuf, String)>> {
-    let skills_dir = project_root.join(".dsh").join("skills");
-    let mut files = Vec::new();
-
-    for skill in skills {
-        let skill_name = sanitize_name(&skill.name);
-        let skill_dir = skills_dir.join(&skill_name);
-        let skill_path = skill_dir.join("SKILL.md");
-
-        let mut fields = BTreeMap::new();
-        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        fields.insert(
-            "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
-        );
-
-        add_invocation_fields(&mut fields, skill);
-        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
-        files.push((skill_path, content));
-        files.extend(bundled_outputs(&skill_dir, skill));
-        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
-            files.push(policy);
-        }
-    }
-
-    Ok(files)
-}
-
-/// Generate Gemini CLI skill files in `.gemini/skills/<name>/SKILL.md`.
-/// Gemini skills use ONLY `name` and `description` (no other fields allowed).
-pub fn generate_gemini_skills(
-    project_root: &Path,
-    skills: &[NormalizedSkill],
-) -> Result<Vec<(PathBuf, String)>> {
-    let skills_dir = project_root.join(".gemini").join("skills");
-    let mut files = Vec::new();
-
-    for skill in skills {
-        let skill_name = sanitize_name(&skill.name);
-        let skill_dir = skills_dir.join(&skill_name);
-        let skill_path = skill_dir.join("SKILL.md");
-
-        let mut fields = BTreeMap::new();
-        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
-        fields.insert(
-            "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
-        );
-        // Gemini docs: "do not include any other fields" — no allowed-tools
-
-        add_invocation_fields(&mut fields, skill);
-        let content = frontmatter::serialize(&fields, &format!("{}\n", skill.content))?;
-        files.push((skill_path, content));
-        files.extend(bundled_outputs(&skill_dir, skill));
-        if let Some(policy) = invocation_policy(&skill_dir, skill, false)? {
-            files.push(policy);
-        }
-    }
-
-    Ok(files)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1944,16 +1674,16 @@ mod tests {
             ..Default::default()
         }];
         let skill_files = [
-            generate_claude_skills(root, &skills).unwrap(),
-            generate_cursor_skills(root, &skills).unwrap(),
-            generate_codex_skills(root, &skills).unwrap(),
-            generate_copilot_skills(root, &skills).unwrap(),
-            generate_kiro_skills(root, &skills).unwrap(),
-            generate_devin_skills(&root.join(".devin/skills"), &skills).unwrap(),
-            generate_zoocode_skills(root, &skills).unwrap(),
-            generate_opencode_skills(root, &skills).unwrap(),
-            generate_deepseek_skills(root, &skills).unwrap(),
-            generate_gemini_skills(root, &skills).unwrap(),
+            generate_skills(root, &skills, &CLAUDE_SKILLS).unwrap(),
+            generate_skills(root, &skills, &CURSOR_SKILLS).unwrap(),
+            generate_skills(root, &skills, &CODEX_SKILLS).unwrap(),
+            generate_skills(root, &skills, &COPILOT_SKILLS).unwrap(),
+            generate_skills(root, &skills, &KIRO_SKILLS).unwrap(),
+            generate_skills(root, &skills, &DEVIN_SKILLS).unwrap(),
+            generate_skills(root, &skills, &ZOOCODE_SKILLS).unwrap(),
+            generate_skills(root, &skills, &OPENCODE_SKILLS).unwrap(),
+            generate_skills(root, &skills, &DEEPSEEK_SKILLS).unwrap(),
+            generate_skills(root, &skills, &GEMINI_SKILLS).unwrap(),
         ];
         for files in skill_files {
             assert!(
@@ -2004,7 +1734,7 @@ mod tests {
             allowed_tools: vec!["Bash".to_string()],
             ..Default::default()
         }];
-        let files = generate_claude_skills(Path::new("/tmp/test"), &skills).unwrap();
+        let files = generate_skills(Path::new("/tmp/test"), &skills, &CLAUDE_SKILLS).unwrap();
         assert_eq!(files.len(), 2); // SKILL.md + conforme marker
         assert!(files[0].0.to_string_lossy().ends_with("SKILL.md"));
         assert!(files[0].1.contains("name: deploy"));
@@ -2022,7 +1752,7 @@ mod tests {
             allowed_tools: vec!["shell".to_string(), "bash".to_string()],
             ..Default::default()
         }];
-        let files = generate_copilot_skills(Path::new("/tmp/test"), &skills).unwrap();
+        let files = generate_skills(Path::new("/tmp/test"), &skills, &COPILOT_SKILLS).unwrap();
         assert_eq!(files.len(), 2); // SKILL.md + conforme marker
         assert!(files[0]
             .0

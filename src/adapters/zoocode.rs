@@ -181,10 +181,7 @@ impl AiToolAdapter for ZooCodeAdapter {
         let mcp_path = project_root.join(".roo").join("mcp.json");
         if mcp_path.exists() {
             let mcp_content = crate::config::read_text(&mcp_path)?;
-            mcp_servers = crate::mcp::canonicalize_env_refs(
-                crate::mcp::parse_mcp_json(&mcp_content)?,
-                crate::mcp::EnvRefStyle::EnvColon,
-            );
+            mcp_servers = crate::mcp::ZOOCODE_SHAPE.read_file(&mcp_content)?;
         }
 
         Ok(NormalizedConfig {
@@ -239,9 +236,10 @@ impl AiToolAdapter for ZooCodeAdapter {
 
         // Generate skills as .roo/skills/<name>/SKILL.md
         if !config.skills.is_empty() {
-            files.extend(crate::skills::generate_zoocode_skills(
+            files.extend(crate::skills::generate_skills(
                 project_root,
                 &config.skills,
+                &crate::skills::ZOOCODE_SKILLS,
             )?);
         }
 
@@ -253,8 +251,8 @@ impl AiToolAdapter for ZooCodeAdapter {
         files.extend(crate::json_settings::server_settings_file(
             &project_root.join(".roo").join("mcp.json"),
             "mcpServers",
-            crate::mcp::build_zoocode_servers_object(&config.mcp_servers),
-            crate::mcp::ZOOCODE_OWNED_SERVER_KEYS,
+            crate::mcp::ZOOCODE_SHAPE.build(&config.mcp_servers),
+            &crate::mcp::ZOOCODE_SHAPE.owned_keys(),
             &[],
         )?);
 

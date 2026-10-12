@@ -103,7 +103,7 @@ impl AiToolAdapter for KiroAdapter {
         let mcp_path = project_root.join(".kiro").join("settings").join("mcp.json");
         if mcp_path.exists() {
             let mcp_content = crate::config::read_text(&mcp_path)?;
-            mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
+            mcp_servers = crate::mcp::KIRO_SHAPE.read_file(&mcp_content)?;
         }
 
         Ok(NormalizedConfig {
@@ -141,9 +141,10 @@ impl AiToolAdapter for KiroAdapter {
         }
 
         // Generate skills as .kiro/skills/<name>/SKILL.md
-        files.extend(crate::skills::generate_kiro_skills(
+        files.extend(crate::skills::generate_skills(
             project_root,
             &config.skills,
+            &crate::skills::KIRO_SKILLS,
         )?);
 
         // Generate agents as .kiro/agents/<name>.md
@@ -160,8 +161,8 @@ impl AiToolAdapter for KiroAdapter {
         files.extend(crate::json_settings::server_settings_file(
             &project_root.join(".kiro").join("settings").join("mcp.json"),
             "mcpServers",
-            crate::mcp::build_kiro_servers_object(&config.mcp_servers),
-            crate::mcp::KIRO_OWNED_SERVER_KEYS,
+            crate::mcp::KIRO_SHAPE.build(&config.mcp_servers),
+            &crate::mcp::KIRO_SHAPE.owned_keys(),
             &[],
         )?);
 

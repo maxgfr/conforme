@@ -156,10 +156,7 @@ impl AiToolAdapter for OpenCodeAdapter {
                 continue;
             };
             if let Some(mcp) = root.get("mcp") {
-                for server in crate::mcp::canonicalize_env_refs(
-                    crate::mcp::parse_opencode_mcp_object(mcp),
-                    crate::mcp::EnvRefStyle::OpenCode,
-                ) {
+                for server in crate::mcp::OPENCODE_SHAPE.read(mcp) {
                     mcp_servers.retain(|s| s.name != server.name);
                     mcp_servers.push(server);
                 }
@@ -209,9 +206,10 @@ impl AiToolAdapter for OpenCodeAdapter {
 
         // Generate skills as .opencode/skills/<name>/SKILL.md
         if !config.skills.is_empty() {
-            files.extend(crate::skills::generate_opencode_skills(
+            files.extend(crate::skills::generate_skills(
                 project_root,
                 &config.skills,
+                &crate::skills::OPENCODE_SKILLS,
             )?);
         }
 
@@ -247,8 +245,8 @@ impl AiToolAdapter for OpenCodeAdapter {
             if !config.mcp_servers.is_empty() {
                 let mcp_obj = crate::json_settings::merge_server_entries(
                     existing.as_ref().and_then(|f| f.get("mcp")),
-                    crate::mcp::build_opencode_mcp_object(&config.mcp_servers),
-                    crate::mcp::OPENCODE_OWNED_SERVER_KEYS,
+                    crate::mcp::OPENCODE_SHAPE.build(&config.mcp_servers),
+                    &crate::mcp::OPENCODE_SHAPE.owned_keys(),
                 );
                 set.push(("mcp", serde_json::Value::Object(mcp_obj)));
             }

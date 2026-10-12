@@ -1910,3 +1910,64 @@ fn test_env_ref_losses_are_warned_about() {
         .1;
     assert!(json.contains("${workspaceFolder}/x"), "{json}");
 }
+
+#[test]
+fn test_server_shape_owns_type_for_devin_and_antigravity() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".devin")).unwrap();
+    fs::write(
+        root.join(".devin/mcp_config.json"),
+        r#"{"mcpServers":{"api":{"type":"stdio","command":"old"}}}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".agents")).unwrap();
+    fs::write(
+        root.join(".agents/mcp_config.json"),
+        r#"{"mcpServers":{"api":{"type":"stdio","command":"old"}}}"#,
+    )
+    .unwrap();
+    let config = NormalizedConfig {
+        mcp_servers: vec![NormalizedMcpServer {
+            name: "api".into(),
+            transport: McpTransport::Http {
+                url: "https://example.com/mcp".into(),
+                headers: Default::default(),
+            },
+            env: Default::default(),
+        }],
+        ..Default::default()
+    };
+    for adapter in [
+        Box::new(conforme::adapters::devin::DevinAdapter) as Box<dyn AiToolAdapter>,
+        Box::new(conforme::adapters::antigravity::AntigravityAdapter),
+    ] {
+        adapter.write(root, &config).unwrap();
+        let read = adapter.read(root).unwrap();
+        assert!(
+            matches!(read.mcp_servers[0].transport, McpTransport::Http { .. }),
+            "{}: {:?}",
+            adapter.id(),
+            read.mcp_servers
+        );
+    }
+}
+
+#[test]
+fn test_antigravity_does_not_warn_about_env_it_drops() {
+    let config = NormalizedConfig {
+        mcp_servers: vec![NormalizedMcpServer {
+            name: "api".into(),
+            transport: McpTransport::Http {
+                url: "https://example.com/mcp".into(),
+                headers: Default::default(),
+            },
+            env: [("TOKEN".to_string(), "${TOKEN}".to_string())].into(),
+        }],
+        ..Default::default()
+    };
+    let dir = TempDir::new().unwrap();
+    let warnings =
+        conforme::adapters::antigravity::AntigravityAdapter.warnings(dir.path(), &config);
+    assert!(warnings.is_empty(), "{warnings:?}");
+}

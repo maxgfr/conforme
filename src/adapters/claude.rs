@@ -304,7 +304,7 @@ impl AiToolAdapter for ClaudeAdapter {
         let mcp_path = project_root.join(".mcp.json");
         if mcp_path.exists() {
             let mcp_content = crate::config::read_text(&mcp_path)?;
-            mcp_servers = crate::mcp::parse_mcp_json(&mcp_content)?;
+            mcp_servers = crate::mcp::CLAUDE_SHAPE.read_file(&mcp_content)?;
         }
 
         let config = NormalizedConfig {
@@ -347,10 +347,7 @@ impl AiToolAdapter for ClaudeAdapter {
         for rule in &config.rules {
             match &rule.activation {
                 ActivationMode::Always => {
-                    claude_content.push_str("\n\n## ");
-                    claude_content.push_str(&rule.name);
-                    claude_content.push_str("\n\n");
-                    claude_content.push_str(&rule.content);
+                    crate::adapters::push_inline_rule(&mut claude_content, rule);
                 }
                 _ => {
                     let filename = format!("{}.md", rule_file_name(&rule.name));
@@ -387,9 +384,10 @@ impl AiToolAdapter for ClaudeAdapter {
         }
 
         // Generate skills as .claude/skills/<name>/SKILL.md
-        files.extend(crate::skills::generate_claude_skills(
+        files.extend(crate::skills::generate_skills(
             project_root,
             &config.skills,
+            &crate::skills::CLAUDE_SKILLS,
         )?);
 
         // Generate subagents as .claude/agents/<name>.md
@@ -403,8 +401,8 @@ impl AiToolAdapter for ClaudeAdapter {
         files.extend(crate::json_settings::server_settings_file(
             &project_root.join(".mcp.json"),
             "mcpServers",
-            crate::mcp::build_claude_servers_object(&config.mcp_servers),
-            crate::mcp::CLAUDE_OWNED_SERVER_KEYS,
+            crate::mcp::CLAUDE_SHAPE.build(&config.mcp_servers),
+            &crate::mcp::CLAUDE_SHAPE.owned_keys(),
             &[],
         )?);
 

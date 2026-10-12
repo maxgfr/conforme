@@ -102,7 +102,7 @@ impl AiToolAdapter for ZedAdapter {
         let settings_path = project_root.join(".zed").join("settings.json");
         if settings_path.exists() {
             let settings = crate::config::read_text(&settings_path)?;
-            mcp_servers = crate::mcp::parse_mcp_json(&settings)?;
+            mcp_servers = crate::mcp::ZED_SHAPE.read_file(&settings)?;
         }
 
         Ok(NormalizedConfig {
@@ -123,10 +123,7 @@ impl AiToolAdapter for ZedAdapter {
         let mut content = config.instructions.clone();
 
         for rule in &config.rules {
-            content.push_str("\n\n## ");
-            content.push_str(&rule.name);
-            content.push_str("\n\n");
-            content.push_str(&rule.content);
+            crate::adapters::push_inline_rule(&mut content, rule);
         }
 
         // An empty config yields no `.rules` at all rather than a blank file
@@ -139,9 +136,10 @@ impl AiToolAdapter for ZedAdapter {
 
         // Generate skills as .agents/skills/<name>/SKILL.md (shared SKILL.md format).
         if !config.skills.is_empty() {
-            files.extend(crate::skills::generate_codex_skills(
+            files.extend(crate::skills::generate_skills(
                 project_root,
                 &config.skills,
+                &crate::skills::CODEX_SKILLS,
             )?);
         }
 
@@ -153,8 +151,8 @@ impl AiToolAdapter for ZedAdapter {
         files.extend(crate::json_settings::server_settings_file(
             &project_root.join(".zed").join("settings.json"),
             "context_servers",
-            crate::mcp::build_zed_context_servers_object(&config.mcp_servers),
-            crate::mcp::ZED_OWNED_SERVER_KEYS,
+            crate::mcp::ZED_SHAPE.build(&config.mcp_servers),
+            &crate::mcp::ZED_SHAPE.owned_keys(),
             &[],
         )?);
 

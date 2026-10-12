@@ -4,7 +4,6 @@ mod config;
 mod detect;
 mod frontmatter;
 mod gitignore;
-mod hash;
 mod help_ai;
 mod hook;
 mod json_settings;

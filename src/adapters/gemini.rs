@@ -164,10 +164,7 @@ impl AiToolAdapter for GeminiAdapter {
         let settings_path = project_root.join(".gemini").join("settings.json");
         if settings_path.exists() {
             let settings = crate::config::read_text(&settings_path)?;
-            mcp_servers = crate::mcp::canonicalize_env_refs(
-                crate::mcp::parse_mcp_json(&settings)?,
-                crate::mcp::EnvRefStyle::DollarOrBare,
-            );
+            mcp_servers = crate::mcp::GEMINI_SHAPE.read_file(&settings)?;
         }
 
         let config = NormalizedConfig {
@@ -203,10 +200,7 @@ impl AiToolAdapter for GeminiAdapter {
         let mut content = config.instructions.clone();
 
         for rule in &config.rules {
-            content.push_str("\n\n## ");
-            content.push_str(&rule.name);
-            content.push_str("\n\n");
-            content.push_str(&rule.content);
+            crate::adapters::push_inline_rule(&mut content, rule);
         }
 
         let mut files = Vec::new();
@@ -221,9 +215,10 @@ impl AiToolAdapter for GeminiAdapter {
 
         // Generate skills as .gemini/skills/<name>/SKILL.md
         if !config.skills.is_empty() {
-            files.extend(crate::skills::generate_gemini_skills(
+            files.extend(crate::skills::generate_skills(
                 project_root,
                 &config.skills,
+                &crate::skills::GEMINI_SKILLS,
             )?);
         }
 
@@ -244,8 +239,8 @@ impl AiToolAdapter for GeminiAdapter {
         files.extend(crate::json_settings::server_settings_file(
             &project_root.join(".gemini").join("settings.json"),
             "mcpServers",
-            crate::mcp::build_gemini_mcp_object(&config.mcp_servers),
-            crate::mcp::GEMINI_OWNED_SERVER_KEYS,
+            crate::mcp::GEMINI_SHAPE.build(&config.mcp_servers),
+            &crate::mcp::GEMINI_SHAPE.owned_keys(),
             &[],
         )?);
 

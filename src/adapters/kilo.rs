@@ -222,7 +222,7 @@ impl AiToolAdapter for KiloAdapter {
                 continue;
             };
             if let Some(mcp) = root.get("mcp") {
-                for server in crate::mcp::parse_opencode_mcp_object(mcp) {
+                for server in crate::mcp::KILO_SHAPE.read(mcp) {
                     mcp_servers.retain(|s| s.name != server.name);
                     mcp_servers.push(server);
                 }
@@ -273,7 +273,11 @@ impl AiToolAdapter for KiloAdapter {
         config: &NormalizedConfig,
     ) -> Result<Vec<(PathBuf, String)>> {
         // Kilo reads AGENTS.md itself: no instruction file is written.
-        let mut files = crate::skills::generate_kilo_skills(project_root, &config.skills)?;
+        let mut files = crate::skills::generate_skills(
+            project_root,
+            &config.skills,
+            &crate::skills::KILO_SKILLS,
+        )?;
 
         // An agent named like a built-in one (`code`, `ask`, …) would
         // override Kilo's own agent.
@@ -291,8 +295,8 @@ impl AiToolAdapter for KiloAdapter {
         files.extend(crate::json_settings::server_settings_file(
             &config_path(project_root),
             "mcp",
-            crate::mcp::build_kilo_mcp_object(&config.mcp_servers),
-            crate::mcp::OPENCODE_OWNED_SERVER_KEYS,
+            crate::mcp::KILO_SHAPE.build(&config.mcp_servers),
+            &crate::mcp::KILO_SHAPE.owned_keys(),
             &[(
                 "$schema",
                 serde_json::Value::String("https://app.kilo.ai/config.json".to_string()),

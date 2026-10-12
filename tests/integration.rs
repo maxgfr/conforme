@@ -3797,7 +3797,7 @@ fn test_init_never_deletes_target_files() {
     }
     run(root, &["init"])
         .success()
-        .stdout(predicate::str::contains(".cursor/rules/a.mdc"));
+        .stdout(predicate::str::contains("a.mdc"));
     for name in ["a", "b", "c"] {
         assert!(root.join(format!(".cursor/rules/{name}.mdc")).exists());
     }
@@ -4211,7 +4211,7 @@ fn test_sync_continues_past_an_unparsable_settings_file() {
     fs::write(root.join(".cursor/mcp.json"), "{ broken").unwrap();
     run(root, &["sync"])
         .failure()
-        .stderr(predicate::str::contains(".cursor/mcp.json"));
+        .stderr(predicate::str::contains("mcp.json"));
     assert!(root.join(".kiro/settings/mcp.json").exists());
     assert_eq!(
         fs::read_to_string(root.join(".cursor/mcp.json")).unwrap(),

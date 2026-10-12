@@ -189,7 +189,11 @@ impl AiToolAdapter for CodexAdapter {
         // Codex reads AGENTS.md natively — no need to re-generate it
         // since AGENTS.md is already our source of truth.
         // Generate skills as .agents/skills/<name>/SKILL.md (Codex format).
-        let mut files = crate::skills::generate_codex_skills(project_root, &config.skills)?;
+        let mut files = crate::skills::generate_skills(
+            project_root,
+            &config.skills,
+            &crate::skills::CODEX_SKILLS,
+        )?;
         files.extend(crate::skills::generate_codex_agents(
             project_root,
             &config.agents,

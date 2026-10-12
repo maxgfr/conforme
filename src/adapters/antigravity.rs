@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::adapters::devin::{build_devin_fields, parse_devin_activation};
 use crate::adapters::{AdapterCapabilities, AiToolAdapter, ManagedDir};
-use crate::config::{
-    rule_file_name, sanitize_name, McpTransport, NormalizedConfig, NormalizedRule,
-};
+use crate::config::{rule_file_name, sanitize_name, NormalizedConfig, NormalizedRule};
 use crate::frontmatter;
 use crate::skills::{antigravity_model, description_or_name};
 use std::collections::BTreeMap;
@@ -148,16 +146,11 @@ impl AiToolAdapter for AntigravityAdapter {
             }
         }
         for server in &config.mcp_servers {
-            let mut strings: Vec<&String> = match &server.transport {
-                McpTransport::Stdio { command, args } => {
-                    std::iter::once(command).chain(args).collect()
-                }
-                McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
-                    std::iter::once(url).chain(headers.values()).collect()
-                }
-            };
-            strings.extend(server.env.values());
-            if strings.iter().any(|s| s.contains("${")) {
+            // `env` on a remote server is dropped, so it is not listed.
+            if crate::mcp::server_strings(server)
+                .iter()
+                .any(|(_, s)| s.contains("${"))
+            {
                 warnings.push(format!(
                     "Antigravity documents no ${{VAR}} expansion; {} may be sent as written",
                     server.name
@@ -195,7 +188,8 @@ impl AiToolAdapter for AntigravityAdapter {
         let mut mcp_servers = Vec::new();
         let mcp_path = mcp_path(project_root);
         if mcp_path.exists() {
-            mcp_servers = crate::mcp::parse_mcp_json(&crate::config::read_text(&mcp_path)?)?;
+            mcp_servers =
+                crate::mcp::ANTIGRAVITY_SHAPE.read_file(&crate::config::read_text(&mcp_path)?)?;
         }
         // Antigravity loads `AGENTS.md` (else `GEMINI.md`) as its instructions.
         let mut config = crate::markdown::read_native_agents_md(
@@ -237,9 +231,10 @@ impl AiToolAdapter for AntigravityAdapter {
 
         // Skills live in `.agents/skills/`, shared with Codex and Zed.
         if !config.skills.is_empty() {
-            files.extend(crate::skills::generate_codex_skills(
+            files.extend(crate::skills::generate_skills(
                 project_root,
                 &config.skills,
+                &crate::skills::CODEX_SKILLS,
             )?);
         }
 
@@ -270,8 +265,8 @@ impl AiToolAdapter for AntigravityAdapter {
         files.extend(crate::json_settings::server_settings_file(
             &mcp_path(project_root),
             "mcpServers",
-            crate::mcp::generate_antigravity_mcp(&config.mcp_servers),
-            crate::mcp::ANTIGRAVITY_OWNED_SERVER_KEYS,
+            crate::mcp::ANTIGRAVITY_SHAPE.build(&config.mcp_servers),
+            &crate::mcp::ANTIGRAVITY_SHAPE.owned_keys(),
             &[],
         )?);
         Ok(files)

@@ -145,15 +145,12 @@ impl AiToolAdapter for CopilotAdapter {
         let mcp_path = project_root.join(".vscode").join("mcp.json");
         if mcp_path.exists() {
             let mcp_content = crate::config::read_text(&mcp_path)?;
-            mcp_servers = crate::mcp::canonicalize_env_refs(
-                crate::mcp::parse_mcp_json(&mcp_content)?,
-                crate::mcp::EnvRefStyle::EnvColon,
-            );
+            mcp_servers = crate::mcp::COPILOT_SHAPE.read_file(&mcp_content)?;
         }
         let cli_path = project_root.join(".github").join("mcp.json");
         if cli_path.exists() {
             let cli_content = crate::config::read_text(&cli_path)?;
-            for server in crate::mcp::parse_mcp_json(&cli_content)? {
+            for server in crate::mcp::CLAUDE_SHAPE.read_file(&cli_content)? {
                 if !mcp_servers.iter().any(|s| s.name == server.name) {
                     mcp_servers.push(server);
                 }
@@ -185,10 +182,7 @@ impl AiToolAdapter for CopilotAdapter {
                 ActivationMode::Always
                 | ActivationMode::AgentDecision { .. }
                 | ActivationMode::Manual => {
-                    main_content.push_str("\n\n## ");
-                    main_content.push_str(&rule.name);
-                    main_content.push_str("\n\n");
-                    main_content.push_str(&rule.content);
+                    crate::adapters::push_inline_rule(&mut main_content, rule);
                 }
                 ActivationMode::GlobMatch(_) => {
                     instruction_rules.push(rule);
@@ -222,9 +216,10 @@ impl AiToolAdapter for CopilotAdapter {
         }
 
         // Generate skills as .github/skills/<name>/SKILL.md
-        files.extend(crate::skills::generate_copilot_skills(
+        files.extend(crate::skills::generate_skills(
             project_root,
             &config.skills,
+            &crate::skills::COPILOT_SKILLS,
         )?);
 
         // Generate agents as .github/agents/<name>.agent.md
@@ -240,8 +235,8 @@ impl AiToolAdapter for CopilotAdapter {
         files.extend(crate::json_settings::server_settings_file(
             &project_root.join(".vscode").join("mcp.json"),
             "servers",
-            crate::mcp::build_copilot_servers_object(&config.mcp_servers),
-            crate::mcp::COPILOT_OWNED_SERVER_KEYS,
+            crate::mcp::COPILOT_SHAPE.build(&config.mcp_servers),
+            &crate::mcp::COPILOT_SHAPE.owned_keys(),
             &[],
         )?);
         // Copilot CLI never reads .vscode/mcp.json: it loads .github/mcp.json
@@ -250,8 +245,8 @@ impl AiToolAdapter for CopilotAdapter {
         files.extend(crate::json_settings::server_settings_file(
             &github_dir.join("mcp.json"),
             "mcpServers",
-            crate::mcp::build_claude_servers_object(&config.mcp_servers),
-            crate::mcp::CLAUDE_OWNED_SERVER_KEYS,
+            crate::mcp::CLAUDE_SHAPE.build(&config.mcp_servers),
+            &crate::mcp::CLAUDE_SHAPE.owned_keys(),
             &[],
         )?);
 

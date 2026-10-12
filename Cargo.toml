@@ -20,7 +20,6 @@ toml_edit = "0.22"
 tempfile = "3"
 globset = "0.4"
 anyhow = "1"
-sha2 = "0.10"
 owo-colors = "4"
 similar = "2"
 notify = { version = "7", features = ["macos_fsevent"] }

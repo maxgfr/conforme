@@ -3,11 +3,11 @@ use owo_colors::OwoColorize;
 use similar::{ChangeTag, TextDiff};
 use std::path::Path;
 
+use crate::adapters::contents_match;
 use crate::adapters::{self, clean_orphans, AiToolAdapter};
 use crate::cli::AddTarget;
 use crate::config::NormalizedConfig;
 use crate::detect;
-use crate::hash::contents_match;
 use crate::markdown;
 use crate::project_config::{check_renamed_ids, ProjectConfig};
 use crate::validate;
@@ -269,45 +269,82 @@ fn instructions_and_rules(config: &NormalizedConfig) -> NormalizedConfig {
     }
 }
 
+/// What each tool writes for an empty config, computed once per command: an
+/// item a tool holds is one it writes a file for beyond these (see
+/// [`Held::writes_a_file`]).
+#[derive(Default)]
+struct Held {
+    baselines: std::cell::RefCell<
+        std::collections::HashMap<
+            String,
+            std::rc::Rc<std::collections::HashSet<std::path::PathBuf>>,
+        >,
+    >,
+}
+
+impl Held {
+    /// Whether `tool` writes a file for `only` that it does not write for an
+    /// empty config.
+    fn writes_a_file(
+        &self,
+        project_root: &Path,
+        tool: &dyn AiToolAdapter,
+        only: &NormalizedConfig,
+    ) -> Result<bool> {
+        let cached = self.baselines.borrow().get(tool.id()).cloned();
+        let baseline = match cached {
+            Some(baseline) => baseline,
+            None => {
+                let baseline: std::rc::Rc<std::collections::HashSet<std::path::PathBuf>> =
+                    std::rc::Rc::new(
+                        tool.generate(project_root, &NormalizedConfig::default())?
+                            .into_iter()
+                            .map(|(path, _)| path)
+                            .collect(),
+                    );
+                self.baselines
+                    .borrow_mut()
+                    .insert(tool.id().to_string(), baseline.clone());
+                baseline
+            }
+        };
+        Ok(tool
+            .generate(project_root, only)?
+            .iter()
+            .any(|(path, _)| !baseline.contains(path)))
+    }
+}
+
 /// The skills and agents `output` writes no file for: all of them when it has
 /// no such capability, and any single one it skips (an agent named like one of
 /// its built-ins, a name it reserves). Each item is tried on its own, so one
 /// the output drops is never counted as held.
 fn unheld_skills_and_agents(
+    held: &Held,
     project_root: &Path,
     output: &dyn AiToolAdapter,
     config: &NormalizedConfig,
 ) -> Result<NormalizedConfig> {
     let caps = output.capabilities();
-    let baseline: std::collections::HashSet<std::path::PathBuf> = output
-        .generate(project_root, &NormalizedConfig::default())?
-        .into_iter()
-        .map(|(path, _)| path)
-        .collect();
-    let writes_a_file = |only: NormalizedConfig| -> Result<bool> {
-        Ok(output
-            .generate(project_root, &only)?
-            .iter()
-            .any(|(path, _)| !baseline.contains(path)))
-    };
+    let writes_a_file = |only: NormalizedConfig| held.writes_a_file(project_root, output, &only);
     let mut unheld = NormalizedConfig::default();
     for skill in &config.skills {
-        let held = caps.skills
+        let is_held = caps.skills
             && writes_a_file(NormalizedConfig {
                 skills: vec![skill.clone()],
                 ..Default::default()
             })?;
-        if !held {
+        if !is_held {
             unheld.skills.push(skill.clone());
         }
     }
     for agent in &config.agents {
-        let held = caps.agents
+        let is_held = caps.agents
             && writes_a_file(NormalizedConfig {
                 agents: vec![agent.clone()],
                 ..Default::default()
             })?;
-        if !held {
+        if !is_held {
             unheld.agents.push(agent.clone());
         }
     }
@@ -319,26 +356,18 @@ fn unheld_skills_and_agents(
 /// nothing for a rule (AGENTS.md holds it), Antigravity writes
 /// `.agents/rules/<name>.md` with its trigger.
 fn unheld_rules(
+    held: &Held,
     project_root: &Path,
     output: &dyn AiToolAdapter,
     config: &NormalizedConfig,
 ) -> Result<Vec<crate::config::NormalizedRule>> {
-    let baseline: std::collections::HashSet<std::path::PathBuf> = output
-        .generate(project_root, &NormalizedConfig::default())?
-        .into_iter()
-        .map(|(path, _)| path)
-        .collect();
     let mut unheld = Vec::new();
     for rule in &config.rules {
         let only = NormalizedConfig {
             rules: vec![rule.clone()],
             ..Default::default()
         };
-        let held = output
-            .generate(project_root, &only)?
-            .iter()
-            .any(|(path, _)| !baseline.contains(path));
-        if !held {
+        if !held.writes_a_file(project_root, output, &only)? {
             unheld.push(rule.clone());
         }
     }
@@ -352,6 +381,7 @@ fn unheld_rules(
 /// and they are not there. A rule AGENTS.md already holds as a `## Rule:`
 /// section with the same text does not count.
 fn rules_outside_agents_md(
+    held: &Held,
     project_root: &Path,
     source: &dyn AiToolAdapter,
     output: &dyn AiToolAdapter,
@@ -363,7 +393,7 @@ fn rules_outside_agents_md(
     }
     let in_file = markdown::parse_agents_md(&std::fs::read_to_string(&path)?)?.rules;
     let normalize = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
-    Ok(unheld_rules(project_root, output, config)?
+    Ok(unheld_rules(held, project_root, output, config)?
         .into_iter()
         .filter(|rule| {
             !in_file.iter().any(|section| {
@@ -379,6 +409,7 @@ fn rules_outside_agents_md(
 /// which reads only AGENTS.md, will never see: AGENTS.md is the source's own
 /// file, so sync does not rewrite it.
 fn warn_rules_outside_agents_md(
+    held: &Held,
     project_root: &Path,
     source_id: &str,
     target: &dyn AiToolAdapter,
@@ -390,7 +421,7 @@ fn warn_rules_outside_agents_md(
     if !target.reads_agents_md(project_root) {
         return Ok(());
     }
-    let missing = rules_outside_agents_md(project_root, source.as_ref(), target, config)?;
+    let missing = rules_outside_agents_md(held, project_root, source.as_ref(), target, config)?;
     if !missing.is_empty() {
         let names: Vec<String> = missing
             .iter()
@@ -518,13 +549,14 @@ fn warn_agents_md_readers_without_agents_md(
 /// AGENTS.md and writes no file for that rule (Codex, OpenCode, Kilo, Vibe,
 /// DeepSeek): AGENTS.md is the only place that tool finds it.
 fn instructions_rules_and_unheld(
+    held: &Held,
     project_root: &Path,
     output: &dyn AiToolAdapter,
     staying: &[&dyn AiToolAdapter],
     config: &NormalizedConfig,
 ) -> Result<NormalizedConfig> {
-    let unheld = unheld_skills_and_agents(project_root, output, config)?;
-    let mut rules = unheld_rules(project_root, output, config)?;
+    let unheld = unheld_skills_and_agents(held, project_root, output, config)?;
+    let mut rules = unheld_rules(held, project_root, output, config)?;
     for tool in staying {
         if tool.id() == output.id() || !tool.reads_agents_md(project_root) {
             continue;
@@ -532,7 +564,7 @@ fn instructions_rules_and_unheld(
         // Another tool's unreadable settings file must not block the
         // migration (as in `run_migrate`): a tool that cannot be probed is
         // taken to hold no rule, so AGENTS.md keeps them all for it.
-        let needed = match unheld_rules(project_root, *tool, config) {
+        let needed = match unheld_rules(held, project_root, *tool, config) {
             Ok(needed) => needed,
             Err(_) => config.rules.clone(),
         };
@@ -825,6 +857,7 @@ pub fn run_sync(
         }
     }
 
+    let held = &Held::default();
     let targets = selected_targets(&adapters, project_root, &source_id, only, &project_cfg);
     warn_agents_md_readers_without_agents_md(project_root, &source_id, &targets, &config)?;
     let codex_reads_agents_md =
@@ -835,7 +868,7 @@ pub fn run_sync(
     for adapter in targets {
         // Warn about capability loss
         warn_capability_loss(adapter, project_root, &config);
-        warn_rules_outside_agents_md(project_root, &source_id, adapter, &config)?;
+        warn_rules_outside_agents_md(held, project_root, &source_id, adapter, &config)?;
 
         let synced = target_output(project_root, &source_id, adapter, &config, &source_files)
             .and_then(|output| {
@@ -1269,9 +1302,10 @@ pub fn run_check(project_root: &Path, from: Option<&str>, verbose: bool) -> Resu
         selected_targets(&adapters, project_root, &source_id, None, &project_cfg)
     };
     warn_agents_md_readers_without_agents_md(project_root, &source_id, &targets, &config)?;
+    let held = &Held::default();
 
     for adapter in targets {
-        warn_rules_outside_agents_md(project_root, &source_id, adapter, &config)?;
+        warn_rules_outside_agents_md(held, project_root, &source_id, adapter, &config)?;
         // An orphan sync would remove (a stale rule, a bundled file the source
         // dropped) is out of sync too.
         let (_, tool_diffs) = target_differences(
@@ -1651,7 +1685,9 @@ pub fn run_migrate(
         .filter(|a| a.id() == output || (a.id() != source && a.detect(project_root)))
         .collect();
     let staying_tools: Vec<&dyn AiToolAdapter> = staying.iter().map(|a| a.as_ref()).collect();
+    let held = &Held::default();
     let (agents_md, carried) = migrated_agents_md(
+        held,
         project_root,
         source_adapter.as_ref(),
         output_adapter.as_ref(),
@@ -1689,7 +1725,7 @@ pub fn run_migrate(
     }
     // What the output cannot hold stays where it is: skills or agents for a
     // tool without them (`sync` warned about it above).
-    let lost = unheld_skills_and_agents(project_root, output_adapter.as_ref(), &config)?;
+    let lost = unheld_skills_and_agents(held, project_root, output_adapter.as_ref(), &config)?;
     if !lost.skills.is_empty() || !lost.agents.is_empty() {
         kept_paths.extend(
             source_adapter
@@ -2010,6 +2046,7 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
 /// AGENTS.md whose text the source lacks, and that the source does not read
 /// itself, is refused rather than overwritten.
 fn migrated_agents_md(
+    held: &Held,
     project_root: &Path,
     source: &dyn AiToolAdapter,
     output: &dyn AiToolAdapter,
@@ -2027,7 +2064,7 @@ fn migrated_agents_md(
         // output cannot hold join them as `## Rule:` sections, or migrate
         // would delete them into nothing. AGENTS.md is the user's own file:
         // its text is kept exactly and the rules are only appended.
-        let missing = rules_outside_agents_md(project_root, source, output, config)?;
+        let missing = rules_outside_agents_md(held, project_root, source, output, config)?;
         if missing.is_empty() {
             return Ok(none());
         }
@@ -2074,6 +2111,7 @@ fn migrated_agents_md(
         .transpose()?
     else {
         let content = markdown::export_as_agents_md(&instructions_rules_and_unheld(
+            held,
             project_root,
             output,
             staying,
@@ -2099,6 +2137,7 @@ fn migrated_agents_md(
         .mcp_servers
         .extend(carried.mcp_servers.iter().cloned());
     let content = markdown::export_as_agents_md(&instructions_rules_and_unheld(
+        held,
         project_root,
         output,
         staying,

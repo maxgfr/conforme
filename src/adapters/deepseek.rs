@@ -104,7 +104,11 @@ impl AiToolAdapter for DeepSeekAdapter {
         config: &NormalizedConfig,
     ) -> Result<Vec<(PathBuf, String)>> {
         // The harness reads AGENTS.md natively — only skills need generating.
-        crate::skills::generate_deepseek_skills(project_root, &config.skills)
+        crate::skills::generate_skills(
+            project_root,
+            &config.skills,
+            &crate::skills::DEEPSEEK_SKILLS,
+        )
     }
 }
 

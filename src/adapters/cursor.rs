@@ -154,10 +154,7 @@ impl AiToolAdapter for CursorAdapter {
         let mcp_path = project_root.join(".cursor").join("mcp.json");
         if mcp_path.exists() {
             let mcp_content = crate::config::read_text(&mcp_path)?;
-            mcp_servers = crate::mcp::canonicalize_env_refs(
-                crate::mcp::parse_mcp_json(&mcp_content)?,
-                crate::mcp::EnvRefStyle::EnvColon,
-            );
+            mcp_servers = crate::mcp::CURSOR_SHAPE.read_file(&mcp_content)?;
         }
 
         // Read skills from .cursor/skills/**/SKILL.md (Cursor walks the
@@ -200,9 +197,10 @@ impl AiToolAdapter for CursorAdapter {
 
         // Generate skills as .cursor/skills/<name>/SKILL.md
         if !config.skills.is_empty() {
-            files.extend(crate::skills::generate_cursor_skills(
+            files.extend(crate::skills::generate_skills(
                 project_root,
                 &config.skills,
+                &crate::skills::CURSOR_SKILLS,
             )?);
         }
 
@@ -219,8 +217,8 @@ impl AiToolAdapter for CursorAdapter {
         files.extend(crate::json_settings::server_settings_file(
             &project_root.join(".cursor").join("mcp.json"),
             "mcpServers",
-            crate::mcp::build_cursor_servers_object(&config.mcp_servers),
-            crate::mcp::CURSOR_OWNED_SERVER_KEYS,
+            crate::mcp::CURSOR_SHAPE.build(&config.mcp_servers),
+            &crate::mcp::CURSOR_SHAPE.owned_keys(),
             &[],
         )?);
 

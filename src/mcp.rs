@@ -136,9 +136,7 @@ pub fn merge_codex_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> 
                 let mut from_env = BTreeMap::new();
                 let mut literal = BTreeMap::new();
                 for (name, header_value) in headers {
-                    let bearer_ref = header_value
-                        .strip_prefix("Bearer ")
-                        .and_then(env_ref_name)
+                    let bearer_ref = bearer_env_var(header_value)
                         .filter(|_| name.eq_ignore_ascii_case("Authorization"));
                     if let Some(var) = bearer_ref {
                         bearer = Some(var.to_string());
@@ -1029,59 +1027,61 @@ pub fn env_refs_from_tool(s: &str, style: EnvRefStyle) -> String {
 }
 
 /// Apply `f` to every string of a server that may hold a variable reference.
-fn map_server_strings(
-    server: &NormalizedMcpServer,
-    f: impl Fn(&str) -> String,
-) -> NormalizedMcpServer {
-    let map = |m: &BTreeMap<String, String>| m.iter().map(|(k, v)| (k.clone(), f(v))).collect();
-    NormalizedMcpServer {
-        name: server.name.clone(),
-        transport: match &server.transport {
-            McpTransport::Stdio { command, args } => McpTransport::Stdio {
-                command: f(command),
-                args: args.iter().map(|a| f(a)).collect(),
-            },
-            McpTransport::Http { url, headers } => McpTransport::Http {
-                url: f(url),
-                headers: map(headers),
-            },
-            McpTransport::Sse { url, headers } => McpTransport::Sse {
-                url: f(url),
-                headers: map(headers),
-            },
-        },
-        env: map(&server.env),
+fn rewrite_server_strings(server: &mut NormalizedMcpServer, f: impl Fn(&str) -> String) {
+    let rewrite = |m: &mut BTreeMap<String, String>| m.values_mut().for_each(|v| *v = f(v));
+    match &mut server.transport {
+        McpTransport::Stdio { command, args } => {
+            *command = f(command);
+            args.iter_mut().for_each(|a| *a = f(a));
+        }
+        McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
+            *url = f(url);
+            rewrite(headers);
+        }
     }
+    rewrite(&mut server.env);
 }
 
 /// Rewrite the variable references of servers read from a tool written in
 /// `style` into the normalized `${VAR}` spelling.
 pub fn canonicalize_env_refs(
-    servers: Vec<NormalizedMcpServer>,
+    mut servers: Vec<NormalizedMcpServer>,
     style: EnvRefStyle,
 ) -> Vec<NormalizedMcpServer> {
-    if matches!(
+    if !matches!(
         style,
         EnvRefStyle::Dollar | EnvRefStyle::DollarNoDefault | EnvRefStyle::Literal
     ) {
-        return servers;
+        for server in &mut servers {
+            rewrite_server_strings(server, |v| env_refs_from_tool(v, style));
+        }
     }
     servers
-        .iter()
-        .map(|s| map_server_strings(s, |v| env_refs_from_tool(v, style)))
-        .collect()
 }
 
 /// How a legacy SSE server is written; `None`: as the HTTP variant (the tool has no SSE).
-struct SseShape {
+pub struct SseShape {
     /// Key of the server's URL.
     url_key: &'static str,
     /// Marker written on the entry (`type: "sse"`, Devin's `transport: "sse"`).
     marker: Option<(&'static str, &'static str)>,
 }
 
-/// The JSON shape of one tool's MCP server entries.
-struct ServerShape {
+/// Where an entry keeps its command and environment.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Layout {
+    /// `command` + `args` + `env`.
+    Flat,
+    /// OpenCode and Kilo Code: `command: [cmd, ...args]` and `environment`.
+    OpenCode,
+}
+
+/// The JSON shape of one tool's MCP server entries: how conforme writes them
+/// ([`ServerShape::build`]), which keys of an existing entry it owns
+/// ([`ServerShape::owned_keys`]), and how it reads them back
+/// ([`ServerShape::read`]).
+pub struct ServerShape {
+    layout: Layout,
     /// `type` written on stdio entries (`None`: no `type` field).
     stdio_type: Option<&'static str>,
     /// `type` written on remote entries (`None`: no `type` field).
@@ -1095,11 +1095,22 @@ struct ServerShape {
     env_on_http: bool,
     sse: Option<SseShape>,
     env_refs: EnvRefStyle,
+    /// The key that turns a server off (`disabled`; `enabled` for Zed and
+    /// OpenCode): owned, so a synced server is enabled again — leaving it
+    /// disabled would make `check` pass while the tool still hides it.
+    toggle: Option<&'static str>,
+    /// Kilo Code: a local server inherits Kilo's environment, so an `env`
+    /// entry that only passes a variable through (`TOKEN=${TOKEN}`) is left
+    /// out instead of being set to the literal text.
+    drop_passthrough_env: bool,
 }
 
 /// Claude Code `.mcp.json`: `type` is `stdio` or `http`; remote servers take
 /// `url` + `headers`, no `env`.
-const CLAUDE_SHAPE: ServerShape = ServerShape {
+pub const CLAUDE_SHAPE: ServerShape = ServerShape {
+    layout: Layout::Flat,
+    toggle: None,
+    drop_passthrough_env: false,
     stdio_type: Some("stdio"),
     http_type: Some("http"),
     url_key: "url",
@@ -1114,7 +1125,10 @@ const CLAUDE_SHAPE: ServerShape = ServerShape {
 
 /// Cursor `.cursor/mcp.json`: local servers need `type: "stdio"`, remote ones
 /// are just `url` (+ `headers`) with no `type`; references are `${env:VAR}`.
-const CURSOR_SHAPE: ServerShape = ServerShape {
+pub const CURSOR_SHAPE: ServerShape = ServerShape {
+    layout: Layout::Flat,
+    toggle: None,
+    drop_passthrough_env: false,
     stdio_type: Some("stdio"),
     http_type: None,
     url_key: "url",
@@ -1128,7 +1142,10 @@ const CURSOR_SHAPE: ServerShape = ServerShape {
 };
 
 /// Kiro `.kiro/settings/mcp.json`: remote servers also accept `env`.
-const KIRO_SHAPE: ServerShape = ServerShape {
+pub const KIRO_SHAPE: ServerShape = ServerShape {
+    layout: Layout::Flat,
+    toggle: Some("disabled"),
+    drop_passthrough_env: false,
     stdio_type: Some("stdio"),
     http_type: Some("http"),
     url_key: "url",
@@ -1143,7 +1160,10 @@ const KIRO_SHAPE: ServerShape = ServerShape {
 
 /// VS Code `.vscode/mcp.json` (`servers` key): remote fields are `type`,
 /// `url`, `headers`, `oauth` — no `env`.
-const COPILOT_SHAPE: ServerShape = ServerShape {
+pub const COPILOT_SHAPE: ServerShape = ServerShape {
+    layout: Layout::Flat,
+    toggle: None,
+    drop_passthrough_env: false,
     stdio_type: Some("stdio"),
     http_type: Some("http"),
     url_key: "url",
@@ -1159,7 +1179,10 @@ const COPILOT_SHAPE: ServerShape = ServerShape {
 /// Zoo Code `.roo/mcp.json`: HTTP servers are `type: "streamable-http"` (a
 /// bare `"http"` is not accepted), and Zoo's schema rejects `env` on a remote
 /// entry.
-const ZOOCODE_SHAPE: ServerShape = ServerShape {
+pub const ZOOCODE_SHAPE: ServerShape = ServerShape {
+    layout: Layout::Flat,
+    toggle: Some("disabled"),
+    drop_passthrough_env: false,
     stdio_type: Some("stdio"),
     http_type: Some("streamable-http"),
     url_key: "url",
@@ -1174,7 +1197,10 @@ const ZOOCODE_SHAPE: ServerShape = ServerShape {
 
 /// Zed `context_servers`: flat shape with no `type`; the remote variant has no
 /// `env`, and Zed expands no variable references.
-const ZED_SHAPE: ServerShape = ServerShape {
+pub const ZED_SHAPE: ServerShape = ServerShape {
+    layout: Layout::Flat,
+    toggle: Some("enabled"),
+    drop_passthrough_env: false,
     stdio_type: None,
     http_type: None,
     url_key: "url",
@@ -1185,7 +1211,10 @@ const ZED_SHAPE: ServerShape = ServerShape {
 };
 
 /// Gemini CLI `mcpServers`: no `type`, streamable HTTP servers use `httpUrl`.
-const GEMINI_SHAPE: ServerShape = ServerShape {
+pub const GEMINI_SHAPE: ServerShape = ServerShape {
+    layout: Layout::Flat,
+    toggle: None,
+    drop_passthrough_env: false,
     stdio_type: None,
     http_type: None,
     url_key: "httpUrl",
@@ -1200,7 +1229,10 @@ const GEMINI_SHAPE: ServerShape = ServerShape {
 
 /// Devin `.devin/mcp_config.json`: no `type`; remote servers are `url` with an
 /// optional `transport` (`http` or `sse`) and `headers`, no `env`.
-const DEVIN_SHAPE: ServerShape = ServerShape {
+pub const DEVIN_SHAPE: ServerShape = ServerShape {
+    layout: Layout::Flat,
+    toggle: Some("disabled"),
+    drop_passthrough_env: false,
     stdio_type: None,
     http_type: None,
     url_key: "url",
@@ -1216,7 +1248,10 @@ const DEVIN_SHAPE: ServerShape = ServerShape {
 /// Antigravity `.agents/mcp_config.json`: no `type`; every remote server (HTTP
 /// or SSE) is `serverUrl` + `headers`, no `env`. No variable reference is
 /// documented, so `${VAR}` is written as is.
-const ANTIGRAVITY_SHAPE: ServerShape = ServerShape {
+pub const ANTIGRAVITY_SHAPE: ServerShape = ServerShape {
+    layout: Layout::Flat,
+    toggle: None,
+    drop_passthrough_env: false,
     stdio_type: None,
     http_type: None,
     url_key: "serverUrl",
@@ -1229,6 +1264,32 @@ const ANTIGRAVITY_SHAPE: ServerShape = ServerShape {
     env_refs: EnvRefStyle::Dollar,
 };
 
+/// OpenCode `opencode.json` `mcp`: `type` is `local` / `remote` (SSE is
+/// `remote`, OpenCode tries it itself), `command` is one `[cmd, ...args]`
+/// array, the environment is `environment` (local servers only), and
+/// references are written `{env:VAR}`.
+pub const OPENCODE_SHAPE: ServerShape = ServerShape {
+    layout: Layout::OpenCode,
+    stdio_type: Some("local"),
+    http_type: Some("remote"),
+    url_key: "url",
+    http_extra: None,
+    env_on_http: false,
+    sse: None,
+    env_refs: EnvRefStyle::OpenCode,
+    toggle: Some("enabled"),
+    drop_passthrough_env: false,
+};
+
+/// Kilo Code `mcp`: OpenCode's shape with no variable reference — Kilo
+/// refuses a project config holding `{env:VAR}`, so strings are copied
+/// verbatim (see [`ServerShape::drop_passthrough_env`]).
+pub const KILO_SHAPE: ServerShape = ServerShape {
+    env_refs: EnvRefStyle::Literal,
+    drop_passthrough_env: true,
+    ..OPENCODE_SHAPE
+};
+
 fn string_map(map: &BTreeMap<String, String>) -> serde_json::Value {
     serde_json::Value::Object(
         map.iter()
@@ -1237,63 +1298,224 @@ fn string_map(map: &BTreeMap<String, String>) -> serde_json::Value {
     )
 }
 
-fn build_servers_object(
-    servers: &[NormalizedMcpServer],
-    shape: &ServerShape,
-) -> serde_json::Map<String, serde_json::Value> {
-    use serde_json::Value as Json;
-    let mut out = serde_json::Map::new();
+/// The string values of a JSON object (`env`, `headers`).
+fn json_string_map(value: Option<&serde_json::Value>) -> BTreeMap<String, String> {
+    value
+        .and_then(|v| v.as_object())
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
-    for server in servers {
-        let server = map_server_strings(server, |s| env_refs_to_tool(s, shape.env_refs));
-        let mut entry = serde_json::Map::new();
+impl ServerShape {
+    /// The servers object conforme writes for `servers`.
+    pub fn build(
+        &self,
+        servers: &[NormalizedMcpServer],
+    ) -> serde_json::Map<String, serde_json::Value> {
+        use serde_json::Value as Json;
+        let text = |s: &str| Json::String(s.to_string());
+        let mut out = serde_json::Map::new();
 
-        let is_http = match &server.transport {
-            McpTransport::Stdio { command, args } => {
-                if let Some(t) = shape.stdio_type {
-                    entry.insert("type".to_string(), Json::String(t.to_string()));
-                }
-                entry.insert("command".to_string(), Json::String(command.clone()));
-                entry.insert(
-                    "args".to_string(),
-                    Json::Array(args.iter().map(|a| Json::String(a.clone())).collect()),
-                );
-                false
+        for server in servers {
+            let mut server = server.clone();
+            if self.drop_passthrough_env {
+                server
+                    .env
+                    .retain(|key, value| value.trim() != format!("${{{key}}}"));
             }
-            McpTransport::Sse { url, headers } if shape.sse.is_some() => {
-                let sse = shape.sse.as_ref().expect("checked by the guard");
-                if let Some((key, value)) = sse.marker {
-                    entry.insert(key.to_string(), Json::String(value.to_string()));
+            rewrite_server_strings(&mut server, |s| env_refs_to_tool(s, self.env_refs));
+            let mut entry = serde_json::Map::new();
+
+            let is_http = match &server.transport {
+                McpTransport::Stdio { command, args } => {
+                    if let Some(t) = self.stdio_type {
+                        entry.insert("type".to_string(), text(t));
+                    }
+                    let args = args.iter().map(|a| text(a));
+                    match self.layout {
+                        Layout::Flat => {
+                            entry.insert("command".to_string(), text(command));
+                            entry.insert("args".to_string(), Json::Array(args.collect()));
+                        }
+                        Layout::OpenCode => {
+                            let command = std::iter::once(text(command)).chain(args).collect();
+                            entry.insert("command".to_string(), Json::Array(command));
+                        }
+                    }
+                    false
                 }
-                entry.insert(sse.url_key.to_string(), Json::String(url.clone()));
-                if !headers.is_empty() {
-                    entry.insert("headers".to_string(), string_map(headers));
+                McpTransport::Sse { url, headers } if self.sse.is_some() => {
+                    let sse = self.sse.as_ref().expect("checked by the guard");
+                    if let Some((key, value)) = sse.marker {
+                        entry.insert(key.to_string(), text(value));
+                    }
+                    entry.insert(sse.url_key.to_string(), text(url));
+                    if !headers.is_empty() {
+                        entry.insert("headers".to_string(), string_map(headers));
+                    }
+                    true
                 }
-                true
+                McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
+                    if let Some(t) = self.http_type {
+                        entry.insert("type".to_string(), text(t));
+                    }
+                    entry.insert(self.url_key.to_string(), text(url));
+                    if let Some((key, value)) = self.http_extra {
+                        entry.insert(key.to_string(), text(value));
+                    }
+                    if !headers.is_empty() {
+                        entry.insert("headers".to_string(), string_map(headers));
+                    }
+                    true
+                }
+            };
+
+            if !server.env.is_empty() && (self.env_on_http || !is_http) {
+                entry.insert(self.env_key().to_string(), string_map(&server.env));
             }
-            McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
-                if let Some(t) = shape.http_type {
-                    entry.insert("type".to_string(), Json::String(t.to_string()));
-                }
-                entry.insert(shape.url_key.to_string(), Json::String(url.clone()));
-                if let Some((key, value)) = shape.http_extra {
-                    entry.insert(key.to_string(), Json::String(value.to_string()));
-                }
-                if !headers.is_empty() {
-                    entry.insert("headers".to_string(), string_map(headers));
-                }
-                true
+
+            out.insert(server.name, Json::Object(entry));
+        }
+
+        out
+    }
+
+    fn env_key(&self) -> &'static str {
+        match self.layout {
+            Layout::Flat => "env",
+            Layout::OpenCode => "environment",
+        }
+    }
+
+    /// The keys of a server entry conforme owns, across every transport:
+    /// regenerated when the server is synced. Any other key an existing entry
+    /// carries is tool-specific configuration the user (or the tool) added,
+    /// and `json_settings::merge_server_entries` keeps it. Every URL spelling
+    /// and `type` are owned, so a stale one (a hand-written `serverUrl`, the
+    /// `type` `gemini mcp add -t http` writes) never contradicts what conforme
+    /// writes.
+    pub fn owned_keys(&self) -> Vec<&'static str> {
+        let mut keys = vec!["type", "command", self.env_key()];
+        if self.layout == Layout::Flat {
+            keys.push("args");
+        }
+        keys.extend(["url", "httpUrl", "serverUrl", "headers"]);
+        keys.extend(self.http_extra.map(|(key, _)| key));
+        keys.extend(
+            self.sse
+                .as_ref()
+                .and_then(|sse| sse.marker)
+                .map(|(key, _)| key),
+        );
+        keys.extend(self.toggle);
+        keys.sort_unstable();
+        keys.dedup();
+        keys
+    }
+
+    /// Read a servers object written in this shape back into normalized
+    /// servers, with conforme's `${VAR}` spelling. An entry conforme cannot
+    /// express (see `json_settings::is_expressible_server`) or that is
+    /// disabled is skipped; the merge keeps it in place.
+    pub fn read(&self, servers: &serde_json::Value) -> Vec<NormalizedMcpServer> {
+        canonicalize_env_refs(parse_servers(servers), self.env_refs)
+    }
+
+    /// Read the servers of an MCP JSON file written in this shape (see
+    /// [`parse_mcp_json`] for the keys it looks under).
+    pub fn read_file(&self, content: &str) -> Result<Vec<NormalizedMcpServer>> {
+        Ok(canonicalize_env_refs(
+            parse_mcp_json(content)?,
+            self.env_refs,
+        ))
+    }
+}
+
+/// Parse a servers object, in any shape conforme writes: the transport is
+/// read from `type` (`stdio`/`local`, `http`/`sse`/`remote`/…), Devin's
+/// `transport`, or the presence of a URL (`url`, Gemini `httpUrl`,
+/// Antigravity `serverUrl`); `command` is a string with `args`, or
+/// OpenCode's `[cmd, ...args]`; the environment is `env` or OpenCode's
+/// `environment`.
+fn parse_servers(servers: &serde_json::Value) -> Vec<NormalizedMcpServer> {
+    let Some(servers) = servers.as_object() else {
+        return Vec::new();
+    };
+    let mut result = Vec::new();
+    for (name, value) in servers {
+        // Zed extension servers, Claude SDK servers and OpenCode's
+        // `{ "enabled": false }` toggles have no portable form, and a disabled
+        // server is not part of the config.
+        if !crate::json_settings::is_expressible_server(value)
+            || crate::json_settings::is_disabled_server(value)
+        {
+            continue;
+        }
+        let Some(obj) = value.as_object() else {
+            continue;
+        };
+
+        let transport_type = obj.get("type").and_then(|v| v.as_str());
+        // Devin declares its transport under `transport` (`http`, `sse`), not `type`.
+        let transport_key = obj.get("transport").and_then(|v| v.as_str());
+        let url_value = ["url", "httpUrl", "serverUrl"]
+            .iter()
+            .find_map(|key| obj.get(*key).and_then(|v| v.as_str()));
+        // An entry is remote if it declares a remote transport type OR — when
+        // no `type` is present — if it carries a URL rather than a command.
+        let is_http = matches!(
+            transport_type,
+            Some("http" | "https" | "sse" | "streamable-http" | "ws" | "remote")
+        ) || (transport_type.is_none() && url_value.is_some());
+
+        let transport = if is_http {
+            let url = url_value.unwrap_or("").to_string();
+            let headers = json_string_map(obj.get("headers"));
+            // SSE servers declare `sse` as their type (Claude, Gemini) or their
+            // transport (Devin); every other remote entry stays HTTP.
+            let is_sse = url_value.is_some()
+                && (transport_type == Some("sse") || transport_key == Some("sse"));
+            if is_sse {
+                McpTransport::Sse { url, headers }
+            } else {
+                McpTransport::Http { url, headers }
+            }
+        } else {
+            let strings = |v: &serde_json::Value| -> Vec<String> {
+                v.as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            let mut parts = match obj.get("command") {
+                Some(serde_json::Value::String(command)) => vec![command.clone()],
+                Some(command) => strings(command),
+                None => Vec::new(),
+            };
+            parts.extend(obj.get("args").map(strings).unwrap_or_default());
+            let mut parts = parts.into_iter();
+            McpTransport::Stdio {
+                command: parts.next().unwrap_or_default(),
+                args: parts.collect(),
             }
         };
 
-        if !server.env.is_empty() && (shape.env_on_http || !is_http) {
-            entry.insert("env".to_string(), string_map(&server.env));
-        }
+        let env = json_string_map(obj.get("env").or_else(|| obj.get("environment")));
 
-        out.insert(server.name.clone(), Json::Object(entry));
+        result.push(NormalizedMcpServer {
+            name: name.clone(),
+            transport,
+            env,
+        });
     }
-
-    out
+    result
 }
 
 #[cfg(test)]
@@ -1307,213 +1529,22 @@ fn wrap_servers(key: &str, servers: serde_json::Map<String, serde_json::Value>) 
         .context("failed to serialize MCP config")
 }
 
-/// Generate a fresh `.mcp.json` (Claude Code format) from normalized MCP
-/// servers: `{ "mcpServers": { "name": { ... } } }`. The adapter merges into
-/// an existing file through [`build_claude_servers_object`].
+/// A fresh `.mcp.json` (Claude Code format), for tests.
 #[cfg(test)]
 pub fn generate_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
-    wrap_servers("mcpServers", build_claude_servers_object(servers))
+    wrap_servers("mcpServers", CLAUDE_SHAPE.build(servers))
 }
 
-/// Build Claude Code's `mcpServers` object of `.mcp.json`.
-pub fn build_claude_servers_object(
-    servers: &[NormalizedMcpServer],
-) -> serde_json::Map<String, serde_json::Value> {
-    build_servers_object(servers, &CLAUDE_SHAPE)
-}
-
-/// Build Cursor's `mcpServers` object of `.cursor/mcp.json`.
-pub fn build_cursor_servers_object(
-    servers: &[NormalizedMcpServer],
-) -> serde_json::Map<String, serde_json::Value> {
-    build_servers_object(servers, &CURSOR_SHAPE)
-}
-
-/// Build Kiro's `mcpServers` object of `.kiro/settings/mcp.json`.
-pub fn build_kiro_servers_object(
-    servers: &[NormalizedMcpServer],
-) -> serde_json::Map<String, serde_json::Value> {
-    build_servers_object(servers, &KIRO_SHAPE)
-}
-
-/// Generate Zoo Code's `.roo/mcp.json` (a fresh file; the adapter merges into
-/// an existing one through [`build_zoocode_servers_object`]).
+/// A fresh `.roo/mcp.json` (Zoo Code format), for tests.
 #[cfg(test)]
 pub fn generate_zoocode_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
-    wrap_servers("mcpServers", build_zoocode_servers_object(servers))
+    wrap_servers("mcpServers", ZOOCODE_SHAPE.build(servers))
 }
 
-/// Build Zoo Code's `mcpServers` object (see [`ZOOCODE_SHAPE`]).
-pub fn build_zoocode_servers_object(
-    servers: &[NormalizedMcpServer],
-) -> serde_json::Map<String, serde_json::Value> {
-    build_servers_object(servers, &ZOOCODE_SHAPE)
-}
-
-/// Generate Copilot VS Code MCP format (uses `servers` key, not `mcpServers`).
+/// A fresh `.vscode/mcp.json` (`servers` key), for tests.
 #[cfg(test)]
 pub fn generate_copilot_mcp_json(servers: &[NormalizedMcpServer]) -> Result<String> {
-    wrap_servers("servers", build_copilot_servers_object(servers))
-}
-
-/// Build the Copilot `servers` object of `.vscode/mcp.json` (the adapter
-/// merges it so the file's `inputs` and `sandbox` keys survive).
-pub fn build_copilot_servers_object(
-    servers: &[NormalizedMcpServer],
-) -> serde_json::Map<String, serde_json::Value> {
-    build_servers_object(servers, &COPILOT_SHAPE)
-}
-
-/// Build the OpenCode `mcp` object (not a full file — `opencode.json` is merged by the adapter).
-/// OpenCode format: stdio uses `command: [cmd, ...args]` as a single array;
-/// env var key is `environment` (not `env`), which only local servers accept;
-/// remote servers use `url`. Variable references are written `{env:VAR}`.
-pub fn build_opencode_mcp_object(
-    servers: &[NormalizedMcpServer],
-) -> serde_json::Map<String, serde_json::Value> {
-    build_opencode_style_object(servers, EnvRefStyle::OpenCode)
-}
-
-/// Build the Kilo Code `mcp` object: OpenCode's shape, with no variable
-/// references. Kilo refuses a project config holding `{env:VAR}`, so strings
-/// are copied verbatim; a local server inherits Kilo's environment, so an
-/// `env` entry that only passes a variable through (`TOKEN=${TOKEN}`) is left
-/// out instead of being set to the literal text.
-pub fn build_kilo_mcp_object(
-    servers: &[NormalizedMcpServer],
-) -> serde_json::Map<String, serde_json::Value> {
-    let servers: Vec<NormalizedMcpServer> = servers
-        .iter()
-        .map(|server| {
-            let mut server = server.clone();
-            server
-                .env
-                .retain(|key, value| value.trim() != format!("${{{key}}}"));
-            server
-        })
-        .collect();
-    build_opencode_style_object(&servers, EnvRefStyle::Literal)
-}
-
-fn build_opencode_style_object(
-    servers: &[NormalizedMcpServer],
-    style: EnvRefStyle,
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut mcp = serde_json::Map::new();
-
-    for server in servers {
-        let server = map_server_strings(server, |s| env_refs_to_tool(s, style));
-        let mut entry = serde_json::Map::new();
-
-        match &server.transport {
-            McpTransport::Stdio { command, args } => {
-                entry.insert(
-                    "type".to_string(),
-                    serde_json::Value::String("local".to_string()),
-                );
-                let mut combined: Vec<serde_json::Value> = Vec::with_capacity(args.len() + 1);
-                combined.push(serde_json::Value::String(command.clone()));
-                combined.extend(args.iter().map(|a| serde_json::Value::String(a.clone())));
-                entry.insert("command".to_string(), serde_json::Value::Array(combined));
-                if !server.env.is_empty() {
-                    entry.insert("environment".to_string(), string_map(&server.env));
-                }
-            }
-            McpTransport::Http { url, headers } | McpTransport::Sse { url, headers } => {
-                entry.insert(
-                    "type".to_string(),
-                    serde_json::Value::String("remote".to_string()),
-                );
-                entry.insert("url".to_string(), serde_json::Value::String(url.clone()));
-                if !headers.is_empty() {
-                    entry.insert("headers".to_string(), string_map(headers));
-                }
-            }
-        }
-
-        mcp.insert(server.name.clone(), serde_json::Value::Object(entry));
-    }
-
-    mcp
-}
-
-/// Parse the OpenCode `mcp` object from an `opencode.json` value back into
-/// normalized servers. OpenCode's shape is unique enough that the generic
-/// [`parse_mcp_json`] reader cannot handle it: `type` is `local`/`remote`
-/// (not `stdio`/`http`), `command` is a single `[cmd, ...args]` array, and the
-/// env key is `environment`.
-pub fn parse_opencode_mcp_object(mcp: &serde_json::Value) -> Vec<NormalizedMcpServer> {
-    let Some(obj) = mcp.as_object() else {
-        return Vec::new();
-    };
-
-    let mut result = Vec::new();
-    for (name, value) in obj {
-        // `{ "enabled": false }` only toggles a server defined elsewhere (the
-        // global config); the merge keeps it as is.
-        if !crate::json_settings::is_expressible_server(value)
-            || crate::json_settings::is_disabled_server(value)
-        {
-            continue;
-        }
-        let Some(entry) = value.as_object() else {
-            continue;
-        };
-
-        let server_type = entry.get("type").and_then(|v| v.as_str());
-        let url = entry.get("url").and_then(|v| v.as_str());
-        let is_remote = server_type == Some("remote") || (server_type.is_none() && url.is_some());
-
-        let transport = if is_remote {
-            let headers = entry
-                .get("headers")
-                .and_then(|v| v.as_object())
-                .map(|h| {
-                    h.iter()
-                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                        .collect()
-                })
-                .unwrap_or_default();
-            McpTransport::Http {
-                url: url.unwrap_or("").to_string(),
-                headers,
-            }
-        } else {
-            // `command` is a single array whose first element is the executable.
-            let parts: Vec<String> = entry
-                .get("command")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let mut parts = parts.into_iter();
-            McpTransport::Stdio {
-                command: parts.next().unwrap_or_default(),
-                args: parts.collect(),
-            }
-        };
-
-        let env: BTreeMap<String, String> = entry
-            .get("environment")
-            .and_then(|v| v.as_object())
-            .map(|e| {
-                e.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        result.push(NormalizedMcpServer {
-            name: name.clone(),
-            transport,
-            env,
-        });
-    }
-
-    result
+    wrap_servers("servers", COPILOT_SHAPE.build(servers))
 }
 
 /// OpenCode's built-in agents: an `agent.<name>` entry for one of them
@@ -1594,87 +1625,9 @@ pub fn parse_opencode_agent_object(
     result
 }
 
-// Keys conforme may write into a server entry, per tool, across every
-// transport. When a server is re-synced these are regenerated; any other key
-// an existing entry carries is tool-specific configuration the user (or the
-// tool itself) added, and `json_settings::merge_server_entries` keeps it.
-// Enable/disable flags are listed so a sync re-enables the server, matching
-// the Codex merge: leaving it disabled would make `check` pass while the tool
-// still hides the server.
-pub const CLAUDE_OWNED_SERVER_KEYS: &[&str] = &["type", "command", "args", "env", "url", "headers"];
-pub const CURSOR_OWNED_SERVER_KEYS: &[&str] = &["type", "command", "args", "env", "url", "headers"];
-pub const KIRO_OWNED_SERVER_KEYS: &[&str] = &[
-    "type", "command", "args", "env", "url", "headers", "disabled",
-];
-pub const ZED_OWNED_SERVER_KEYS: &[&str] = &["command", "args", "env", "url", "headers", "enabled"];
-// `type` is listed because `gemini mcp add -t http|sse` writes one next to
-// `url`; left in place it would contradict the `httpUrl` conforme writes.
-pub const GEMINI_OWNED_SERVER_KEYS: &[&str] = &[
-    "type", "command", "args", "env", "url", "httpUrl", "headers",
-];
-pub const OPENCODE_OWNED_SERVER_KEYS: &[&str] = &[
-    "type",
-    "command",
-    "environment",
-    "url",
-    "headers",
-    "enabled",
-];
-pub const COPILOT_OWNED_SERVER_KEYS: &[&str] =
-    &["type", "command", "args", "env", "url", "headers"];
-pub const ZOOCODE_OWNED_SERVER_KEYS: &[&str] = &[
-    "type", "command", "args", "env", "url", "headers", "disabled",
-];
-pub const DEVIN_OWNED_SERVER_KEYS: &[&str] = &[
-    "command",
-    "args",
-    "env",
-    "url",
-    "serverUrl",
-    "transport",
-    "headers",
-    "disabled",
-];
-pub const ANTIGRAVITY_OWNED_SERVER_KEYS: &[&str] =
-    &["command", "args", "env", "url", "serverUrl", "headers"];
 /// Keys conforme writes into an OpenCode `agent.<name>` entry. Anything else
 /// (`permission`, `temperature`, `steps`, `color`, …) is the user's.
 pub const OPENCODE_OWNED_AGENT_KEYS: &[&str] = &["description", "mode", "model", "prompt"];
-
-/// Build the Zed `context_servers` object (not a full file — `.zed/settings.json`
-/// is merged by the adapter so user-authored settings such as theme and
-/// keybindings are preserved). Flat shape: stdio uses `command`/`args`/`env`,
-/// remote uses `url`/`headers`; no `type` field.
-pub fn build_zed_context_servers_object(
-    servers: &[NormalizedMcpServer],
-) -> serde_json::Map<String, serde_json::Value> {
-    build_servers_object(servers, &ZED_SHAPE)
-}
-
-/// Build the Gemini CLI `mcpServers` object (not a full file — `.gemini/settings.json`
-/// is merged by the adapter so user-authored settings are preserved).
-/// Gemini does NOT use a `type` field and uses `httpUrl` for HTTP servers.
-pub fn build_gemini_mcp_object(
-    servers: &[NormalizedMcpServer],
-) -> serde_json::Map<String, serde_json::Value> {
-    build_servers_object(servers, &GEMINI_SHAPE)
-}
-
-/// Build Devin's `mcpServers` object of `.devin/mcp_config.json` (merged by
-/// the adapter so per-server OAuth settings and `disabled` flags survive).
-pub fn build_devin_servers_object(
-    servers: &[NormalizedMcpServer],
-) -> serde_json::Map<String, serde_json::Value> {
-    build_servers_object(servers, &DEVIN_SHAPE)
-}
-
-/// Build Antigravity's `mcpServers` object of `.agents/mcp_config.json` (merged
-/// by the adapter so the user's own per-server settings survive).
-pub fn generate_antigravity_mcp(
-    servers: &[NormalizedMcpServer],
-) -> serde_json::Map<String, serde_json::Value> {
-    build_servers_object(servers, &ANTIGRAVITY_SHAPE)
-}
 
 /// Build the OpenCode `agent` object for `opencode.json` (merged by the adapter).
 pub fn build_opencode_agent_object(
@@ -1765,106 +1718,10 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
     // JSONC-tolerant: Zed, VS Code and Zoo Code settings may hold comments
     // and trailing commas.
     let root = crate::json_settings::parse_jsonc(content).context("failed to parse MCP JSON")?;
-
-    let servers_key = if root.get("mcpServers").is_some() {
-        "mcpServers"
-    } else if root.get("servers").is_some() {
-        "servers"
-    } else if root.get("context_servers").is_some() {
-        "context_servers"
-    } else {
-        return Ok(Vec::new());
-    };
-
-    let servers_obj = root[servers_key]
-        .as_object()
-        .unwrap_or(&serde_json::Map::new())
-        .clone();
-
-    let mut result = Vec::new();
-    for (name, value) in servers_obj {
-        // Zed extension servers and Claude SDK servers have no portable form,
-        // and a disabled server is not part of the config; the merge keeps
-        // them in place on the target side.
-        if !crate::json_settings::is_expressible_server(&value)
-            || crate::json_settings::is_disabled_server(&value)
-        {
-            continue;
-        }
-        let obj = value.as_object();
-        let Some(obj) = obj else { continue };
-
-        let transport_type = obj.get("type").and_then(|v| v.as_str());
-        // Devin declares its transport under `transport` (`http`, `sse`), not `type`.
-        let transport_key = obj.get("transport").and_then(|v| v.as_str());
-        let url_value = obj
-            .get("url")
-            .or_else(|| obj.get("httpUrl"))
-            .or_else(|| obj.get("serverUrl"))
-            .and_then(|v| v.as_str());
-        // An entry is HTTP if it declares a remote transport type OR — when no
-        // `type` is present — if it carries a URL rather than a command.
-        let is_http = matches!(
-            transport_type,
-            Some("http") | Some("https") | Some("sse") | Some("streamable-http") | Some("ws")
-        ) || (transport_type.is_none() && url_value.is_some());
-
-        let transport = if is_http {
-            let url = url_value.unwrap_or("").to_string();
-            let headers = obj
-                .get("headers")
-                .and_then(|v| v.as_object())
-                .map(|h| {
-                    h.iter()
-                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                        .collect()
-                })
-                .unwrap_or_default();
-            // SSE servers declare `sse` as their type (Claude, Gemini) or their
-            // transport (Devin); every other remote entry stays HTTP.
-            let is_sse = url_value.is_some()
-                && (transport_type == Some("sse") || transport_key == Some("sse"));
-            if is_sse {
-                McpTransport::Sse { url, headers }
-            } else {
-                McpTransport::Http { url, headers }
-            }
-        } else {
-            let command = obj
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let args = obj
-                .get("args")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            McpTransport::Stdio { command, args }
-        };
-
-        let env: BTreeMap<String, String> = obj
-            .get("env")
-            .and_then(|v| v.as_object())
-            .map(|e| {
-                e.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        result.push(NormalizedMcpServer {
-            name,
-            transport,
-            env,
-        });
-    }
-
-    Ok(result)
+    let servers = ["mcpServers", "servers", "context_servers"]
+        .iter()
+        .find_map(|key| root.get(*key));
+    Ok(servers.map(parse_servers).unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -2548,7 +2405,7 @@ callback_port = 5555
                 env,
             },
         ];
-        let servers = build_zoocode_servers_object(&servers);
+        let servers = ZOOCODE_SHAPE.build(&servers);
         assert!(servers["remote"].get("env").is_none());
         assert_eq!(servers["local"]["env"]["TOKEN"], "x");
     }
@@ -2621,7 +2478,7 @@ callback_port = 5555
             "github": {"enabled": false},
             "fs": {"type": "local", "command": ["npx", "-y", "fs"]}
         });
-        let parsed = parse_opencode_mcp_object(&mcp);
+        let parsed = OPENCODE_SHAPE.read(&mcp);
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].name, "fs");
     }
@@ -2716,7 +2573,7 @@ callback_port = 5555
             },
             env: BTreeMap::from([("API_KEY".to_string(), "secret".to_string())]),
         }];
-        let mcp = build_opencode_mcp_object(&servers);
+        let mcp = OPENCODE_SHAPE.build(&servers);
         let entry = mcp.get("filesystem").unwrap().as_object().unwrap();
         assert_eq!(entry.get("type").unwrap().as_str().unwrap(), "local");
         let command = entry.get("command").unwrap().as_array().unwrap();
@@ -2738,7 +2595,7 @@ callback_port = 5555
             },
             env: BTreeMap::new(),
         }];
-        let mcp = build_opencode_mcp_object(&servers);
+        let mcp = OPENCODE_SHAPE.build(&servers);
         let entry = mcp.get("api").unwrap().as_object().unwrap();
         assert_eq!(entry.get("type").unwrap().as_str().unwrap(), "remote");
         assert_eq!(
@@ -2784,7 +2641,7 @@ callback_port = 5555
             },
             env: BTreeMap::new(),
         }];
-        let obj = build_zed_context_servers_object(&servers);
+        let obj = ZED_SHAPE.build(&servers);
         let result =
             serde_json::to_string_pretty(&serde_json::json!({ "context_servers": obj })).unwrap();
         assert!(result.contains("\"context_servers\""));
@@ -2805,7 +2662,7 @@ callback_port = 5555
             },
             env: BTreeMap::new(),
         }];
-        let obj = build_gemini_mcp_object(&servers);
+        let obj = GEMINI_SHAPE.build(&servers);
         let result =
             serde_json::to_string_pretty(&serde_json::json!({ "mcpServers": obj })).unwrap();
         assert!(result.contains("\"mcpServers\""));
@@ -2825,7 +2682,7 @@ callback_port = 5555
             },
             env: BTreeMap::new(),
         }];
-        let obj = build_gemini_mcp_object(&servers);
+        let obj = GEMINI_SHAPE.build(&servers);
         let result =
             serde_json::to_string_pretty(&serde_json::json!({ "mcpServers": obj })).unwrap();
         // Gemini uses "httpUrl" not "url"
@@ -2856,8 +2713,8 @@ callback_port = 5555
                 env: BTreeMap::new(),
             },
         ];
-        let obj = build_opencode_mcp_object(&servers);
-        let parsed = parse_opencode_mcp_object(&serde_json::Value::Object(obj));
+        let obj = OPENCODE_SHAPE.build(&servers);
+        let parsed = OPENCODE_SHAPE.read(&serde_json::Value::Object(obj));
         assert_eq!(parsed.len(), 2);
 
         let fs = parsed.iter().find(|s| s.name == "fs").unwrap();
@@ -2942,27 +2799,24 @@ callback_port = 5555
         let servers = vec![remote_with_env("https://example.com/mcp")];
         // Documented for stdio only (or rejected) on these tools.
         for (tool, map) in [
-            ("claude", build_claude_servers_object(&servers)),
-            ("cursor", build_cursor_servers_object(&servers)),
-            ("copilot", build_copilot_servers_object(&servers)),
-            ("zoocode", build_zoocode_servers_object(&servers)),
-            ("zed", build_zed_context_servers_object(&servers)),
-            ("devin", build_devin_servers_object(&servers)),
+            ("claude", CLAUDE_SHAPE.build(&servers)),
+            ("cursor", CURSOR_SHAPE.build(&servers)),
+            ("copilot", COPILOT_SHAPE.build(&servers)),
+            ("zoocode", ZOOCODE_SHAPE.build(&servers)),
+            ("zed", ZED_SHAPE.build(&servers)),
+            ("devin", DEVIN_SHAPE.build(&servers)),
         ] {
             assert!(map["remote"].get("env").is_none(), "{tool}: {map:?}");
         }
-        let opencode = build_opencode_mcp_object(&servers);
+        let opencode = OPENCODE_SHAPE.build(&servers);
         assert!(opencode["remote"].get("environment").is_none());
         // Kiro documents `env` on remote servers.
-        assert_eq!(
-            build_kiro_servers_object(&servers)["remote"]["env"]["X"],
-            "1"
-        );
+        assert_eq!(KIRO_SHAPE.build(&servers)["remote"]["env"]["X"], "1");
     }
 
     #[test]
     fn test_cursor_remote_entry_has_no_type() {
-        let map = build_cursor_servers_object(&[remote_with_env("https://e.x/mcp")]);
+        let map = CURSOR_SHAPE.build(&[remote_with_env("https://e.x/mcp")]);
         assert!(map["remote"].get("type").is_none(), "{map:?}");
         assert_eq!(map["remote"]["url"], "https://e.x/mcp");
     }
@@ -2973,35 +2827,29 @@ callback_port = 5555
             map["remote"]["headers"]["Authorization"].clone()
         };
         let servers = vec![remote_with_env("${API_URL:-https://default}/mcp")];
+        assert_eq!(header(&CLAUDE_SHAPE.build(&servers)), "Bearer ${TOKEN}");
         assert_eq!(
-            header(&build_claude_servers_object(&servers)),
-            "Bearer ${TOKEN}"
-        );
-        assert_eq!(
-            build_claude_servers_object(&servers)["remote"]["url"],
+            CLAUDE_SHAPE.build(&servers)["remote"]["url"],
             "${API_URL:-https://default}/mcp"
         );
         for map in [
-            build_cursor_servers_object(&servers),
-            build_copilot_servers_object(&servers),
-            build_zoocode_servers_object(&servers),
-            build_devin_servers_object(&servers),
+            CURSOR_SHAPE.build(&servers),
+            COPILOT_SHAPE.build(&servers),
+            ZOOCODE_SHAPE.build(&servers),
+            DEVIN_SHAPE.build(&servers),
         ] {
             assert_eq!(header(&map), "Bearer ${env:TOKEN}");
             assert_eq!(map["remote"]["url"], "${env:API_URL}/mcp");
         }
-        let kiro = build_kiro_servers_object(&servers);
+        let kiro = KIRO_SHAPE.build(&servers);
         assert_eq!(kiro["remote"]["url"], "${API_URL}/mcp");
-        let opencode = build_opencode_mcp_object(&servers);
+        let opencode = OPENCODE_SHAPE.build(&servers);
         assert_eq!(
             opencode["remote"]["headers"]["Authorization"],
             "Bearer {env:TOKEN}"
         );
         // Zed expands nothing: the text is copied as is.
-        assert_eq!(
-            header(&build_zed_context_servers_object(&servers)),
-            "Bearer ${TOKEN}"
-        );
+        assert_eq!(header(&ZED_SHAPE.build(&servers)), "Bearer ${TOKEN}");
     }
 
     #[test]
@@ -3048,11 +2896,11 @@ callback_port = 5555
 
     #[test]
     fn test_sync_resets_flags_that_would_contradict_the_synced_entry() {
-        let merge = |existing: serde_json::Value, generated, owned| {
+        let merge = |existing: serde_json::Value, generated, owned: Vec<&str>| {
             serde_json::Value::Object(crate::json_settings::merge_server_entries(
                 Some(&existing),
                 generated,
-                owned,
+                &owned,
             ))
         };
         let server = vec![remote_with_env("https://e.x/mcp")];
@@ -3060,8 +2908,8 @@ callback_port = 5555
         // server while `check` reports everything in sync.
         let zed = merge(
             serde_json::json!({"remote": {"enabled": false, "timeout": 5}}),
-            build_zed_context_servers_object(&server),
-            ZED_OWNED_SERVER_KEYS,
+            ZED_SHAPE.build(&server),
+            ZED_SHAPE.owned_keys(),
         );
         assert!(zed["remote"].get("enabled").is_none());
         assert_eq!(zed["remote"]["timeout"], 5);
@@ -3069,8 +2917,8 @@ callback_port = 5555
         // survive beside the `httpUrl` conforme writes.
         let gemini = merge(
             serde_json::json!({"remote": {"type": "sse", "url": "https://old", "trust": true}}),
-            build_gemini_mcp_object(&server),
-            GEMINI_OWNED_SERVER_KEYS,
+            GEMINI_SHAPE.build(&server),
+            GEMINI_SHAPE.owned_keys(),
         );
         assert!(gemini["remote"].get("type").is_none());
         assert!(gemini["remote"].get("url").is_none());
@@ -3116,7 +2964,7 @@ callback_port = 5555
             env: BTreeMap::new(),
         };
         let build = |shape: &ServerShape| {
-            let obj = build_servers_object(std::slice::from_ref(&server), shape);
+            let obj = shape.build(std::slice::from_ref(&server));
             obj.get("legacy").cloned().expect("legacy entry")
         };
         let with_headers =
@@ -3143,7 +2991,7 @@ callback_port = 5555
             },
             ..server.clone()
         };
-        let zed_http = build_servers_object(std::slice::from_ref(&http), &ZED_SHAPE);
+        let zed_http = ZED_SHAPE.build(std::slice::from_ref(&http));
         assert_eq!(build(&ZED_SHAPE), zed_http["legacy"]);
     }
 
@@ -3176,7 +3024,7 @@ callback_port = 5555
                 env: BTreeMap::new(),
             },
         ];
-        let obj = generate_antigravity_mcp(&servers);
+        let obj = ANTIGRAVITY_SHAPE.build(&servers);
         assert_eq!(
             obj["fs"],
             json!({"command": "npx", "args": ["-y", "@mcp/fs"], "env": {"ROOT": "/tmp"}})

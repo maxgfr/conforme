@@ -189,10 +189,8 @@ impl AiToolAdapter for DevinAdapter {
         let mut mcp_servers = Vec::new();
         let mcp_path = mcp_path(project_root);
         if mcp_path.exists() {
-            mcp_servers = crate::mcp::canonicalize_env_refs(
-                crate::mcp::parse_mcp_json(&crate::config::read_text(&mcp_path)?)?,
-                crate::mcp::EnvRefStyle::EnvColon,
-            );
+            mcp_servers =
+                crate::mcp::DEVIN_SHAPE.read_file(&crate::config::read_text(&mcp_path)?)?;
         }
 
         Ok(NormalizedConfig {
@@ -229,9 +227,10 @@ impl AiToolAdapter for DevinAdapter {
             files.push((rules_dir.join(filename), content));
         }
 
-        files.extend(crate::skills::generate_devin_skills(
-            &devin_dir(project_root).join("skills"),
+        files.extend(crate::skills::generate_skills(
+            project_root,
             &config.skills,
+            &crate::skills::DEVIN_SKILLS,
         )?);
 
         // Devin Local reads project MCP servers from `.devin/mcp_config.json`
@@ -240,8 +239,8 @@ impl AiToolAdapter for DevinAdapter {
         files.extend(crate::json_settings::server_settings_file(
             &mcp_path(project_root),
             "mcpServers",
-            crate::mcp::build_devin_servers_object(&config.mcp_servers),
-            crate::mcp::DEVIN_OWNED_SERVER_KEYS,
+            crate::mcp::DEVIN_SHAPE.build(&config.mcp_servers),
+            &crate::mcp::DEVIN_SHAPE.owned_keys(),
             &[],
         )?);
 

@@ -1,7 +1,6 @@
 pub mod adapters;
 pub mod config;
 pub mod frontmatter;
-pub mod hash;
 pub mod json_settings;
 pub mod markdown;
 pub mod mcp;

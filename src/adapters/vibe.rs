@@ -111,22 +111,21 @@ impl AiToolAdapter for VibeAdapter {
         }
         for server in &config.mcp_servers {
             // A stdio server gets only the variables its `env` sets, verbatim;
-            // only a bearer token is read from a variable (`api_key_env`).
-            let unresolved = match &server.transport {
-                crate::config::McpTransport::Stdio { command, args } => std::iter::once(command)
-                    .chain(args)
-                    .chain(server.env.values())
-                    .any(|s| s.contains("${")),
-                crate::config::McpTransport::Http { url, headers }
-                | crate::config::McpTransport::Sse { url, headers } => {
-                    url.contains("${") || {
-                        let api_key = crate::mcp::vibe_api_key(headers);
-                        headers.iter().any(|(key, value)| {
-                            value.contains("${") && api_key.as_ref().is_none_or(|k| k.header != key)
-                        })
-                    }
+            // only one header is read from a variable (`api_key_env`).
+            let api_key = match &server.transport {
+                crate::config::McpTransport::Stdio { .. } => None,
+                crate::config::McpTransport::Http { headers, .. }
+                | crate::config::McpTransport::Sse { headers, .. } => {
+                    crate::mcp::vibe_api_key(headers)
                 }
             };
+            let unresolved = crate::mcp::server_strings(server)
+                .iter()
+                .any(|(key, value)| {
+                    value.contains("${")
+                        && !(key.is_some()
+                            && api_key.as_ref().is_some_and(|k| Some(k.header) == *key))
+                });
             if unresolved {
                 warnings.push(format!(
                     "MCP server {}: Vibe resolves no ${{VAR}} there and passes it as written; \
@@ -194,7 +193,11 @@ impl AiToolAdapter for VibeAdapter {
         config: &NormalizedConfig,
     ) -> Result<Vec<(PathBuf, String)>> {
         // Vibe reads AGENTS.md itself: no instruction file is written.
-        let mut files = crate::skills::generate_vibe_skills(project_root, &config.skills)?;
+        let mut files = crate::skills::generate_skills(
+            project_root,
+            &config.skills,
+            &crate::skills::VIBE_SKILLS,
+        )?;
         let agents: Vec<_> = config
             .agents
             .iter()
