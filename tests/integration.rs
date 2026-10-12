@@ -4331,3 +4331,46 @@ fn test_dir_status_into_a_closed_pipe_does_not_panic() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("panicked"), "{stderr}");
 }
+
+#[test]
+fn test_migrate_leaves_no_empty_directory_behind() {
+    // A source directory already empty before the migration (a rules
+    // directory an earlier sync emptied) kept `.claude/` in place, so Claude
+    // Code stayed detected and the next sync wrote its files back.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::create_dir_all(root.join(".claude/skills/deploy/scripts")).unwrap();
+    fs::create_dir_all(root.join(".claude/skills/review")).unwrap();
+    fs::create_dir_all(root.join(".claude/agents")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Use pnpm.\n").unwrap();
+    fs::write(
+        root.join(".claude/skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy\n---\n\nRun scripts/run.sh.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".claude/skills/deploy/scripts/run.sh"),
+        "echo hi\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".claude/skills/review/SKILL.md"),
+        "---\nname: review\ndescription: Review\n---\n\nReview.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".claude/agents/reviewer.md"),
+        "---\nname: reviewer\ndescription: Reviews\n---\n\nReview.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    run(
+        root,
+        &["migrate", "--source", "claude", "--output", "cursor"],
+    )
+    .success();
+    assert!(!root.join(".claude").exists());
+    run(root, &["sync", "--from", "cursor"]).success();
+    assert!(!root.join(".claude").exists());
+}

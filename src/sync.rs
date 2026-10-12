@@ -1166,7 +1166,7 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
                 removed_files.push(path.clone());
             }
         }
-        prune_empty_parents(project_root, &removed_files);
+        prune_empty_parents(project_root, &removed_files, &[]);
 
         if !removed_files.is_empty() {
             any_removed = true;
@@ -1233,18 +1233,29 @@ fn target_differences(
     Ok((output, differing))
 }
 
-/// Remove the directories that deleting `removed` left empty, up to (not
-/// including) the project root: a directory left behind would keep the tool
-/// detected (`.cursor/`), so the next sync would write everything back.
-fn prune_empty_parents(project_root: &Path, removed: &[std::path::PathBuf]) {
-    for path in removed {
-        for dir in path.ancestors().skip(1) {
-            if dir == project_root
-                || !dir.starts_with(project_root)
-                || std::fs::remove_dir(dir).is_err()
-            {
-                break;
-            }
+/// Remove the directories that deleting `removed` left empty, and the empty
+/// directories among `dirs` (a migrated tool's own, emptied by an earlier
+/// sync), with every parent they leave empty, up to (not including) the
+/// project root: a directory left behind would keep the tool detected
+/// (`.cursor/`), so the next sync would write everything back. Deepest
+/// first, so the order of the paths does not matter.
+fn prune_empty_parents(
+    project_root: &Path,
+    removed: &[std::path::PathBuf],
+    dirs: &[std::path::PathBuf],
+) {
+    let mut candidates: Vec<&Path> = removed
+        .iter()
+        .flat_map(|path| path.ancestors().skip(1))
+        .chain(dirs.iter().flat_map(|dir| dir.ancestors()))
+        .filter(|dir| *dir != project_root && dir.starts_with(project_root))
+        .collect();
+    candidates.sort_by_key(|dir| std::cmp::Reverse(dir.components().count()));
+    candidates.dedup();
+    for dir in candidates {
+        if adapters::is_real_dir(dir) {
+            // Fails, as it should, while the directory holds anything.
+            std::fs::remove_dir(dir).ok();
         }
     }
 }
@@ -1852,7 +1863,11 @@ pub fn run_migrate(
             }
         }
 
-        prune_empty_parents(project_root, &removed_paths);
+        let source_dirs: Vec<std::path::PathBuf> = source_managed_dirs
+            .iter()
+            .map(|dir| dir.path.clone())
+            .collect();
+        prune_empty_parents(project_root, &removed_paths, &source_dirs);
         if !removed_paths.is_empty() {
             any_removed = true;
             println!("{} {}:", "x".red(), source_adapter.name().bold());
