@@ -43,7 +43,7 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - Capabilities: skills, agents, MCP
 - No activation modes; agents are written to and read from `.codex/agents/*.toml` (see Notes)
 - Generates and reads project-scoped MCP config in `.codex/config.toml`
-- Atomically merges MCP tables without replacing unrelated Codex settings, comments, target-only servers, or Codex-specific server options
+- Atomically merges MCP tables without replacing unrelated Codex settings, comments, or Codex-specific server options; a server that left the source is dropped, one with `enabled = false` is kept
 - Preserves the shared `.codex/config.toml` during `remove codex` and `migrate --source codex` instead of deleting unrelated settings
 - Watches the `.codex/` directory when Codex is configured as the source, including atomic saves and late creation of `config.toml`
 - Reads AGENTS.md natively

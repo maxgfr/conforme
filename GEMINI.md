@@ -239,9 +239,9 @@ Review for bugs.
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; SSE becomes streamable HTTP (warned); merged into existing settings (preserves theme/keybindings/etc. and extension servers configured only via `settings`) |
 | Gemini | `mcpServers` (inside `.gemini/settings.json`) | `httpUrl` for HTTP, `url` + `type: "sse"` for SSE; merged into existing settings |
 | Kilo Code | `mcp` (inside `.kilo/kilo.jsonc` or the existing `kilo.json(c)`) | OpenCode shape (SSE is `remote`); no variable reference (Kilo refuses `{env:VAR}` in a project config): `NAME=${NAME}` dropped, other `${VAR}` written as is with a warning; merged |
-| Mistral Vibe | `[[mcp_servers]]` (inside `.vibe/config.toml`) | TOML; `transport` stdio / streamable-http (SSE becomes streamable-http, warned); `Bearer ${VAR}` → static `auth.api_key_env`; other `${VAR}` written as is with a warning; atomic merge keeps settings, OAuth auth and target-only servers |
+| Mistral Vibe | `[[mcp_servers]]` (inside `.vibe/config.toml`) | TOML; `transport` stdio / streamable-http (SSE becomes streamable-http, warned); `Bearer ${VAR}` → static `auth.api_key_env`; other `${VAR}` written as is with a warning; atomic merge keeps settings and OAuth auth; a server that left the source is dropped, a `disabled` one kept |
 | DeepSeek Harness | _(none)_ | MCP is a user-level `cordis.patch.yml` plugin entry under `$DSH_HOME`; nothing project-scoped is generated |
-| Codex | `[mcp_servers.<name>]` (inside `.codex/config.toml`) | TOML; SSE becomes streamable HTTP (warned); no `${VAR}` expansion (mapping under mcp.rs above); atomic merge preserves unrelated settings, comments, target-only servers, and Codex-specific options |
+| Codex | `[mcp_servers.<name>]` (inside `.codex/config.toml`) | TOML; SSE becomes streamable HTTP (warned); no `${VAR}` expansion (mapping under mcp.rs above); atomic merge preserves unrelated settings, comments and Codex-specific options; a server that left the source is dropped, an `enabled = false` one kept |
 | Antigravity CLI | `mcpServers` (`.agents/mcp_config.json`) | No `type`; remote `serverUrl` + `headers` (SSE uses the same key, read back as HTTP); `${VAR}` written as is (expansion unconfirmed, warned); merged |
 
 ### Rules-directory discovery

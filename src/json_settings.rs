@@ -50,6 +50,10 @@ pub fn load(path: &Path) -> Result<Option<SettingsFile>> {
     }
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
+    let text = text
+        .strip_prefix('\u{feff}')
+        .map(str::to_string)
+        .unwrap_or(text);
     if text.trim().is_empty() {
         return Ok(Some(SettingsFile {
             text,
@@ -62,6 +66,12 @@ pub fn load(path: &Path) -> Result<Option<SettingsFile>> {
             path.display()
         )
     })?;
+    // A file holding only comments is an empty object.
+    let value = if value.is_null() {
+        Value::Object(Map::new())
+    } else {
+        value
+    };
     if !value.is_object() {
         bail!(
             "{} is not a JSON object; conforme will not overwrite it",
@@ -106,17 +116,12 @@ pub fn render(
     set: &[(&str, Value)],
     defaults: &[(&str, Value)],
 ) -> Result<String> {
-    // Plain JSON (including every file conforme created) is merged and
-    // pretty-printed with serde, so output stays byte-stable across syncs.
-    // Only a file that needs JSONC (comments, trailing commas) is edited in
-    // place, which is what keeps those comments.
+    // A new (or empty) file is pretty-printed with serde. An existing one is
+    // edited in place, which keeps its key order, indentation and comments.
     let file = match existing {
         Some(f) if !f.text.trim().is_empty() => f,
         _ => return render_plain(Map::new(), set, defaults),
     };
-    if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&file.text) {
-        return render_plain(map, set, defaults);
-    }
 
     let root = CstRootNode::parse(&file.text, &ParseOptions::default())
         .map_err(|e| anyhow::anyhow!("failed to parse settings JSON: {e}"))?;
@@ -127,6 +132,10 @@ pub fn render(
         }
     }
     for (key, value) in set {
+        // An unchanged value keeps its text, so a second sync is byte-stable.
+        if file.value.get(*key) == Some(value) {
+            continue;
+        }
         match object.get(key) {
             Some(prop) => prop.set_value(to_cst(value)),
             None => {
@@ -166,7 +175,9 @@ fn render_plain(
 /// existing entry carries is tool-specific configuration and is kept.
 ///
 /// An existing entry no source can express (see [`is_expressible_server`]:
-/// a Zed extension server, a Claude `type: "sdk"` server) is kept as is.
+/// a Zed extension server, a Claude `type: "sdk"` server) is kept as is, and
+/// so is a disabled one the source does not define ([`is_disabled_server`]):
+/// sources skip their disabled servers, so its absence says nothing.
 pub fn merge_server_entries(
     existing: Option<&Value>,
     generated: Map<String, Value>,
@@ -176,7 +187,10 @@ pub fn merge_server_entries(
     let kept: Vec<(String, Value)> = existing
         .into_iter()
         .flatten()
-        .filter(|(name, entry)| !generated.contains_key(*name) && !is_expressible_server(entry))
+        .filter(|(name, entry)| {
+            !generated.contains_key(*name)
+                && (!is_expressible_server(entry) || is_disabled_server(entry))
+        })
         .map(|(name, entry)| (name.clone(), entry.clone()))
         .collect();
     let mut merged: Map<String, Value> = generated
@@ -213,9 +227,24 @@ pub fn is_expressible_server(entry: &Value) -> bool {
     if obj.get("type").and_then(Value::as_str) == Some("sdk") {
         return false;
     }
-    ["command", "url", "httpUrl", "serverUrl"]
-        .iter()
-        .any(|key| obj.contains_key(*key))
+    // A string command, or OpenCode's `[cmd, ...args]`; Zed's legacy
+    // `command: { path, args }` object is not one.
+    let command = obj
+        .get("command")
+        .is_some_and(|c| c.is_string() || c.is_array());
+    command
+        || ["url", "httpUrl", "serverUrl"]
+            .iter()
+            .any(|key| obj.get(*key).is_some_and(Value::is_string))
+}
+
+/// Whether a server entry is turned off (`disabled: true`, as Kiro, Zoo Code,
+/// Devin and Claude Code write it, or `enabled: false`, as Zed and OpenCode
+/// do). A disabled server is not read into the source, and a target's own
+/// disabled entry is kept.
+pub fn is_disabled_server(entry: &Value) -> bool {
+    entry.get("disabled").and_then(Value::as_bool) == Some(true)
+        || entry.get("enabled").and_then(Value::as_bool) == Some(false)
 }
 
 fn to_cst(value: &Value) -> CstInputValue {

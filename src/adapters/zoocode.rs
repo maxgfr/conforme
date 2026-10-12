@@ -113,6 +113,12 @@ impl AiToolAdapter for ZooCodeAdapter {
                     server.name
                 )
             })
+            .chain(crate::mcp::env_ref_losses(
+                &config.mcp_servers,
+                crate::mcp::EnvRefStyle::EnvColon,
+                true,
+                "Zoo Code",
+            ))
             .collect()
     }
 

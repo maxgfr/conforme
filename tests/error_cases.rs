@@ -707,3 +707,173 @@ Run cdk deploy.
     let mcp = fs::read_to_string(dir.path().join(".kiro/settings/mcp.json")).unwrap();
     assert!(mcp.contains("filesystem"));
 }
+
+// ===== Audit pass 3: one MCP server rule =====
+
+#[test]
+fn test_disabled_source_server_is_not_synced() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".kiro/settings")).unwrap();
+    fs::write(
+        root.join(".kiro/settings/mcp.json"),
+        r#"{"mcpServers":{"off":{"command":"x","disabled":true},"on":{"command":"y"}}}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync", "--from", "kiro"])
+        .assert()
+        .success();
+    let cursor = fs::read_to_string(root.join(".cursor/mcp.json")).unwrap();
+    assert!(cursor.contains("\"on\""), "{cursor}");
+    assert!(!cursor.contains("\"off\""), "{cursor}");
+}
+
+#[test]
+fn test_disabled_target_server_is_kept() {
+    let agents_md = "# I\n\n## MCP: on\n<!-- command: y -->\n";
+    let dir = create_project_with_tools(agents_md, &["cursor"]);
+    let root = dir.path();
+    fs::write(
+        root.join(".cursor/mcp.json"),
+        r#"{"mcpServers":{"old":{"command":"z","disabled":true}}}"#,
+    )
+    .unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    let cursor = fs::read_to_string(root.join(".cursor/mcp.json")).unwrap();
+    assert!(cursor.contains("\"old\""), "{cursor}");
+    assert!(cursor.contains("\"on\""), "{cursor}");
+}
+
+#[test]
+fn test_codex_and_vibe_drop_a_server_that_left_the_source() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(
+        root.join(".mcp.json"),
+        r#"{"mcpServers":{"local":{"command":"x"},"remote":{"type":"http","url":"https://example.com/mcp"}}}"#,
+    )
+    .unwrap();
+    fs::write(root.join("CLAUDE.md"), "Be careful.\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::create_dir_all(root.join(".vibe")).unwrap();
+    let r = root.to_str().unwrap();
+    conforme().args(["-C", r, "sync"]).assert().success();
+    // A disabled server of the target's own stays.
+    let codex_path = root.join(".codex/config.toml");
+    let codex = fs::read_to_string(&codex_path).unwrap();
+    fs::write(
+        &codex_path,
+        format!("{codex}\n[mcp_servers.mine]\ncommand = \"m\"\nenabled = false\n"),
+    )
+    .unwrap();
+    fs::write(
+        root.join(".mcp.json"),
+        r#"{"mcpServers":{"local":{"command":"x"}}}"#,
+    )
+    .unwrap();
+    conforme().args(["-C", r, "check"]).assert().failure();
+    conforme().args(["-C", r, "sync"]).assert().success();
+    let codex = fs::read_to_string(&codex_path).unwrap();
+    assert!(!codex.contains("remote"), "{codex}");
+    assert!(codex.contains("[mcp_servers.mine]"), "{codex}");
+    let vibe = fs::read_to_string(root.join(".vibe/config.toml")).unwrap();
+    assert!(!vibe.contains("remote"), "{vibe}");
+    assert!(vibe.contains("local"), "{vibe}");
+    conforme().args(["-C", r, "check"]).assert().success();
+}
+
+#[test]
+fn test_json_settings_existing_file_keeps_its_layout() {
+    let agents_md = "# I\n\n## MCP: on\n<!-- command: y -->\n";
+    let dir = create_project_with_tools(agents_md, &["gemini"]);
+    let root = dir.path();
+    let original = "{\n    \"theme\": \"dark\",\n    \"context\": {\n        \"fileName\": [\"GEMINI.md\"]\n    }\n}\n";
+    fs::write(root.join(".gemini/settings.json"), original).unwrap();
+    let r = root.to_str().unwrap();
+    conforme().args(["-C", r, "sync"]).assert().success();
+    let first = fs::read_to_string(root.join(".gemini/settings.json")).unwrap();
+    assert!(
+        first.starts_with("{\n    \"theme\": \"dark\",\n    \"context\""),
+        "{first}"
+    );
+    conforme()
+        .args(["-C", r, "sync"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("All configs already in sync."));
+    assert_eq!(
+        fs::read_to_string(root.join(".gemini/settings.json")).unwrap(),
+        first
+    );
+}
+
+#[test]
+fn test_json_settings_bom_and_comments_only_file() {
+    let agents_md = "# I\n\n## MCP: on\n<!-- command: y -->\n";
+    let dir = create_project_with_tools(agents_md, &["cursor"]);
+    let root = dir.path();
+    fs::write(root.join(".cursor/mcp.json"), "// my servers\n").unwrap();
+    fs::create_dir_all(root.join(".vscode")).unwrap();
+    let r = root.to_str().unwrap();
+    conforme().args(["-C", r, "sync"]).assert().success();
+    let cursor = fs::read_to_string(root.join(".cursor/mcp.json")).unwrap();
+    assert!(cursor.contains("\"on\""), "{cursor}");
+
+    fs::write(
+        root.join(".cursor/mcp.json"),
+        "\u{feff}{\"mcpServers\":{}}\n",
+    )
+    .unwrap();
+    conforme().args(["-C", r, "sync"]).assert().success();
+    let cursor = fs::read_to_string(root.join(".cursor/mcp.json")).unwrap();
+    assert!(cursor.contains("\"on\""), "{cursor}");
+}
+
+#[test]
+fn test_vibe_inline_empty_mcp_servers_and_exact_header_ref() {
+    let agents_md = "# I\n\n## MCP: api\n<!-- url: https://example.com/mcp -->\n<!-- headers: X-Key=${KEY} -->\n";
+    let dir = create_project_with_tools(agents_md, &["vibe"]);
+    let root = dir.path();
+    fs::write(root.join(".vibe/config.toml"), "mcp_servers = []\n").unwrap();
+    let r = root.to_str().unwrap();
+    conforme()
+        .args(["-C", r, "sync"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("${KEY}").not());
+    let vibe = fs::read_to_string(root.join(".vibe/config.toml")).unwrap();
+    assert!(vibe.contains("api_key_env = \"KEY\""), "{vibe}");
+    assert!(vibe.contains("api_key_header = \"X-Key\""), "{vibe}");
+    assert!(vibe.contains("api_key_format = \"{token}\""), "{vibe}");
+    conforme()
+        .args(["-C", r, "sync", "--from", "vibe", "--dry-run"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_zed_legacy_command_object_is_kept() {
+    let agents_md = "# I\n\n## MCP: on\n<!-- command: y -->\n";
+    let dir = create_project_with_tools(agents_md, &["zed"]);
+    let root = dir.path();
+    fs::create_dir_all(root.join(".zed")).unwrap();
+    fs::write(
+        root.join(".zed/settings.json"),
+        r#"{"context_servers":{"legacy":{"command":{"path":"x","args":[]}}}}"#,
+    )
+    .unwrap();
+    let r = root.to_str().unwrap();
+    conforme().args(["-C", r, "sync"]).assert().success();
+    let zed = fs::read_to_string(root.join(".zed/settings.json")).unwrap();
+    assert!(zed.contains("\"legacy\""), "{zed}");
+    conforme()
+        .args(["-C", r, "sync", "--from", "zed"])
+        .assert()
+        .success();
+}

@@ -816,7 +816,8 @@ fn test_sync_from_claude_mcp_to_codex() {
     .unwrap();
     fs::write(
         dir.path().join(".codex/config.toml"),
-        "# Preserve me\nmodel = \"gpt-test\"\n\n[mcp_servers.local]\nurl = \"http://localhost:3000/mcp\"\n",
+        // The source decides which servers exist; a disabled one of Codex's own stays.
+        "# Preserve me\nmodel = \"gpt-test\"\n\n[mcp_servers.local]\nurl = \"http://localhost:3000/mcp\"\nenabled = false\n",
     )
     .unwrap();
 

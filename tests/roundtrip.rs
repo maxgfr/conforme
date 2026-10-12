@@ -411,7 +411,9 @@ fn test_codex_config_merge_preserves_user_settings() {
     fs::create_dir_all(dir.path().join(".codex")).unwrap();
     fs::write(
         dir.path().join(".codex/config.toml"),
-        "# Keep this comment\nmodel = \"gpt-test\"\n\n[mcp_servers.local]\nurl = \"http://localhost:3000/mcp\"\nstartup_timeout_sec = 20\n",
+        // A disabled server of Codex's own is kept (the source decides which
+        // enabled servers exist), its tuning keys with it.
+        "# Keep this comment\nmodel = \"gpt-test\"\n\n[mcp_servers.local]\nurl = \"http://localhost:3000/mcp\"\nstartup_timeout_sec = 20\nenabled = false\n",
     )
     .unwrap();
 
@@ -1868,4 +1870,43 @@ fn test_roundtrip_non_utf8_names_do_not_panic() {
     conforme::adapters::cursor::CursorAdapter
         .read(root)
         .unwrap();
+}
+
+#[test]
+fn test_env_ref_losses_are_warned_about() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    let config = |value: &str| NormalizedConfig {
+        mcp_servers: vec![NormalizedMcpServer {
+            name: "s".into(),
+            transport: McpTransport::Stdio {
+                command: "npx".into(),
+                args: vec![value.to_string()],
+            },
+            env: Default::default(),
+        }],
+        ..Default::default()
+    };
+    let with_default = config("${K:-def}");
+    let editor = config("${workspaceFolder}/x");
+    let cursor = conforme::adapters::cursor::CursorAdapter;
+    let opencode = conforme::adapters::opencode::OpenCodeAdapter;
+    let kiro = conforme::adapters::kiro::KiroAdapter;
+    let gemini = conforme::adapters::gemini::GeminiAdapter;
+    assert_eq!(cursor.warnings(root, &with_default).len(), 1);
+    assert_eq!(opencode.warnings(root, &with_default).len(), 1);
+    assert_eq!(kiro.warnings(root, &with_default).len(), 1);
+    assert!(gemini.warnings(root, &with_default).is_empty());
+    assert!(cursor.warnings(root, &editor).is_empty());
+    assert_eq!(opencode.warnings(root, &editor).len(), 1);
+    assert_eq!(kiro.warnings(root, &editor).len(), 1);
+    assert_eq!(gemini.warnings(root, &editor).len(), 1);
+    // OpenCode keeps an editor variable verbatim.
+    let files = opencode.generate(root, &editor).unwrap();
+    let json = &files
+        .iter()
+        .find(|(p, _)| p.ends_with("opencode.json"))
+        .unwrap()
+        .1;
+    assert!(json.contains("${workspaceFolder}/x"), "{json}");
 }

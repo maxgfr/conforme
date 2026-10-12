@@ -11,6 +11,16 @@ use crate::frontmatter;
 pub struct CopilotAdapter;
 
 impl AiToolAdapter for CopilotAdapter {
+    /// What its variable syntax cannot carry (see [`crate::mcp::env_ref_losses`]).
+    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+        crate::mcp::env_ref_losses(
+            &config.mcp_servers,
+            crate::mcp::EnvRefStyle::EnvColon,
+            true,
+            "VS Code",
+        )
+    }
+
     fn name(&self) -> &str {
         "GitHub Copilot"
     }

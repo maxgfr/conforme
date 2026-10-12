@@ -119,12 +119,12 @@ impl AiToolAdapter for VibeAdapter {
                     .any(|s| s.contains("${")),
                 crate::config::McpTransport::Http { url, headers }
                 | crate::config::McpTransport::Sse { url, headers } => {
-                    url.contains("${")
-                        || headers.iter().any(|(key, value)| {
-                            value.contains("${")
-                                && !(key.eq_ignore_ascii_case("authorization")
-                                    && crate::mcp::bearer_env_var(value).is_some())
+                    url.contains("${") || {
+                        let api_key = crate::mcp::vibe_api_key(headers);
+                        headers.iter().any(|(key, value)| {
+                            value.contains("${") && api_key.as_ref().is_none_or(|k| k.header != key)
                         })
+                    }
                 }
             };
             if unresolved {

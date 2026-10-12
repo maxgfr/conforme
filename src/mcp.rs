@@ -5,8 +5,9 @@ use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table, Value};
 use crate::config::{McpTransport, NormalizedMcpServer};
 
 /// Merge normalized MCP servers into Codex's project-scoped `.codex/config.toml`.
-/// Existing non-MCP settings, comments, Codex-specific server options, and MCP
-/// servers not present in the source config are preserved.
+/// Existing non-MCP settings, comments and Codex-specific server options are
+/// preserved; a server the source no longer defines is dropped unless it is
+/// disabled.
 pub fn merge_codex_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> Result<String> {
     let mut document = if existing.trim().is_empty() {
         DocumentMut::new()
@@ -24,6 +25,22 @@ pub fn merge_codex_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> 
     let mcp_servers = document["mcp_servers"]
         .as_table_like_mut()
         .context("Codex config `mcp_servers` must be a table")?;
+
+    // The source decides which servers exist: one it no longer defines is
+    // dropped, unless it is disabled (`enabled = false`) or a kind conforme
+    // cannot express.
+    let stale: Vec<String> = mcp_servers
+        .iter()
+        .filter(|(name, item)| {
+            let disabled = item.get("enabled").and_then(Item::as_bool) == Some(false);
+            let expressible = item.get("command").is_some() || item.get("url").is_some();
+            !servers.iter().any(|s| s.name == *name) && expressible && !disabled
+        })
+        .map(|(name, _)| name.to_string())
+        .collect();
+    for name in stale {
+        mcp_servers.remove(&name);
+    }
 
     for server in servers {
         if !mcp_servers.contains_key(&server.name) {
@@ -295,9 +312,34 @@ pub fn merge_vibe_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> R
     if !document.as_table().contains_key("mcp_servers") {
         document["mcp_servers"] = Item::ArrayOfTables(toml_edit::ArrayOfTables::new());
     }
+    // An inline array of inline tables (`mcp_servers = []`) is the same
+    // setting: it becomes `[[mcp_servers]]` tables.
+    if let Some(array) = document["mcp_servers"].as_array() {
+        let mut tables = toml_edit::ArrayOfTables::new();
+        for item in array.iter() {
+            let table = item.as_inline_table().context(
+                "Vibe config `mcp_servers` must be an array of tables ([[mcp_servers]])",
+            )?;
+            tables.push(table.clone().into_table());
+        }
+        document["mcp_servers"] = Item::ArrayOfTables(tables);
+    }
     let entries = document["mcp_servers"]
         .as_array_of_tables_mut()
         .context("Vibe config `mcp_servers` must be an array of tables ([[mcp_servers]])")?;
+
+    // The source decides which servers exist: one it no longer defines is
+    // dropped, unless it is disabled or a kind conforme cannot express.
+    let names: Vec<&str> = servers.iter().map(|s| s.name.as_str()).collect();
+    entries.retain(|table| {
+        let named = table
+            .get("name")
+            .and_then(Item::as_str)
+            .is_some_and(|name| names.contains(&name));
+        let disabled = table.get("disabled").and_then(Item::as_bool) == Some(true);
+        let expressible = table.contains_key("command") || table.contains_key("url");
+        named || disabled || !expressible
+    });
 
     for server in servers {
         let position = entries
@@ -370,36 +412,28 @@ pub fn merge_vibe_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> R
                 entry.insert("transport", value("streamable-http"));
                 entry.insert("url", value(url.clone()));
 
-                let mut bearer = None;
-                let mut literal = BTreeMap::new();
-                for (name, header_value) in headers {
-                    let bearer_ref = header_value
-                        .strip_prefix("Bearer ")
-                        .and_then(env_ref_name)
-                        .filter(|_| name.eq_ignore_ascii_case("Authorization"));
-                    match bearer_ref {
-                        Some(var) => bearer = Some(var.to_string()),
-                        None => {
-                            literal.insert(name.clone(), header_value.clone());
-                        }
-                    }
-                }
+                let api_key = vibe_api_key(headers);
+                let literal: BTreeMap<String, String> = headers
+                    .iter()
+                    .filter(|(name, _)| api_key.as_ref().is_none_or(|key| key.header != **name))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
                 let oauth = entry
                     .get("auth")
                     .and_then(|a| a.get("type"))
                     .and_then(Item::as_str)
                     == Some("oauth");
-                if bearer.is_none() && literal.is_empty() {
+                if api_key.is_none() && literal.is_empty() {
                     if !oauth {
                         entry.remove("auth");
                     }
                 } else {
                     let mut auth = InlineTable::new();
                     auth.insert("type", "static".into());
-                    if let Some(var) = bearer {
-                        auth.insert("api_key_env", var.into());
-                        auth.insert("api_key_header", "Authorization".into());
-                        auth.insert("api_key_format", "Bearer {token}".into());
+                    if let Some(key) = api_key {
+                        auth.insert("api_key_env", key.var.into());
+                        auth.insert("api_key_header", key.header.into());
+                        auth.insert("api_key_format", key.format.into());
                     }
                     if !literal.is_empty() {
                         let mut table = InlineTable::new();
@@ -415,6 +449,35 @@ pub fn merge_vibe_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> R
     }
 
     Ok(document.to_string())
+}
+
+/// The one header Vibe reads from an environment variable (a static `auth`
+/// with `api_key_env`): `Authorization: Bearer ${VAR}`, else the first header
+/// that is exactly `${VAR}`.
+pub(crate) struct VibeApiKey<'a> {
+    pub header: &'a str,
+    pub var: &'a str,
+    pub format: &'static str,
+}
+
+pub(crate) fn vibe_api_key(headers: &BTreeMap<String, String>) -> Option<VibeApiKey<'_>> {
+    let bearer = headers.iter().find_map(|(name, value)| {
+        let var = bearer_env_var(value).filter(|_| name.eq_ignore_ascii_case("Authorization"))?;
+        Some(VibeApiKey {
+            header: name,
+            var,
+            format: "Bearer {token}",
+        })
+    });
+    bearer.or_else(|| {
+        headers.iter().find_map(|(name, value)| {
+            Some(VibeApiKey {
+                header: name,
+                var: env_ref_name(value)?,
+                format: "{token}",
+            })
+        })
+    })
 }
 
 /// Parse Vibe's `[[mcp_servers]]` tables into normalized servers (the inverse
@@ -797,7 +860,7 @@ fn is_var_name(name: &str) -> bool {
 
 /// Rewrite every `${…}` reference in `s` through `f`, which receives the text
 /// between the braces and returns the replacement (or `None` to keep it).
-fn rewrite_braced(s: &str, open: &str, f: impl Fn(&str) -> Option<String>) -> String {
+fn rewrite_braced(s: &str, open: &str, mut f: impl FnMut(&str) -> Option<String>) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
     while let Some(start) = rest.find(open) {
@@ -847,9 +910,69 @@ pub fn env_refs_to_tool(s: &str, style: EnvRefStyle) -> String {
                 .map(|(n, _)| format!("${{env:{n}}}"))
         }),
         EnvRefStyle::OpenCode => rewrite_braced(s, "${", |body| {
-            split(body).map(|(n, _)| format!("{{env:{n}}}"))
+            split(body)
+                .filter(|(n, _)| !PREDEFINED_VARIABLES.contains(&n.as_str()))
+                .map(|(n, _)| format!("{{env:{n}}}"))
         }),
     }
+}
+
+/// What writing `servers` in `style` loses, one warning per server: the
+/// default of a `${VAR:-default}` reference the style has no form for, and
+/// an editor variable (`${workspaceFolder}`) for a tool that has none
+/// (`editor_variables` false), which reaches it as an environment variable
+/// or as text.
+pub(crate) fn env_ref_losses(
+    servers: &[NormalizedMcpServer],
+    style: EnvRefStyle,
+    editor_variables: bool,
+    tool: &str,
+) -> Vec<String> {
+    let drops_defaults = matches!(
+        style,
+        EnvRefStyle::DollarNoDefault | EnvRefStyle::EnvColon | EnvRefStyle::OpenCode
+    );
+    let mut warnings = Vec::new();
+    for server in servers {
+        let mut defaults = Vec::new();
+        let mut editor = Vec::new();
+        for (_, value) in server_strings(server) {
+            rewrite_braced(value, "${", |body| {
+                let (name, default) = match body.split_once(":-") {
+                    Some((name, default)) => (name, Some(default)),
+                    None => (body, None),
+                };
+                if PREDEFINED_VARIABLES.contains(&name) {
+                    if !editor_variables && !editor.contains(&name.to_string()) {
+                        editor.push(name.to_string());
+                    }
+                } else if let Some(default) = default.filter(|_| drops_defaults) {
+                    defaults.push(format!("${{{body}}} loses its default `{default}`"));
+                }
+                None
+            });
+        }
+        if !defaults.is_empty() {
+            warnings.push(format!(
+                "MCP server {}: {tool} has no default value for a variable reference: {}",
+                server.name,
+                defaults.join(", ")
+            ));
+        }
+        if !editor.is_empty() {
+            warnings.push(format!(
+                "MCP server {}: {tool} has no editor variables, so {} is not resolved there; \
+                 use an absolute path or an environment variable",
+                server.name,
+                editor
+                    .iter()
+                    .map(|n| format!("${{{n}}}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    warnings
 }
 
 /// Translate a string read from a tool written in `style` into the normalized
@@ -1328,7 +1451,9 @@ pub fn parse_opencode_mcp_object(mcp: &serde_json::Value) -> Vec<NormalizedMcpSe
     for (name, value) in obj {
         // `{ "enabled": false }` only toggles a server defined elsewhere (the
         // global config); the merge keeps it as is.
-        if !crate::json_settings::is_expressible_server(value) {
+        if !crate::json_settings::is_expressible_server(value)
+            || crate::json_settings::is_disabled_server(value)
+        {
             continue;
         }
         let Some(entry) = value.as_object() else {
@@ -1658,9 +1783,12 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
 
     let mut result = Vec::new();
     for (name, value) in servers_obj {
-        // Zed extension servers and Claude SDK servers have no portable form;
-        // the merge keeps them in place on the target side.
-        if !crate::json_settings::is_expressible_server(&value) {
+        // Zed extension servers and Claude SDK servers have no portable form,
+        // and a disabled server is not part of the config; the merge keeps
+        // them in place on the target side.
+        if !crate::json_settings::is_expressible_server(&value)
+            || crate::json_settings::is_disabled_server(&value)
+        {
             continue;
         }
         let obj = value.as_object();
@@ -1752,14 +1880,24 @@ model = "gpt-test"
 url = "https://existing.example/mcp"
 startup_timeout_sec = 20
 "#;
-        let servers = vec![NormalizedMcpServer {
-            name: "filesystem".to_string(),
-            transport: McpTransport::Stdio {
-                command: "npx".to_string(),
-                args: vec!["-y".to_string(), "@mcp/server-filesystem".to_string()],
+        let servers = vec![
+            NormalizedMcpServer {
+                name: "existing".to_string(),
+                transport: McpTransport::Http {
+                    url: "https://existing.example/mcp".to_string(),
+                    headers: BTreeMap::new(),
+                },
+                env: BTreeMap::new(),
             },
-            env: BTreeMap::from([("ROOT".to_string(), "/workspace".to_string())]),
-        }];
+            NormalizedMcpServer {
+                name: "filesystem".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@mcp/server-filesystem".to_string()],
+                },
+                env: BTreeMap::from([("ROOT".to_string(), "/workspace".to_string())]),
+            },
+        ];
 
         let result = merge_codex_mcp_toml(existing, &servers).unwrap();
 
@@ -1821,14 +1959,24 @@ startup_timeout_sec = 20
         let existing = r#"model = "gpt-test"
 mcp_servers = { existing = { command = "printf", args = ["ok"] } }
 "#;
-        let servers = vec![NormalizedMcpServer {
-            name: "filesystem".to_string(),
-            transport: McpTransport::Stdio {
-                command: "npx".to_string(),
-                args: vec!["-y".to_string(), "@mcp/server-filesystem".to_string()],
+        let servers = vec![
+            NormalizedMcpServer {
+                name: "existing".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "printf".to_string(),
+                    args: vec!["ok".to_string()],
+                },
+                env: BTreeMap::new(),
             },
-            env: BTreeMap::new(),
-        }];
+            NormalizedMcpServer {
+                name: "filesystem".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["-y".to_string(), "@mcp/server-filesystem".to_string()],
+                },
+                env: BTreeMap::new(),
+            },
+        ];
 
         let result = merge_codex_mcp_toml(existing, &servers).unwrap();
         let parsed = parse_codex_mcp_toml(&result).unwrap();
@@ -1995,6 +2143,14 @@ auth = { type = "oauth", scopes = ["repo"] }
 "#;
         let servers = vec![
             vibe_servers().remove(0),
+            NormalizedMcpServer {
+                name: "mine".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "my-server".to_string(),
+                    args: Vec::new(),
+                },
+                env: BTreeMap::new(),
+            },
             NormalizedMcpServer {
                 name: "github".to_string(),
                 transport: McpTransport::Http {
