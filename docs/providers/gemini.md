@@ -2,7 +2,7 @@
 
 > Google's AI CLI tool. Source: `--from gemini`
 
-**Last verified online:** 2026-10-09, against Gemini CLI v0.63.0 (https://github.com/google-gemini/gemini-cli/releases)
+**Last verified online:** 2026-10-12, against Gemini CLI v0.63.0 (https://github.com/google-gemini/gemini-cli/releases)
 
 Since 2026-06-18 Gemini CLI serves only paid Gemini API keys and Gemini Code Assist Standard or Enterprise licences; Google AI Pro, Ultra and free users moved to **Antigravity CLI** (https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli). Antigravity reads the same `GEMINI.md` and `AGENTS.md`, but its project skills live in `.agents/skills/` and its MCP servers in `.agents/mcp_config.json` (remote key `serverUrl`, not `url`/`httpUrl`) (https://antigravity.google/docs/cli/gcli-migration). conforme has an Antigravity target, see [antigravity.md](antigravity.md): it writes `.agents/rules/`, `.agents/skills/`, `.agents/agents/` and `.agents/mcp_config.json`
 
@@ -52,6 +52,8 @@ No activation modes. Single GEMINI.md file, all content always-on.
 - `read()` round-trips instructions (the files `context.fileName` names, `GEMINI.md` by default) plus skills (`.gemini/skills/`), agents (`.gemini/agents/`), and MCP (`.gemini/settings.json`)
 - An editor variable (`${workspaceFolder}`) is not resolved in `.gemini/settings.json`: `sync` warns
 - An existing `.gemini/settings.json` is edited in place: its key order, indentation and comments are kept
+- `mcpServers` entries have no disable key (`MCPServerConfig`, `packages/core/src/config/config.ts:484-520` at v0.63.0); a server is turned off through `mcp.excluded` or `~/.gemini/mcp-server-enablement.json`, so a `disabled: true` in `.gemini/settings.json` is read like any other entry
+- Docs versus source (v0.63.0): `docs/tools/mcp-server.md` says `url` means SSE and that only `env` expands, to an empty string when unset; `mcp-client.ts:2224-2258` treats a `url` without `type` as streamable HTTP, and `envVarResolver.ts` expands `$VAR`, `${VAR}` and `${VAR:-default}` across the whole settings file, leaving an unset variable as written
 
 ## Notes
 
@@ -68,7 +70,7 @@ No activation modes. Single GEMINI.md file, all content always-on.
   - The source is authoritative for *which* servers exist: a server present only in `.gemini/settings.json` (for example one added with `gemini mcp add -s project`) is replaced on sync. This is deliberate — the same rule as every other JSON MCP target
 - In an untrusted folder Gemini CLI ignores the whole `.gemini/settings.json` (MCP servers and `context.fileName` included), project skills and project agents (`packages/cli/src/config/settings.ts`: `const safeWorkspace = isTrusted ? workspace : {}`; https://github.com/google-gemini/gemini-cli/blob/v0.63.0/docs/cli/trusted-folders.md)
 - A project agent is registered only once the user acknowledges it, by a hash of its content (`packages/core/src/agents/registry.ts`, `agentLoader.ts`): every sync that changes an agent file makes Gemini ask again (not in Gemini's own docs)
-- A skill needs a string `description` (an empty one loads, `skillLoader.ts`); an agent needs a non-empty one and is rejected otherwise. conforme always writes one, falling back to the name. Skill discovery goes one directory deep (`SKILL.md` and `*/SKILL.md`)
+- A skill needs a string `name` and a string `description` (an empty description loads; `packages/core/src/skills/skillLoader.ts:49,106` at v0.63.0); an agent needs a non-empty one and is rejected otherwise. conforme always writes one, falling back to the name. Skill discovery goes one directory deep (`SKILL.md` and `*/SKILL.md`)
 - Agent frontmatter includes `kind: local`. `kind` is **optional** upstream and already defaults to `local` (the other accepted value is `remote`); conforme emits it explicitly so the transport is unambiguous on a round-trip. Only `name` and `description` are required
 - The agent schema is strict and rejects the whole agent when `tools` holds an unknown name. conforme translates common tool names from other hosts (`Read` → `read_file`, `Grep` → `grep_search`, `Bash` → `run_shell_command`, `Edit` → `replace`, `WebFetch` → `web_fetch`, …), respells MCP tools (`mcp__github__list_issues` → `mcp_github_list_issues`, `mcp__github` / Kiro `@github` → `mcp_github_*`; Gemini rejects any name starting with `mcp__`), maps Kiro `@mcp` to `mcp_*` (every MCP tool), keeps Gemini built-ins (including the `tracker_*` tools), `*`, `mcp_*` and valid `mcp_<server>_<tool>` names, and drops anything else; a restricted list in which nothing translates becomes `read_file` rather than every tool
 - Agent `model` is passed to Gemini's API unchanged unless it is an alias, so conforme writes only `inherit`, `auto`, `pro`, `flash`, `flash-lite`, `gemini-*` or `gemma-*`; another vendor's id is left out and the agent uses the parent model

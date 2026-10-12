@@ -58,8 +58,9 @@ src/
                        or a Claude `type: "sdk"` one, is skipped on read and kept untouched on write
                        (Zed extension servers, Claude SDK servers, OpenCode `{ "enabled": false }` toggles);
                        server_settings_file leaves the file untouched when the source has no server;
-                       is_disabled_server: `disabled: true` / `enabled: false` entries are skipped on read and
-                       kept on write; an existing file is edited in place (key order, indent, comments; an
+                       a tool's own toggle (ServerShape.toggle, an owned `disabled` / `enabled`) skips a disabled
+                       entry on read and keeps one absent from the source on write; Zed's legacy
+                       `command: {path, args, env}` is expressible; an existing file is edited in place (key order, indent, comments; an
                        unchanged key keeps its text), a BOM is stripped, a comments-only file is `{}`)
   hook.rs           — Git pre-commit hook install/uninstall (like Husky): hooks directory from
                        `git rev-parse --git-path hooks` (worktrees, core.hooksPath), a `# >>> conforme >>>` block
@@ -343,9 +344,12 @@ gitignored, and `conforme add` refuses to append to an `AGENTS.md` a tool
 source regenerates. Renamed tool ids (`windsurf` → `devin`) are an error
 wherever an id is accepted.
 
-A disabled server (`disabled: true`, `enabled: false`, Codex `enabled = false`, Vibe `disabled = true`) is
-not read from a source, and a target's own disabled server is kept; every other server the source does not
-define is dropped from every target, Codex and Vibe included.
+In a tool that has its own off switch (`disabled: true` for Kiro, Zoo, Devin, Antigravity and OpenCode 2
+`mcp.servers`; `enabled: false` for Zed and OpenCode; Codex `enabled = false`; Vibe `disabled = true`), a
+disabled server is not read from a source and the tool's own disabled server is kept; Claude Code, Cursor,
+Copilot and Gemini keep their toggles outside the file. Every other server the source does not define is
+dropped from every target, Codex and Vibe included. OpenCode 2's native `mcp.servers` and `agents` are read
+too (OPENCODE_V2_SHAPE), and a native entry shadowing a V1 one conforme writes is warned about.
 
 Every JSON file conforme merges into (`.mcp.json`, `.cursor/mcp.json`,
 `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`,
@@ -448,7 +452,7 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - Skill and agent names go through `sanitize_name` (kebab-case ASCII, at most 64 characters), rule file names through `rule_file_name`, and MCP strings through `EnvRefStyle` so `${VAR}` becomes each tool's own reference syntax
 - A tool that reads `AGENTS.md` itself in a project returns `true` from `reads_agents_md(project_root)` (always for Codex, OpenCode, DeepSeek, Mistral Vibe, Kilo Code; Claude Code without `CLAUDE.md`; Gemini CLI when `context.fileName` names it) and reads it with `markdown::read_native_agents_md`; renaming a tool id adds it to `project_config::RENAMED_IDS`
 - A file or directory `read()` loads outside the tool's managed directories (a native or fallback `AGENTS.md` / `CLAUDE.md`, Gemini's context files, Devin's `global_rules.md` / `.windsurfrules`, Zoo's `.roorules`, DeepSeek's and Vibe's `.agents/skills` fallback, Kilo's rule directories) MUST be returned by `source_files(project_root)` when it exists and is used, so that with the tool as source no target writes it, `remove`/`migrate` never delete it and `gitignore install` never ignores it; a new read location also goes into `watch::source_locations`
-- A server entry conforme cannot express (no string or list `command`, no URL, a Zed legacy `command: {path, args}` object, or Claude `type: "sdk"`) is skipped on read and kept on write (`json_settings::is_expressible_server`), and so is a disabled one (`json_settings::is_disabled_server`)
+- A server entry conforme cannot express (no `command` — a string, OpenCode's array or Zed's legacy `{path, args, env}` — no URL, or Claude `type: "sdk"`) is skipped on read and kept on write (`json_settings::is_expressible_server`); a disabled one only in a tool whose own toggle it is (`ServerShape.toggle`)
 
 ## rust-conventions
 

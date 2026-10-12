@@ -2,7 +2,7 @@
 
 > AI code editor with .mdc rule files. Source: `--from cursor`
 
-**Last verified online:** 2026-10-09, against Cursor 3.24.9 (https://cursor.com/changelog)
+**Last verified online:** 2026-10-12, against Cursor 3.24.12 and Cursor CLI 2026.10.01 (https://cursor.com/changelog)
 
 ## Official docs
 
@@ -50,6 +50,9 @@
 - A rule's frontmatter that is not strict YAML (Cursor's own `globs: **/*.ts`, `description: Use when: …`) is read entry by entry
 - Only the top-level `general.mdc` holds the instructions; a `general.mdc` in a sub-directory is an ordinary rule
 - `${VAR:-default}` loses its default in `${env:VAR}`: `sync` warns
+- `globs`: conforme writes one comma-and-space string, quoted by the YAML writer, as Cursor's own exporter does (`globs: ${ho(e.globs.join(", "))}`); Cursor's frontmatter parser strips surrounding quotes, accepts a `- item` list, and splits on commas outside braces, trimming each part (Cursor CLI 2026.10.01 `index.js`). A July 2025 forum report that `**/*.cpp, **/*.h` matches nothing (https://forum.cursor.com/t/cursor-rules-globs-inconsistencies/116958, Cursor 1.2.4) is not reproduced by the current parser (unconfirmed in the IDE)
+- `.cursor/mcp.json` has no per-server disable key: the toggle is stored in a separate `mcp-disabled.json` ("Toggle servers on/off without removing them", https://cursor.com/docs/mcp)
+- The Cursor CLI also loads `CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` as rules (`isRuleMarkdownFile`); conforme's Claude Code adapter ignores `CLAUDE.local.md` on purpose
 
 ## Notes
 

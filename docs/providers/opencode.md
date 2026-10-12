@@ -2,7 +2,7 @@
 
 > Open-source AI CLI tool. Source: `--from opencode`
 
-**Last verified online:** 2026-10-09, against OpenCode v1.18.35 (https://github.com/anomalyco/opencode/releases)
+**Last verified online:** 2026-10-12, against OpenCode v1.19.0 and OpenCode 2 2.0.27 (https://github.com/anomalyco/opencode/releases, https://opencode.ai/v2/docs/migrate-v1/)
 
 ## Official docs
 
@@ -43,6 +43,10 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - `read()` round-trips AGENTS.md plus skills (`.opencode/skills/`), agents (`.opencode/agents/`, `.opencode/agent/` and the `agent` key in `opencode.json`, read together as OpenCode loads them; the markdown files win on a name clash), and MCP (the `mcp` key of every project `opencode.json(c)`, the `.opencode/` one winning on a name clash); the file is parsed with conforme's AGENTS.md convention (instructions plus `## Rule:` sections), and its `## Skill:`/`## Agent:`/`## MCP:` sections are added to what this tool's own files hold (which win on a name clash). With this tool as the source, AGENTS.md *is* the source: sync never regenerates it (`generate_agents_md` does not apply) and `gitignore install` keeps it tracked. The file it reads (`AGENTS.md`, else `CLAUDE.md`, else `CONTEXT.md`) is its `source_files()`: no target writes it (the Claude Code target leaves an OpenCode source's `CLAUDE.md` alone), and `remove`/`migrate` never delete it
 - Editor variables (`${workspaceFolder}`) are written verbatim, not as `{env:workspaceFolder}`; `sync` warns that OpenCode does not resolve them, and that `${VAR:-default}` loses its default in `{env:VAR}`
 - A server with `enabled: false` is not read when OpenCode is the source, and is kept in the file when it is a target
+- OpenCode 2 (2.0.27, npm `@opencode/cli`) ships beside v1 (1.19.0, which offers `opencode upgrade --major`). It "reads existing global and project configuration from the same locations as V1" and "normalizes supported V1 and native V2 fields in memory", so the V1 shape conforme writes loads in both (https://opencode.ai/v2/docs/migrate-v1/; seen with `opencode debug config` 2.0.26: `agent`/`prompt` shown as `agents`/`system`, `mcp.<name>` as `mcp.servers.<name>`)
+- Native V2 keys are read too: servers under `mcp.servers` (turned off with `disabled`, https://opencode.ai/v2/docs/mcp-servers/) and agents under `agents` with `system` (https://opencode.ai/v2/docs/agents/). "A valid native V2 value takes precedence" over a V1 one of the same name, so `sync` warns when a native entry shadows one conforme writes
+- OpenCode 2 "recognizes AGENTS.md only. It does not use CLAUDE.md as a fallback" (https://opencode.ai/v2/docs/instructions/), ignores an enabled-only V1 MCP entry without a `type`, and reads `disable-model-invocation` and `metadata.opencode/autoinvoke` for manual skills (both written by conforme). conforme keeps v1's `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md` fallback when OpenCode is the source
+- Project config precedence (both versions): root `opencode.json(c)` loads first, then `.opencode/opencode.json(c)`, merged, `.opencode/` winning; `.jsonc` wins over `.json` in the same directory (v1.19.0 `config/paths.ts:10-21`, `config.ts:420-443`; https://opencode.ai/v2/docs/config). conforme's merge target order matches
 
 ## Notes
 

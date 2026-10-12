@@ -2,7 +2,7 @@
 
 > OpenAI's AI CLI agent. Source: `--from codex`
 
-**Last verified online:** 2026-10-09, against Codex CLI rust-v0.162.0 (https://github.com/openai/codex/releases)
+**Last verified online:** 2026-10-12, against Codex CLI 0.162.1 (https://github.com/openai/codex/releases)
 
 ## Official docs
 
@@ -50,6 +50,7 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - Skills in `.agents/skills/` (shared format, also read by Zed, Gemini CLI, OpenCode, Kilo Code and Mistral Vibe)
 - `read()` round-trips AGENTS.md, skills (`.agents/skills/`), agents (`.codex/agents/*.toml`), and MCP servers (`.codex/config.toml`); the file is parsed with conforme's AGENTS.md convention (instructions plus `## Rule:` sections), and its `## Skill:`/`## Agent:`/`## MCP:` sections are added to what this tool's own files hold (which win on a name clash). With this tool as the source, AGENTS.md *is* the source: sync never regenerates it (`generate_agents_md` does not apply), `gitignore install` keeps it tracked, and `remove`/`migrate` never delete it (`source_files()`)
 - A server whose table says `enabled = false` is not read when Codex is the source, and is kept when Codex is a target; any other server the source no longer defines is dropped
+- Codex refuses a server whose name does not match `^[a-zA-Z0-9_:@/.-]+$` ("Invalid MCP server name '{server_name}': must match pattern {pattern}", `validate_mcp_server_name` in https://github.com/openai/codex/blob/main/codex-rs/codex-mcp/src/rmcp_client.rs, checked per server at startup): `sync` warns about such a name. Verified 2026-10-12 with `codex mcp get --json` (0.162.1): `env_vars`, `bearer_token_env_var`; `codex debug prompt-input` lists the automatic skill and not the manual one
 
 ## Notes
 
@@ -63,7 +64,7 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - Fields outside conforme's normalized transport model (for example `auth`, `cwd`, `http_headers_helper`, or `env_vars` entries with `source = "remote"`) fail migration explicitly rather than silently losing behavior
 - When a server switches from HTTP to stdio, the merge drops every key Codex rejects on a stdio server ("X is not supported for stdio"): `url`, `http_headers`, `env_http_headers`, `http_headers_helper`, `bearer_token_env_var`, `bearer_token`, `auth`, `oauth`, `oauth_resource`. Switching to HTTP drops `command`, `args`, `env`, `cwd`, `env_vars`, and the legacy `bearer_token` Codex rejects on HTTP too (`throw_if_set("streamable_http", "bearer_token", ..)`, `codex-rs/config/src/mcp_types.rs`)
 - Skills are always written with a `description`; the Codex skill parser rejects a skill without one, so an empty description falls back to the name. It caps only the name (64 characters), not the description (`codex-rs/skills/src/parser.rs`)
-- Codex reads at most `project_doc_max_bytes` (32 KiB by default) of instruction files and truncates the rest ("project doc exceeds remaining budget; truncating", `codex-rs/core/src/agents_md.rs`); conforme does not warn about a larger `AGENTS.md` (known gap)
+- Codex reads at most `project_doc_max_bytes` (32 KiB by default) of instruction files and truncates the rest ("project doc exceeds remaining budget; truncating", `codex-rs/core/src/agents_md.rs`; the default is `DEFAULT_PROJECT_DOC_MAX_BYTES: usize = 32 * 1024`, `codex-rs/config/src/config_toml.rs:75`); `sync` and `migrate` warn when `AGENTS.md` is larger
 - Codex reads at most one file per directory: `AGENTS.override.md` when it exists, otherwise `AGENTS.md`. The override is a personal, local file, so conforme's `read()` deliberately uses the shared `AGENTS.md` as the source and never propagates the override; conforme writes neither file
 - Skills are searched recursively, up to 6 levels below `.agents/skills/`; conforme reads nested skill folders too (written back flat). Skill names longer than 64 characters are rejected upstream; `sanitize_name` caps them
 - The Codex source also scans `<project>/.codex/skills`, which its docs do not mention; conforme does not use it

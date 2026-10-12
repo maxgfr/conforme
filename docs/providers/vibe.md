@@ -2,7 +2,7 @@
 
 > Mistral's open-source coding agent CLI (`vibe`). Source: `--from vibe`
 
-**Last verified online:** 2026-10-09, against Mistral Vibe 2.26.1 (https://github.com/mistralai/mistral-vibe/releases)
+**Last verified online:** 2026-10-12, against Mistral Vibe 2.26.1 (https://github.com/mistralai/mistral-vibe/releases)
 
 ## Official docs
 
@@ -48,6 +48,8 @@ None: `AGENTS.md` is always loaded.
 - `read()` round-trips skills, subagents (`instructions`, or the prompt file `system_prompt_id` names), MCP (static `auth` read back as `Bearer ${VAR}`, a command given as a list, disabled servers skipped) and `AGENTS.md`
 - The source decides which `[[mcp_servers]]` exist: one that left the source is dropped, one with `disabled = true` is kept; an inline `mcp_servers = []` is turned into `[[mcp_servers]]` tables
 - A header that is exactly `${VAR}` (when there is no `Authorization: Bearer ${VAR}`) becomes a static `auth` with `api_key_env`, `api_key_header` and `api_key_format = "{token}"`
+- An explicit `auth.headers` entry wins over the header `api_key_env` would build (`http_headers`, `vibe/core/config/models.py:338-348` at v2.26.1); conforme reads it the same way
+- Verified 2026-10-12 with Vibe 2.26.1's own loader (`build_default_orchestrator().config`): the stdio server's `argv()` and the remote server's `http_headers()` with the token read from `API_TOKEN`
 
 ## Notes
 
@@ -59,7 +61,7 @@ None: `AGENTS.md` is always loaded.
 - Project `.vibe/` directories load only at the trusted working directory, while `.vibe/config.toml` is found by walking up; Vibe also reads `.vibe/plugins/`, `.vibe/hooks.toml` and `.vibe/prompts/`, which conforme does not write
 - An untrusted folder loads none of the project files: trust it once before checking the result
 - Project subagents in `.vibe/agents` can be spawned since Vibe 2.25.8
-- Vibe replaces characters outside `[a-zA-Z0-9_-]` in a server name with `_`; conforme matches servers by the name as written (known gap for names with other characters)
+- Vibe replaces characters outside `[a-zA-Z0-9_-]` in a server name with `_`, strips leading and trailing `_` / `-` and truncates it to 256 characters (`vibe/core/config/models.py:198-199` at v2.26.1); conforme matches servers by the name as written (known gap for names with other characters)
 - Vibe's published docs lag its source: they still show `api_key_env` on the server entry rather than in `auth`, the tool name `search_replace` (now `edit`) and no `disable-model-invocation`. conforme follows the source (`vibe/core/config/models.py`, `vibe/core/tools/builtins/edit.py`, `vibe/core/skills/models.py`), and Vibe 2.26.0 loads what conforme writes
 
 ## Live check

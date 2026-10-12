@@ -2,7 +2,7 @@
 
 > Anthropic's CLI agent. Source: `--from claude`
 
-**Last verified online:** 2026-10-09, against Claude Code 2.1.295 (https://code.claude.com/docs/en/changelog)
+**Last verified online:** 2026-10-12, against Claude Code 2.1.296 (https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
 
 ## Official docs
 
@@ -51,6 +51,9 @@
 - Capabilities: rules, skills, agents, MCP
 - Read: CLAUDE.md + .claude/rules/ + .claude/skills/ + .claude/commands/ + .claude/agents/ + .mcp.json (and both `AGENTS.md` and `.claude/AGENTS.md`, root first, when the project has no `CLAUDE.md` nor `.claude/CLAUDE.md`)
 - Write: CLAUDE.md + .claude/rules/ + .claude/skills/ + .claude/agents/ + .mcp.json
+- `.mcp.json` has no per-entry disable key: "When you toggle a server, Claude Code records your choice per project in `~/.claude.json`" (`disabledMcpServers`), and `.mcp.json` approval goes through `disabledMcpjsonServers` (https://code.claude.com/docs/en/mcp). conforme therefore reads an entry carrying `disabled: true` like any other
+- "A JSON entry that has a `url` but no `type` is a configuration error … Claude Code skips that server" (https://code.claude.com/docs/en/mcp): such an entry is not read when Claude Code is the source
+- 2.1.296 added `autoCompactWindow` to subagent frontmatter (https://code.claude.com/docs/en/changelog); conforme does not model it
 
 ## Notes
 

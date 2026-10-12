@@ -58,8 +58,9 @@ src/
                        or a Claude `type: "sdk"` one, is skipped on read and kept untouched on write
                        (Zed extension servers, Claude SDK servers, OpenCode `{ "enabled": false }` toggles);
                        server_settings_file leaves the file untouched when the source has no server;
-                       is_disabled_server: `disabled: true` / `enabled: false` entries are skipped on read and
-                       kept on write; an existing file is edited in place (key order, indent, comments; an
+                       a tool's own toggle (ServerShape.toggle, an owned `disabled` / `enabled`) skips a disabled
+                       entry on read and keeps one absent from the source on write; Zed's legacy
+                       `command: {path, args, env}` is expressible; an existing file is edited in place (key order, indent, comments; an
                        unchanged key keeps its text), a BOM is stripped, a comments-only file is `{}`)
   hook.rs           — Git pre-commit hook install/uninstall (like Husky): hooks directory from
                        `git rev-parse --git-path hooks` (worktrees, core.hooksPath), a `# >>> conforme >>>` block
@@ -343,9 +344,12 @@ gitignored, and `conforme add` refuses to append to an `AGENTS.md` a tool
 source regenerates. Renamed tool ids (`windsurf` → `devin`) are an error
 wherever an id is accepted.
 
-A disabled server (`disabled: true`, `enabled: false`, Codex `enabled = false`, Vibe `disabled = true`) is
-not read from a source, and a target's own disabled server is kept; every other server the source does not
-define is dropped from every target, Codex and Vibe included.
+In a tool that has its own off switch (`disabled: true` for Kiro, Zoo, Devin, Antigravity and OpenCode 2
+`mcp.servers`; `enabled: false` for Zed and OpenCode; Codex `enabled = false`; Vibe `disabled = true`), a
+disabled server is not read from a source and the tool's own disabled server is kept; Claude Code, Cursor,
+Copilot and Gemini keep their toggles outside the file. Every other server the source does not define is
+dropped from every target, Codex and Vibe included. OpenCode 2's native `mcp.servers` and `agents` are read
+too (OPENCODE_V2_SHAPE), and a native entry shadowing a V1 one conforme writes is warned about.
 
 Every JSON file conforme merges into (`.mcp.json`, `.cursor/mcp.json`,
 `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`,

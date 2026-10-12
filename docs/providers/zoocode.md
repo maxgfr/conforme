@@ -2,7 +2,7 @@
 
 > VS Code AI extension, the community fork of Roo Code. Source: `--from zoocode`
 
-**Last verified online:** 2026-10-09, against Zoo Code 3.86.0 (https://github.com/Zoo-Code-Org/Zoo-Code/releases)
+**Last verified online:** 2026-10-12, against Zoo Code 3.88.0 (https://github.com/Zoo-Code-Org/Zoo-Code/releases)
 
 Roo Code was shut down on 2026-05-15 (its repository, `RooCodeInc/Roo-Code`, is
 archived; the docs homepage points users to Zoo Code). Zoo Code continues the
@@ -52,6 +52,7 @@ Mode-specific rules go in `.roo/rules-{modeSlug}/` directories (e.g., `.roo/rule
 - `read()` round-trips rules plus skills (`.roo/skills/`) and MCP (`.roo/mcp.json`)
 - Only the top-level `00-general.md` holds the instructions; a `general.md` in a sub-directory is an ordinary rule
 - A `${VAR:-default}` reference loses its default in `.roo/mcp.json` (`${env:VAR}` has none): `sync` warns
+- HTML comments in a rule file reach the model: Zoo only trims the content and wraps it as `# Rules from <path>:` (`src/core/prompts/sections/custom-instructions.ts:24,205` at v3.88.0), so the `Intended scope` and `Apply when` comments tell the model when a rule applies
 
 ## Notes
 

@@ -2,7 +2,7 @@
 
 > DeepSeek's open-source agent harness (`dsh`), in preview. Source: `--from deepseek`
 
-**Last verified online:** 2026-10-09, against dsh-v0.2.1-alpha.2 (https://github.com/deepseek-ai/deepseek-harness/releases)
+**Last verified online:** 2026-10-12, against DeepSeek Harness v0.2.1-alpha.2 (https://github.com/deepseek-ai/deepseek-harness/releases)
 
 ## Official docs
 
@@ -144,4 +144,4 @@ Because this configuration is user-level and not project-scoped, conforme does
   not user-defined markdown files, so conforme does not sync agents here
 - The project `.dsh/` directory is used for skills only; settings and
   credentials live in the harness home (`settings.yaml`, `.credentials.yaml`)
-- The skill catalog shown to the model bounds each description by `catalogDescriptionMaxLength` ("default `500`", skills reference above); the page does not say whether a longer one is cut or the skill dropped (unconfirmed)
+- The skill catalog shown to the model bounds each description by `catalogDescriptionMaxLength` ("default `500`", skills reference above); a longer one is cut, not dropped: whitespace is collapsed, then the text is cut to `maxLength-3` characters plus `...` (`packages/skill/tool-skill/src/index.ts:28,393-396` at v0.2.1-alpha.2, https://github.com/deepseek-ai/deepseek-harness)
