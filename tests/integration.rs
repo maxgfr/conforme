@@ -3776,3 +3776,238 @@ fn test_add_works_for_gemini_source_listing_gemini_md_and_agents_md() {
         "Be nice from gemini.\n"
     );
 }
+
+// ===== Audit pass 3: destructive operations =====
+
+#[test]
+fn test_init_never_deletes_target_files() {
+    // `init` imports CLAUDE.md into AGENTS.md, then syncs: the Cursor rules
+    // absent from the new source were deleted on that first sync.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("CLAUDE.md"), "Be careful.\n").unwrap();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    for name in ["a", "b", "c"] {
+        fs::write(
+            root.join(format!(".cursor/rules/{name}.mdc")),
+            format!("---\nalwaysApply: true\n---\n\nRule {name}.\n"),
+        )
+        .unwrap();
+    }
+    run(root, &["init"])
+        .success()
+        .stdout(predicate::str::contains(".cursor/rules/a.mdc"));
+    for name in ["a", "b", "c"] {
+        assert!(root.join(format!(".cursor/rules/{name}.mdc")).exists());
+    }
+
+    // `init --force` does not clean either.
+    run(root, &["init", "--force"]).success();
+    assert!(root.join(".cursor/rules/a.mdc").exists());
+}
+
+#[test]
+fn test_bundled_files_of_a_hand_written_skill_folder_survive_sync() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("CLAUDE.md"), "Be careful.\n").unwrap();
+    let skill = root.join(".claude/skills/deploy");
+    fs::create_dir_all(skill.join("scripts")).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy\n---\n\nRun scripts/run.sh.\n",
+    )
+    .unwrap();
+    fs::write(skill.join("scripts/run.sh"), "echo deploy\n").unwrap();
+    run(root, &["init"]).success();
+    run(root, &["sync"]).success();
+    assert!(skill.join("scripts/run.sh").exists());
+}
+
+#[test]
+fn test_sync_refuses_to_replace_a_hand_written_agents_md() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    fs::write(
+        root.join(".cursor/rules/a.mdc"),
+        "---\nalwaysApply: true\n---\n\nRule a.\n",
+    )
+    .unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"cursor\"\n").unwrap();
+    fs::write(root.join("AGENTS.md"), "Hand written precious.\n").unwrap();
+    run(root, &["sync"])
+        .failure()
+        .stderr(predicate::str::contains("generate_agents_md = false"));
+    assert_eq!(
+        fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+        "Hand written precious.\n"
+    );
+}
+
+#[test]
+fn test_gitignore_with_a_broken_block_is_left_untouched() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("AGENTS.md"), "# Rules\n").unwrap();
+    let broken = "*.log\n# ── conforme: generated tool configs ──\n.cursor/rules/*.mdc\nmy-secret.env\nbuild/\n";
+    fs::write(root.join(".gitignore"), broken).unwrap();
+    run(root, &["gitignore", "install"]).failure();
+    assert_eq!(fs::read_to_string(root.join(".gitignore")).unwrap(), broken);
+    run(root, &["gitignore", "uninstall"]).failure();
+    assert_eq!(fs::read_to_string(root.join(".gitignore")).unwrap(), broken);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_symlink_loop_in_rules_dir_does_not_hang_or_crash() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    fs::write(
+        root.join(".cursor/rules/a.mdc"),
+        "---\nalwaysApply: true\n---\n\nRule a.\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(root.join(".cursor/rules"), root.join(".cursor/rules/loop"))
+        .unwrap();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    run(root, &["sync", "--from", "cursor"]).success();
+    assert!(fs::read_to_string(root.join("CLAUDE.md"))
+        .unwrap()
+        .contains("Rule a."));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_symlink_migrate_never_deletes_outside_the_project() {
+    let outside = TempDir::new().unwrap();
+    fs::write(
+        outside.path().join("shared.mdc"),
+        "---\nalwaysApply: true\n---\n\nShared.\n",
+    )
+    .unwrap();
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    fs::write(
+        root.join(".cursor/rules/a.mdc"),
+        "---\nalwaysApply: true\n---\n\nRule a.\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.join(".cursor/rules/ext")).unwrap();
+    run(
+        root,
+        &["migrate", "--source", "cursor", "--output", "claude"],
+    )
+    .success();
+    assert!(outside.path().join("shared.mdc").exists());
+}
+
+/// A git command isolated from the user's and the system's configuration.
+fn git(root: &std::path::Path, args: &[&str]) {
+    let empty = root.join(".git-test-config");
+    if !empty.exists() {
+        fs::write(&empty, "").unwrap();
+    }
+    let status = std::process::Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+        .args(args)
+        .current_dir(root)
+        .env("GIT_CONFIG_GLOBAL", &empty)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+#[test]
+fn test_hook_install_in_a_worktree() {
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    fs::write(repo.join("AGENTS.md"), "# test\n").unwrap();
+    git(&repo, &["add", "AGENTS.md"]);
+    git(&repo, &["commit", "-q", "-m", "init"]);
+    git(&repo, &["worktree", "add", "-q", "../wt"]);
+    let wt = dir.path().join("wt");
+    run(&wt, &["hook", "install"]).success();
+    let hook = fs::read_to_string(repo.join(".git/hooks/pre-commit")).unwrap();
+    assert!(hook.contains("conforme check"), "{hook}");
+}
+
+#[test]
+fn test_hook_install_follows_core_hooks_path() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    git(root, &["init", "-q"]);
+    git(root, &["config", "core.hooksPath", ".husky"]);
+    run(root, &["hook", "install"]).success();
+    assert!(root.join(".husky/pre-commit").exists());
+    assert!(!root.join(".git/hooks/pre-commit").exists());
+}
+
+#[test]
+fn test_hook_install_from_a_subdirectory_checks_that_directory() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    git(root, &["init", "-q"]);
+    fs::create_dir_all(root.join("app")).unwrap();
+    run(&root.join("app"), &["hook", "install"]).success();
+    let hook = fs::read_to_string(root.join(".git/hooks/pre-commit")).unwrap();
+    assert!(hook.contains("conforme check -C 'app'"), "{hook}");
+}
+
+#[test]
+fn test_hook_runs_before_an_existing_exit() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    git(root, &["init", "-q"]);
+    let hook_path = root.join(".git/hooks/pre-commit");
+    fs::create_dir_all(hook_path.parent().unwrap()).unwrap();
+    let original = "#!/bin/sh\nnpm test\nexit 0\n";
+    fs::write(&hook_path, original).unwrap();
+    run(root, &["hook", "install"]).success();
+    let hook = fs::read_to_string(&hook_path).unwrap();
+    let check = hook.find("conforme check").unwrap();
+    assert!(check < hook.find("exit 0").unwrap(), "{hook}");
+    assert!(hook.starts_with("#!/bin/sh\n"), "{hook}");
+
+    run(root, &["hook", "uninstall"]).success();
+    assert_eq!(fs::read_to_string(&hook_path).unwrap(), original);
+}
+
+#[test]
+fn test_hook_uninstall_cleans_a_legacy_block() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    git(root, &["init", "-q"]);
+    let hook_path = root.join(".git/hooks/pre-commit");
+    fs::create_dir_all(hook_path.parent().unwrap()).unwrap();
+    fs::write(
+        &hook_path,
+        "#!/bin/sh\nnpm test\n\n#!/bin/sh\n# conforme pre-commit hook\n# Automatically installed by conforme — do not edit this block.\n# See: https://github.com/maxgfr/conforme\n\nconforme check\n",
+    )
+    .unwrap();
+    run(root, &["hook", "uninstall"]).success();
+    assert_eq!(
+        fs::read_to_string(&hook_path).unwrap(),
+        "#!/bin/sh\nnpm test\n"
+    );
+}
+
+#[test]
+fn test_hook_refuses_a_non_shell_hook() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    git(root, &["init", "-q"]);
+    let hook_path = root.join(".git/hooks/pre-commit");
+    fs::create_dir_all(hook_path.parent().unwrap()).unwrap();
+    let original = "#!/usr/bin/env node\nconsole.log('hi')\n";
+    fs::write(&hook_path, original).unwrap();
+    run(root, &["hook", "install"])
+        .failure()
+        .stderr(predicate::str::contains("node"));
+    assert_eq!(fs::read_to_string(&hook_path).unwrap(), original);
+}

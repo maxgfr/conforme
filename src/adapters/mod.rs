@@ -507,6 +507,13 @@ pub fn collect_rule_files(dir: &Path, extension: &str) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+/// Whether `path` is a directory itself, not a symbolic link to one. Every
+/// recursive walk descends only into those: a link to a directory may loop
+/// back on itself, or lead out of the project where `migrate` would delete.
+pub(crate) fn is_real_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
+}
+
 fn collect_rule_files_into(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
@@ -520,7 +527,9 @@ fn collect_rule_files_into(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) 
     entries.sort();
     for path in entries {
         if path.is_dir() {
-            collect_rule_files_into(&path, extension, out)?;
+            if is_real_dir(&path) {
+                collect_rule_files_into(&path, extension, out)?;
+            }
         } else if path.extension().is_some_and(|e| e == extension) {
             out.push(path);
         }

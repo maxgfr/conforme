@@ -136,7 +136,7 @@ fn skill_bundle_paths(skill_dir: &Path) -> Result<Vec<PathBuf>> {
         for entry in std::fs::read_dir(&dir)?.filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.is_dir() {
-                if !path.join("SKILL.md").exists() {
+                if crate::adapters::is_real_dir(&path) && !path.join("SKILL.md").exists() {
                     stack.push(path);
                 }
             } else if path.is_file() {
@@ -153,11 +153,12 @@ fn skill_bundle_paths(skill_dir: &Path) -> Result<Vec<PathBuf>> {
 
 /// Bundled files left in a skill folder whose `SKILL.md` conforme generates
 /// but that the source no longer bundles: the copy must mirror the source.
+/// Only a folder conforme marked as its copy ([`SKILL_MARKER`]) is pruned.
 pub(crate) fn stale_bundled_files(
     skill_dir: &Path,
     expected: &std::collections::HashSet<PathBuf>,
 ) -> Result<Vec<PathBuf>> {
-    if !expected.contains(&skill_dir.join("SKILL.md")) {
+    if !expected.contains(&skill_dir.join("SKILL.md")) || !skill_dir.join(SKILL_MARKER).is_file() {
         return Ok(Vec::new());
     }
     Ok(skill_bundle_paths(skill_dir)?
@@ -185,7 +186,7 @@ pub(crate) fn stale_skill_folder_files(
         {
             if path.is_dir() {
                 // A nested skill inside the copy is not conforme's.
-                if !path.join("SKILL.md").exists() {
+                if crate::adapters::is_real_dir(&path) && !path.join("SKILL.md").exists() {
                     stack.push(path);
                 }
             } else {
@@ -198,16 +199,22 @@ pub(crate) fn stale_skill_folder_files(
 }
 
 /// The bundled files of `skill` written into a tool's `skill_dir`, and
-/// conforme's marker.
+/// conforme's marker. A skill folder that already holds a `SKILL.md` without
+/// the marker was written by hand: conforme keeps its `SKILL.md` in step but
+/// never adopts the folder, so nothing in it is ever pruned.
 fn bundled_outputs(skill_dir: &Path, skill: &NormalizedSkill) -> Vec<(PathBuf, String)> {
+    let hand_written =
+        skill_dir.join("SKILL.md").exists() && !skill_dir.join(SKILL_MARKER).exists();
     skill
         .files
         .iter()
         .map(|(rel, content)| (skill_dir.join(rel), content.clone()))
-        .chain(std::iter::once((
-            skill_dir.join(SKILL_MARKER),
-            SKILL_MARKER_CONTENT.to_string(),
-        )))
+        .chain((!hand_written).then(|| {
+            (
+                skill_dir.join(SKILL_MARKER),
+                SKILL_MARKER_CONTENT.to_string(),
+            )
+        }))
         .collect()
 }
 
@@ -234,7 +241,7 @@ pub(crate) fn read_skills_recursive(
             let mut children: Vec<PathBuf> = std::fs::read_dir(&dir)?
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
-                .filter(|p| p.is_dir() && !p.join("SKILL.md").exists())
+                .filter(|p| crate::adapters::is_real_dir(p) && !p.join("SKILL.md").exists())
                 .collect();
             children.sort();
             for child in children {

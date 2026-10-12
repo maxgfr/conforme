@@ -162,7 +162,7 @@ pub fn install(project_root: &Path, verbose: bool) -> Result<()> {
 
         if existing.contains(BLOCK_START) {
             // Replace existing block
-            let updated = replace_block(&existing, &block);
+            let updated = replace_block(&existing, &block)?;
             std::fs::write(&gitignore_path, updated)?;
             println!("{} .gitignore updated.", "+".green());
             if verbose {
@@ -215,7 +215,7 @@ pub fn uninstall(project_root: &Path, verbose: bool) -> Result<()> {
         return Ok(());
     }
 
-    let updated = remove_block(&content);
+    let updated = remove_block(&content)?;
     std::fs::write(&gitignore_path, updated)?;
 
     println!("{} Removed conforme block from .gitignore.", "+".green());
@@ -226,8 +226,30 @@ pub fn uninstall(project_root: &Path, verbose: bool) -> Result<()> {
     Ok(())
 }
 
+/// Refuse a conforme block whose end marker is missing: everything after its
+/// start would be taken for conforme's and dropped, the user's own lines too.
+fn check_block_closed(content: &str) -> Result<()> {
+    let mut open = false;
+    for line in content.lines() {
+        match line.trim() {
+            BLOCK_START => open = true,
+            BLOCK_END => open = false,
+            _ => {}
+        }
+    }
+    if open {
+        anyhow::bail!(
+            ".gitignore has a conforme block that starts with `{BLOCK_START}` but has no \
+             `{BLOCK_END}` line; nothing was changed. Add the end line where the block ends \
+             (or delete the block), then run the command again."
+        );
+    }
+    Ok(())
+}
+
 /// Replace the conforme block in a gitignore string.
-fn replace_block(content: &str, new_block: &str) -> String {
+fn replace_block(content: &str, new_block: &str) -> Result<String> {
+    check_block_closed(content)?;
     let mut result = String::new();
     let mut in_block = false;
     let mut replaced = false;
@@ -252,11 +274,12 @@ fn replace_block(content: &str, new_block: &str) -> String {
         }
     }
 
-    result
+    Ok(result)
 }
 
 /// Remove the conforme block from a gitignore string.
-fn remove_block(content: &str) -> String {
+fn remove_block(content: &str) -> Result<String> {
+    check_block_closed(content)?;
     let mut result = String::new();
     let mut in_block = false;
 
@@ -277,11 +300,11 @@ fn remove_block(content: &str) -> String {
 
     // Clean up extra blank lines at end
     let trimmed = result.trim_end().to_string();
-    if trimmed.is_empty() {
+    Ok(if trimmed.is_empty() {
         String::new()
     } else {
         trimmed + "\n"
-    }
+    })
 }
 
 #[cfg(test)]
@@ -292,7 +315,7 @@ mod tests {
     fn test_replace_block() {
         let content = "# My stuff\n*.log\n\n# ── conforme: generated tool configs ──\n# old stuff\n.cursor/\n# ── end conforme ──\n\n# Other\n*.tmp\n";
         let new_block = "# ── conforme: generated tool configs ──\n# new stuff\n.windsurf/\n# ── end conforme ──";
-        let result = replace_block(content, new_block);
+        let result = replace_block(content, new_block).unwrap();
         assert!(result.contains(".windsurf/"));
         assert!(!result.contains(".cursor/"));
         assert!(result.contains("*.log"));
@@ -302,7 +325,7 @@ mod tests {
     #[test]
     fn test_remove_block() {
         let content = "# My stuff\n*.log\n\n# ── conforme: generated tool configs ──\n.cursor/\n.windsurf/\n# ── end conforme ──\n\n# Other\n*.tmp\n";
-        let result = remove_block(content);
+        let result = remove_block(content).unwrap();
         assert!(!result.contains("conforme"));
         assert!(!result.contains(".cursor/"));
         assert!(result.contains("*.log"));
@@ -310,9 +333,16 @@ mod tests {
     }
 
     #[test]
+    fn test_gitignore_block_without_end_is_refused() {
+        let content = "*.log\n# ── conforme: generated tool configs ──\n.cursor/\nmy-secret.env\n";
+        assert!(replace_block(content, "x").is_err());
+        assert!(remove_block(content).is_err());
+    }
+
+    #[test]
     fn test_remove_block_only_conforme() {
         let content = "# ── conforme: generated tool configs ──\n.cursor/\n# ── end conforme ──\n";
-        let result = remove_block(content);
+        let result = remove_block(content).unwrap();
         assert!(result.is_empty());
     }
 
