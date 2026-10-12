@@ -83,7 +83,7 @@ conforme migrate --source cursor --output claude
 
 `migrate` reads the project in the source tool's format, writes it in the output tool's, then removes the source tool's files. What the output can hold comes across: instructions and rules (with their glob scope where the output has activation modes), skills with every bundled file, manual invocation, agents, and MCP servers with their environment-variable references respelled for the output. What it cannot hold stays where it is (a tool without agents leaves the source's agents in place), and nothing the output or another detected tool still reads is deleted.
 
-Switch with `migrate`, not by editing `source`: the `AGENTS.md` that `sync` generates names its source on its first line, and `sync` and `check` refuse a source changed by hand since then (the new source would rewrite every tool, the old one included, and delete what it does not hold). `migrate` moves that line to its output, so setting `source` to the output afterwards is accepted.
+Switch with `migrate`, not by editing `source`: the `AGENTS.md` that `sync` generates names its source on its first line, and `sync`, `check` and `diff` refuse a source changed by hand since then (the new source would rewrite every tool, the old one included, and delete what it does not hold). `migrate` moves that line to its output and, when `.conformerc.toml` names the migrated tool as `source`, points it at the output (its comments kept). It also removes the directories it leaves empty, and says when the old tool is still detected (a settings file of its own stays, for example) and how to exclude it.
 
 Every pair of tools is tested both ways (`tests/migrate_matrix.rs`), including a round trip through all 14 tools and back. Each output is also checked with the tool's own CLI where one exists (Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI, Cursor, Mistral Vibe, Kilo Code): the CLI lists the migrated MCP servers, skills and agents.
 
@@ -110,9 +110,13 @@ generate_agents_md = true
 clean = true
 ```
 
+Every command reads this file strictly: an unknown key (a misspelt `exlude`), a file that does not parse, or a tool id conforme does not know (or a renamed one, such as `windsurf`) is an error, never a silent fallback to syncing every tool.
+
 When `source` is set, conforme reads your rules, skills, agents, and MCP servers from that tool's config files instead of `AGENTS.md`. This means you can author your config in whichever tool you prefer and have it propagated everywhere else.
 
-The `AGENTS.md` generated from a tool source holds only the instructions and `## Rule:` sections. Codex, OpenCode, Kilo, Vibe, DeepSeek and most other tools load that file whole as instructions, so a skill, agent or MCP section there would sit in every conversation, a manual skill included; each tool gets those in its own files instead. `migrate` also writes the skills, agents or MCP servers the output cannot hold (agents for Codex, agents and MCP for DeepSeek) there, so a later switch still has them. Codex reads only the first 32 KiB of `AGENTS.md` (`project_doc_max_bytes`): `sync` and `migrate` warn when it is larger.
+The `AGENTS.md` generated from a tool source holds only the instructions and `## Rule:` sections. Codex, OpenCode, Kilo, Vibe, DeepSeek and most other tools load that file whole as instructions, so a skill, agent or MCP section there would sit in every conversation, a manual skill included; each tool gets those in its own files instead. `migrate` also writes the skills, agents or MCP servers the output cannot hold (agents for Codex, agents and MCP for DeepSeek) there, so a later switch still has them. Codex reads only the first 32 KiB of `AGENTS.md` (`project_doc_max_bytes`): `sync` and `migrate` warn when it is larger. An existing `AGENTS.md` that conforme did not generate (no marker on its first line) and whose text the source lacks is never replaced: `sync` stops and names the ways out (`migrate`, deleting the file, or `generate_agents_md = false`).
+
+`conforme init` imports the first tool it finds into `AGENTS.md` and syncs, but never cleans on that first sync: the files the new source lacks are listed, for you to add to the source or to exclude their tool before the next `sync` removes them.
 
 `conforme remove <tools>` deletes the files conforme generated for those tools (merged settings files stay) and the directories it leaves empty. A tool still detected afterwards (its `mcp.json` stays, for example) gets its files back on the next sync: add it to `exclude` to stop syncing it, as `remove` says.
 
@@ -184,7 +188,7 @@ Review all changes for correctness and security.
 <!-- headers: Authorization=Bearer ${GITHUB_TOKEN} -->
 ```
 
-`env` and `headers` take comma-separated `Name=Value` pairs, so a value cannot itself contain a comma.
+Metadata comments are read only in the comment lines right after a section's heading (`<!--activation:manual-->` and any case of the mode are accepted), so an example comment further down, in a code block for instance, stays text. `args` and `tools` take comma-separated values and `env` and `headers` comma-separated `Name=Value` pairs; a value that holds a comma, a line break or `-->`, or that starts or ends with a space, is written in JSON form instead (`<!-- args: ["--tables=users,orders"] -->`, `<!-- env: {"LIST":"a,b"} -->`, `<!-- description: "line 1\nline 2" -->`), and both forms are read. `conforme add` checks that the entry leaves a valid config (no duplicate or colliding name, a pattern after `glob`) before writing it.
 
 ### Feature matrix
 
@@ -268,10 +272,10 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | Zed AI | `.zed/settings.json` (merged) | `context_servers` | No `type` field; remote uses `url` + `headers`; no variable expansion |
 | Codex CLI | `.codex/config.toml` (merged) | `[mcp_servers.<name>]` | TOML; no `${VAR}` expansion: `NAME=${NAME}` → `env_vars`, `Authorization: Bearer ${VAR}` → `bearer_token_env_var`, a `${VAR}` header → `env_http_headers`; atomic merge preserves unrelated settings, comments and Codex-specific options |
 | DeepSeek Harness | _(not project-scoped)_ | — | MCP servers are `@deepseek-ai/dsh-mcp-client` plugin entries in the user-level `cordis.patch.yml` under `$DSH_HOME`, so conforme generates nothing |
-| Mistral Vibe | `.vibe/config.toml` (merged) | `[[mcp_servers]]` | TOML array; `transport = "stdio"` / `"streamable-http"`; `Authorization: Bearer ${VAR}` → static `auth` with `api_key_env`; any other `${VAR}` is written as is, with a warning; OAuth `auth` and other settings preserved |
+| Mistral Vibe | `.vibe/config.toml` (merged) | `[[mcp_servers]]` | TOML array; `transport = "stdio"` / `"streamable-http"`; `Authorization: Bearer ${VAR}` (else a header that is exactly `${VAR}`) → static `auth` with `api_key_env`; any other `${VAR}` is written as is, with a warning; OAuth `auth` and other settings preserved; an inline `mcp_servers = []` is accepted |
 | Antigravity CLI | `.agents/mcp_config.json` (merged) | `mcpServers` | No `type` field; local `command`, `args`, `env`; remote `serverUrl` + `headers` (SSE uses the same key, so it reads back as HTTP); `${VAR}` written as is, with a warning (Antigravity documents no expansion); JSONC accepted |
 
-The source decides which servers exist, in every tool: a server only the target lists is dropped, and a synced server is re-enabled (`disabled` / `enabled: false` are reset) so `check` never passes while a tool hides it. A disabled server (`disabled: true`, `enabled: false`) is not read from the source, and a target's own disabled server is kept. Entries conforme cannot express (a Zed extension server configured only through `settings`, a Claude Code `type: "sdk"` server, an OpenCode `{ "enabled": false }` toggle) are skipped on read and kept as they are on write. A source with no MCP server at all leaves every MCP file untouched, so servers kept by hand in a tool survive when conforme only syncs rules. conforme writes environment-variable references in each tool's syntax (Codex, which expands none, through its `env_vars` / `bearer_token_env_var` / `env_http_headers` keys) and reads them back to `${VAR}`. A reference a tool cannot express (a Codex `NAME=${OTHER}`, a `${VAR}` mixed into other text there, any reference for Zed, which expands none) is written literally; for Kilo Code, Mistral Vibe and Antigravity CLI, `sync` and `migrate` print a warning naming the server. A legacy SSE server (`type: "sse"`, or `<!-- transport: sse -->` in AGENTS.md) stays SSE in Claude Code, Cursor, Copilot, Zoo Code, Gemini CLI and Devin, is written as a bare `url` for Kiro (which reads it back as streamable HTTP), as `type: "remote"` for OpenCode and Kilo Code (which try SSE themselves), and as streamable HTTP with a warning for Codex, Zed AI and Mistral Vibe. Antigravity CLI takes one `serverUrl` key for both transports, so an SSE server is written like an HTTP one and read back as streamable HTTP.
+The source decides which servers exist, in every tool: a server only the target lists is dropped, and a synced server is re-enabled (`disabled` / `enabled: false` are reset) so `check` never passes while a tool hides it. A disabled server (`disabled: true`, `enabled: false`) is not read from the source, and a target's own disabled server is kept. Entries conforme cannot express (a Zed extension server configured only through `settings`, a Claude Code `type: "sdk"` server, an OpenCode `{ "enabled": false }` toggle) are skipped on read and kept as they are on write. A source with no MCP server at all leaves every MCP file untouched, so servers kept by hand in a tool survive when conforme only syncs rules. conforme writes environment-variable references in each tool's syntax (Codex, which expands none, through its `env_vars` / `bearer_token_env_var` / `env_http_headers` keys) and reads them back to `${VAR}`. A reference a tool cannot express (a Codex `NAME=${OTHER}`, a `${VAR}` mixed into other text there, any reference for Zed, which expands none) is written literally; for Kilo Code, Mistral Vibe and Antigravity CLI, `sync` and `migrate` print a warning naming the server. They also warn when a target's syntax has no default value (`${VAR:-default}` loses its default in Cursor, Copilot, Devin, Zoo Code, Kiro and OpenCode) and when an editor variable (`${workspaceFolder}`) reaches a tool without them (Kiro, OpenCode, Gemini CLI, Devin); OpenCode gets `${workspaceFolder}` verbatim. An existing JSON settings file is edited in place: its key order, indentation and comments are kept. A legacy SSE server (`type: "sse"`, or `<!-- transport: sse -->` in AGENTS.md) stays SSE in Claude Code, Cursor, Copilot, Zoo Code, Gemini CLI and Devin, is written as a bare `url` for Kiro (which reads it back as streamable HTTP), as `type: "remote"` for OpenCode and Kilo Code (which try SSE themselves), and as streamable HTTP with a warning for Codex, Zed AI and Mistral Vibe. Antigravity CLI takes one `serverUrl` key for both transports, so an SSE server is written like an HTTP one and read back as streamable HTTP.
 
 ## Examples
 
@@ -488,7 +492,7 @@ clean = true
 **`CLAUDE.md`:**
 
 ```markdown
-Use idiomatic Rust. Run `cargo clippy -- -D warnings` and `cargo test`
+Use idiomatic Rust. Run `cargo clippy --all-targets -- -D warnings` and `cargo test`
 before suggesting changes are complete.
 ```
 
@@ -533,7 +537,7 @@ name: release
 description: Create a new release
 allowed-tools: Bash
 ---
-Run `cargo test && cargo clippy -- -D warnings`, bump version in Cargo.toml, create git tag, push.
+Run `cargo test && cargo clippy --all-targets -- -D warnings`, bump version in Cargo.toml, create git tag, push.
 ```
 
 **`.mcp.json`:**
@@ -669,7 +673,7 @@ conforme hook install
 conforme hook uninstall
 ```
 
-The hook runs `conforme check` before each commit and blocks the commit if configs are out of sync.
+The hook runs `conforme check` before each commit and blocks the commit if configs are out of sync. It goes where git runs hooks (`git rev-parse --git-path hooks`: a worktree's main repository, `core.hooksPath` such as `.husky`), as a block between `# >>> conforme >>>` and `# <<< conforme <<<` right after the shebang, so an `exit` further down cannot skip it. Installed from a sub-directory of the repository, it checks that directory (`conforme check -C <dir>`). A hook written for another interpreter (node, python) is refused rather than edited. `uninstall` removes the block, and blocks earlier versions appended, and deletes the file only when nothing but a shebang is left.
 
 ## CI/CD integration
 

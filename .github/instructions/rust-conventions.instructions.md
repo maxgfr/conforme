@@ -2,7 +2,7 @@
 applyTo: '**/*.rs'
 ---
 
-- Run `cargo clippy -- -D warnings` before considering any change complete
+- Run `cargo clippy --all-targets -- -D warnings` before considering any change complete
 - Run `cargo test` after modifying adapter logic, MCP generation, or skills generation
 - Use `anyhow::Result` for fallible functions, `anyhow::Context` for error messages
 - Use `BTreeMap` (not `HashMap`) for deterministic output ordering in generated files

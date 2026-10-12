@@ -94,7 +94,7 @@ pub fn print_help_ai() {
         "zoocode",
         ".roo/rules/*.md",
         &[
-            "Plain Markdown — NO YAML frontmatter",
+            "Plain Markdown — NO YAML frontmatter; a glob rule gets an `Intended scope` comment and an agent-decision rule an `Apply when` comment, both read back",
             "Files loaded alphabetically (use numeric prefixes: 00-, 01-; a 2-3 digit prefix is stripped on read)",
             "Detected by .roo/ or .roorules (not .clinerules); .roorules is read when .roo/rules/ is empty",
             "Skills synced to .roo/skills/<name>/SKILL.md",
@@ -128,7 +128,7 @@ pub fn print_help_ai() {
         "AGENTS.md (native) + .agents/skills/ + .codex/agents/ + .codex/config.toml",
         &[
             "Config at ~/.codex/config.toml (global) or .codex/config.toml (project)",
-            "MCP merged into project .codex/config.toml as [mcp_servers.<name>] tables",
+            "MCP merged into project .codex/config.toml as [mcp_servers.<name>] tables; a server that left the source is dropped, one with enabled = false is kept",
             "No ${VAR} expansion: references written as env_vars, bearer_token_env_var, env_http_headers",
             "Skills synced to .agents/skills/<name>/SKILL.md",
             "Manual skills preserve their Codex agents/openai.yaml invocation policy",
@@ -196,7 +196,7 @@ pub fn print_help_ai() {
             "Project files load only in a folder trusted in ~/.vibe/trusted_folders.toml",
             "Skills synced to .vibe/skills/<name>/SKILL.md (the shared .agents/skills/ is read only when .vibe/skills/ has none); `vibe` and `skill-creator` are reserved names",
             "Subagents synced to .vibe/agents/<name>.toml (agent_type = \"subagent\", enabled_tools translated to Vibe tools); other agent files are the user's modes and are kept; a built-in name (ask, plan, accept-edits, smart-approve, auto-approve, explore, lean) is never written",
-            "MCP merged into .vibe/config.toml as [[mcp_servers]] (stdio / streamable-http); `Authorization: Bearer ${VAR}` becomes a static auth reading VAR, any other ${VAR} is passed as written; a command Vibe would shell-split wrongly is written as a list",
+            "MCP merged into .vibe/config.toml as [[mcp_servers]] (stdio / streamable-http); `Authorization: Bearer ${VAR}` (else a header that is exactly ${VAR}) becomes a static auth reading VAR, any other ${VAR} is passed as written; a command Vibe would shell-split wrongly is written as a list; a server that left the source is dropped, a disabled one kept",
             "Legacy SSE servers written as streamable-http with a warning (Vibe has no SSE transport)",
         ],
     );

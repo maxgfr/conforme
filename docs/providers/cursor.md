@@ -47,6 +47,9 @@
 - General instructions -> `general.mdc` with `alwaysApply: true`
 - File extension is `.mdc` (not `.md`)
 - `read()` round-trips rules, skills (`.cursor/skills/`), subagents (`.cursor/agents/`), and MCP (`.cursor/mcp.json`)
+- A rule's frontmatter that is not strict YAML (Cursor's own `globs: **/*.ts`, `description: Use when: …`) is read entry by entry
+- Only the top-level `general.mdc` holds the instructions; a `general.mdc` in a sub-directory is an ordinary rule
+- `${VAR:-default}` loses its default in `${env:VAR}`: `sync` warns
 
 ## Notes
 

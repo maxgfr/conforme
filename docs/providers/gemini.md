@@ -50,6 +50,8 @@ No activation modes. Single GEMINI.md file, all content always-on.
 - All rules merged into a single context file: the first `context.fileName` entry other than `AGENTS.md` (`GEMINI.md` by default); none is written when `context.fileName` names only `AGENTS.md`
 - Empty config -> no file generated (avoids empty GEMINI.md)
 - `read()` round-trips instructions (the files `context.fileName` names, `GEMINI.md` by default) plus skills (`.gemini/skills/`), agents (`.gemini/agents/`), and MCP (`.gemini/settings.json`)
+- An editor variable (`${workspaceFolder}`) is not resolved in `.gemini/settings.json`: `sync` warns
+- An existing `.gemini/settings.json` is edited in place: its key order, indentation and comments are kept
 
 ## Notes
 

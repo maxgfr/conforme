@@ -55,6 +55,8 @@
 - General instructions -> `general.md` with `inclusion: always`
 - `fileMatchPattern` accepts both string and YAML array
 - `read()` round-trips steering plus skills (`.kiro/skills/`), agents (`.kiro/agents/`), and MCP (`.kiro/settings/mcp.json`)
+- `${VAR:-default}` loses its default and an editor variable (`${workspaceFolder}`) is not resolved in `.kiro/settings/mcp.json`: `sync` warns
+- A server with `disabled: true` is not read when Kiro is the source, and is kept when Kiro is a target
 
 ## Notes
 

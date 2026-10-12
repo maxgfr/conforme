@@ -9,7 +9,7 @@ conforme is a Rust CLI that synchronizes AI coding agent configurations across 1
 ```bash
 cargo build --release
 cargo test
-cargo clippy -- -D warnings    # lint — MUST pass before pushing
+cargo clippy --all-targets -- -D warnings    # lint — MUST pass before pushing
 cargo fmt -- --check           # format check
 conforme check                 # verify AI configs are in sync (dogfooding)
 ```
@@ -21,9 +21,14 @@ src/
   main.rs           — Entry point, dispatches subcommands
   cli.rs            — CLI arg parsing (clap derive)
   config.rs         — NormalizedConfig, NormalizedRule, NormalizedSkill, NormalizedAgent, NormalizedMcpServer, ActivationMode;
-                       yaml_globs reads a glob field as YAML list or comma string (Claude `paths`, Cursor `globs`)
-  markdown.rs       — AGENTS.md parser (sections → rules via ## Rule: headings)
-  frontmatter.rs    — gray_matter wrapper for YAML frontmatter parsing/serialization
+                       yaml_globs reads a glob field as YAML list or comma string (Claude `paths`, Cursor `globs`);
+                       read_text / normalize_text: every file read from a tool loses its BOM and CRLF
+  markdown.rs       — AGENTS.md parser (sections → rules via ## Rule: headings); metadata only in a section's
+                       leading comment block (any spacing, any case of the mode); a value that would not read
+                       back (comma, line break, `-->`, edge spaces) is written in JSON form, both forms read
+  frontmatter.rs    — `---` block split by hand (BOM, CRLF, files of 3 bytes or fewer), parsed as YAML, else
+                       entry by entry (`globs: **/*.ts`); `read` names the file in errors; is_strict_yaml for
+                       tools that skip a broken block (Antigravity); serialization
   lib.rs            — Library crate re-exports (adapters, config, etc.)
   sync.rs           — Core sync engine: init, sync, check, status, remove, diff, migrate commands
                        (target_config, renamed-id check, AGENTS.md output unless the source reads it, holding only
@@ -37,22 +42,36 @@ src/
                        status shows excluded tools as "Excluded" and AGENTS.md as "Source's own file" /
                        "Generated output" / "Not managed";
                        a source that reads back empty warns "nothing to sync" and writes/cleans nothing;
-                       migrate keeps what staying tools generate or manage — see Orphan cleanup below)
+                       migrate keeps what staying tools generate or manage — see Orphan cleanup below;
+                       each target is generated once per command (TargetOutput: files written, expected list for
+                       orphan cleanup); one target that fails does not stop the others, the command fails at the end;
+                       init never cleans and lists what the next sync would remove; sync refuses to replace a
+                       hand-written AGENTS.md whose text the source lacks; sync -n lists orphans and AGENTS.md;
+                       check and diff refuse what sync refuses (checked_source); status shows read errors;
+                       migrate prunes emptied directories and points `.conformerc.toml` `source` at its output;
+                       add validates the resulting AGENTS.md before writing; Held memoizes what a tool holds)
   detect.rs         — Tool detection (which tools present in project)
-  hash.rs           — SHA-256 content hashing for change detection
   json_settings.rs  — JSONC-safe merge of conforme's keys into user-owned JSON settings files
                        (in-place edit keeps comments; unparsable file is refused, never overwritten;
                        merge_server_entries keeps per-server keys conforme does not own;
                        is_expressible_server: an entry with neither `command` nor `url`/`httpUrl`/`serverUrl`,
                        or a Claude `type: "sdk"` one, is skipped on read and kept untouched on write
                        (Zed extension servers, Claude SDK servers, OpenCode `{ "enabled": false }` toggles);
-                       server_settings_file leaves the file untouched when the source has no server)
-  hook.rs           — Git pre-commit hook install/uninstall (like Husky)
-  gitignore.rs      — `conforme gitignore install/uninstall`: ignores the files each non-source
+                       server_settings_file leaves the file untouched when the source has no server;
+                       is_disabled_server: `disabled: true` / `enabled: false` entries are skipped on read and
+                       kept on write; an existing file is edited in place (key order, indent, comments; an
+                       unchanged key keeps its text), a BOM is stripped, a comments-only file is `{}`)
+  hook.rs           — Git pre-commit hook install/uninstall (like Husky): hooks directory from
+                       `git rev-parse --git-path hooks` (worktrees, core.hooksPath), a `# >>> conforme >>>` block
+                       right after the shebang, `conforme check -C <dir>` from a sub-directory; a non-shell hook
+                       is refused; uninstall also removes the block earlier versions appended
+  gitignore.rs      — `conforme gitignore install/uninstall` (a block without its end marker is refused,
+                       an unchanged file is "already up to date"): ignores the files each non-source
                        adapter selected by only/exclude owns (root files anchored, rules/agents dirs
                        by suffix; Gemini's pattern is the context file it writes); merged settings
                        files, the source's own locations and its source_files() stay tracked
-  project_config.rs  — .conformerc.toml parser (source, only, exclude, clean options)
+  project_config.rs  — .conformerc.toml parser (source, only, exclude, clean options); strict: an unknown key,
+                       a parse error or an unknown or renamed tool id (RENAMED_IDS) is an error in every command
   validate.rs        — Config validation (duplicate names, empty content, invalid globs,
                        names that sanitize to nothing or collide, skill descriptions over the 1024
                        characters Zoo Code and Vibe accept,
@@ -63,34 +82,45 @@ src/
                        source reads (per-tool source_locations + source_files()), .conformerc.toml and
                        AGENTS.md; an existing directory recursively, a file or missing path through its
                        nearest existing parent (never a whole .claude/ or .github/ tree); re-plans after
-                       each change so directories created later are watched; syncs only on events there
+                       each change so directories created later are watched, and forgets paths that disappeared;
+                       each sync re-reads .conformerc.toml; syncs only when a watched file's content changed
   help_ai.rs        — Detailed help about all supported tools and formats
   mcp.rs            — MCP config generation/parsing per tool:
-                       - JSON entry shapes are data (`ServerShape`: type values, URL key, env on remote,
-                         env-var syntax) fed to one builder; every JSON target is merged via json_settings
+                       - each JSON format is a `ServerShape` (type values, URL key, env on remote, env-var
+                         syntax, layout, on/off toggle): `build`, `owned_keys` (every URL spelling and `type`
+                         included), `read` / `read_file`; OpenCode and Kilo are shapes too; every JSON target
+                         is merged via json_settings
+                       - env_ref_losses: warnings for a `${VAR:-default}` a syntax cannot hold and editor
+                         variables (`${workspaceFolder}`) a tool lacks
                        - EnvRefStyle: `${VAR}` normalized, written as `${env:VAR}` (Cursor, VS Code, Zoo,
                          Devin) or `{env:VAR}` (OpenCode), read back by canonicalize_env_refs
                        - Codex: project `.codex/config.toml`, atomically merged with comment/settings preservation; strict safe parser — merge_codex_mcp_toml / parse_codex_mcp_toml.
                          Codex expands no `${VAR}`: stdio `NAME=${NAME}` → `env_vars`, `Authorization: Bearer ${VAR}` →
                          `bearer_token_env_var`, an exact `${VAR}` header → `env_http_headers`, all read back to `${VAR}`;
-                         `env` on HTTP is dropped; tuning keys (timeouts, `enabled_tools`, `required`, …) are read past and kept
+                         `env` on HTTP is dropped; tuning keys (timeouts, `enabled_tools`, `required`, …) are read past and kept;
+                         a server that left the source is dropped, an `enabled = false` one kept
                        - per-tool keys and shapes: see "MCP key mapping per tool" below
                        - Claude .mcp.json parsing: `sse` maps to Sse, http/https/streamable-http/ws to Http;
                          `type: "sdk"` entries are skipped
                        - OpenCode: merge_opencode_agents keeps the user's own `agent` entries (the adapter
                          drops one an earlier sync wrote for an agent that left the source)
-                       - Kilo: build_kilo_mcp_object (no variable reference)
+                       - Kilo: KILO_SHAPE (no variable reference)
                        - Vibe: merge_vibe_mcp_toml / parse_vibe_mcp_toml; a string `command` is shell-split
-                         as Vibe does, one that would not survive it is written as a list
+                         as Vibe does, one that would not survive it is written as a list; vibe_api_key maps
+                         `Bearer ${VAR}`, else an exact `${VAR}` header, to `api_key_env`; an inline
+                         `mcp_servers = []` is accepted; a server that left the source is dropped
                        - parse_mcp_json reads back mcpServers / servers / context_servers
-                       - OpenCode needs its own inverse (parse_opencode_mcp_object / parse_opencode_agent_object)
-  skills.rs         — Skills (SKILL.md plus the text files bundled beside it: read_bundled_files,
+                       - OpenCode agents: parse_opencode_agent_object
+  skills.rs         — Skills: one generate_skills driven by a SkillShape per tool (directory, `allowed-tools`,
+                       manual-invocation encoding, Codex policy sidecar); SKILL.md plus the text files bundled beside it: read_bundled_files,
                        written next to SKILL.md in every tool, stale ones found by stale_bundled_files)
                        and agents generation per tool; shared read helpers
                        preserve manual_invocation (and Codex policy sidecars, which Vibe honours too,
                        created only in .agents/skills) across sync (read_skills_from_dir, read_skills_recursive,
                        read_agents_from_dir, parse_frontmatter_tool_list) used by adapters to
-                       round-trip skills/agents on read(); TOOL_EQUIVALENTS translates agent tools
+                       round-trip skills/agents on read(); parse_frontmatter_tool_list splits outside parentheses
+                       (`Bash(git add:*)`); a skill folder holding a SKILL.md without the marker is never adopted
+                       nor pruned; TOOL_EQUIVALENTS translates agent tools
                        for Claude/Gemini/Kiro/Vibe (Gemini `mcp_*` ⇄ Kiro `@mcp`, Kiro todo tool `todo`);
                        claude_model/gemini_model/opencode_model keep only values the tool accepts
                        (claude_model drops dotted ids such as Kiro's `claude-sonnet-4.5`;
@@ -98,7 +128,9 @@ src/
                        another host's alias (sonnet, opus, haiku, fable, pro, flash, flash-lite) and any
                        provider/model id, Kiro and Copilot also `inherit`
   adapters/
-    mod.rs          — AiToolAdapter trait + registry + shared write_if_changed +
+    mod.rs          — AiToolAdapter trait + registry + shared write_files (atomic for is_shared_file paths),
+                       write_if_changed, contents_match (line ends aside), is_real_dir (walks never follow a
+                       linked directory), push_inline_rule, is_instructions_file (only the top-level `general`) +
                        collect_rule_files (recursive rules-dir scan, sorted by base name) +
                        ManagedDir / find_orphans (what sync would remove, including skill folders that hold the
                        `.conforme` marker but left the source; check, diff and status report it) /
@@ -122,7 +154,8 @@ src/
                        the existing root or .opencode/ opencode.json(c), else a new .opencode/opencode.json
                        (Kilo, which refuses `{env:VAR}`, never reads .opencode/)
     zoocode.rs      — Zoo Code (community fork of Roo Code): .roo/rules/**/*.md, read recursively (plain Markdown);
-                       2–3 digit `NN-` prefix stripped and `Intended scope` comment read back as globs; .roorules read
+                       2–3 digit `NN-` prefix stripped, `Intended scope` comment read back as globs and
+                       `Apply when` as an agent-decision description; .roorules read
                        when .roo/rules/ is missing or empty (.clinerules does not trigger detection)
     gemini.rs       — Gemini CLI: writes the first `context.fileName` entry other than AGENTS.md (GEMINI.md
                        by default; none when it names only AGENTS.md); on read, the files `context.fileName`
@@ -235,7 +268,7 @@ Review for bugs.
 | Zoo Code | `mcpServers` (inside `.roo/mcp.json`) | HTTP uses `type: streamable-http` (not `http`), SSE `type: "sse"`, no `env` on remote servers; merged (keeps Zoo's `alwaysAllow`/`disabledTools`) |
 | Copilot | `servers` (inside `.vscode/mcp.json`) + `mcpServers` (inside `.github/mcp.json`) | VS Code reads the first (`env` on stdio, `headers` on HTTP; keeps `inputs`/`sandbox`), Copilot CLI only the second (Claude Code shape); both merged, SSE as `type: "sse"` in both. The cloud agent reads no file: its servers are in the repository settings |
 | Devin | `mcpServers` (inside `.devin/mcp_config.json`) | No type field; remote `url` + `transport: http` (SSE: `transport: "sse"`); `${env:VAR}`; merged |
-| OpenCode | `mcp` (inside `opencode.json`: an existing root one, else `.opencode/opencode.json`) | `type: local/remote` (SSE is `remote`, read as HTTP); `command` is a single array; env key is `environment` (local only); `{env:VAR}`; merged (preserves user keys and `{ "enabled": false }` toggles) |
+| OpenCode | `mcp` (inside `opencode.json`: an existing root one, else `.opencode/opencode.json`) | `type: local/remote` (SSE is `remote`, read as HTTP); `command` is a single array; env key is `environment` (local only); `{env:VAR}`, editor variables such as `${workspaceFolder}` kept verbatim; merged (preserves user keys and `{ "enabled": false }` toggles) |
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; SSE becomes streamable HTTP (warned); merged into existing settings (preserves theme/keybindings/etc. and extension servers configured only via `settings`) |
 | Gemini | `mcpServers` (inside `.gemini/settings.json`) | `httpUrl` for HTTP, `url` + `type: "sse"` for SSE; merged into existing settings |
 | Kilo Code | `mcp` (inside `.kilo/kilo.jsonc` or the existing `kilo.json(c)`) | OpenCode shape (SSE is `remote`); no variable reference (Kilo refuses `{env:VAR}` in a project config): `NAME=${NAME}` dropped, other `${VAR}` written as is with a warning; merged |
@@ -309,6 +342,10 @@ convention, and when it is the source `AGENTS.md` is never regenerated nor
 gitignored, and `conforme add` refuses to append to an `AGENTS.md` a tool
 source regenerates. Renamed tool ids (`windsurf` → `devin`) are an error
 wherever an id is accepted.
+
+A disabled server (`disabled: true`, `enabled: false`, Codex `enabled = false`, Vibe `disabled = true`) is
+not read from a source, and a target's own disabled server is kept; every other server the source does not
+define is dropped from every target, Codex and Vibe included.
 
 Every JSON file conforme merges into (`.mcp.json`, `.cursor/mcp.json`,
 `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`,
@@ -388,12 +425,12 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 ## adapter-consistency
 
 - Every adapter change MUST be reflected in its `docs/providers/<tool>.md`
-- Every MCP format change MUST update the corresponding `generate_*_mcp_json` function AND its unit test
+- Every MCP format change MUST update the tool's `ServerShape` (or the Codex / Vibe TOML merge) AND its unit test
 - MCP keys and shapes per tool are the "MCP key mapping per tool" table in CLAUDE.md: update it with any MCP change
 - When adding a new adapter, update ALL of: README.md tables, src/help_ai.rs, src/cli.rs tool count, CLAUDE.md architecture section
 - Provider docs must list all official documentation URLs for the tool, back each fact with the vendor page, changelog or source it comes from, and carry a `Last verified online` line (date, upstream version) that `verify-providers` updates
 - Test round-trips: `read()` output fed into `generate()` should produce identical files
-- A JSON MCP entry shape is a `ServerShape` in `src/mcp.rs` (type values, URL key, `env` on remote, env-var syntax); add or change a tool there rather than writing another builder
+- A JSON MCP entry shape is a `ServerShape` in `src/mcp.rs` (type values, URL key, `env` on remote, env-var syntax, layout, on/off toggle) with its `build`, `owned_keys` and `read`; add or change a tool there rather than writing another builder, owned-key list or reader
 - Devin (formerly Windsurf): write `.devin/` only; `.windsurf/` is read as a legacy location (Devin loads both) and conforme's old copies there are cleaned. Project MCP is `.devin/mcp_config.json`; never generate `.windsurf/mcp.json`
 - Never add a user-authored directory (e.g. `.github/prompts/`) to `managed_directories()`: orphan cleanup deletes every file there that carries the directory's suffix and that conforme did not generate
 - Give each `ManagedDir` the exact suffix conforme writes there (`ManagedDir::files(dir, ".agent.md")`), and use `ManagedDir::subdirs` for skills directories, so files the tool accepts but conforme never writes (Kiro `.json` agents, dsh flat skills) survive a sync
@@ -406,16 +443,16 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - Copilot skills: `.github/skills/<name>/SKILL.md` (NOT `.github/prompts/*.prompt.md` — prompt files are a separate VS Code feature)
 - Any adapter whose `generate()` writes skills, agents, or MCP MUST read them back in `read()`, or `--from <tool>` silently drops them
 - Skills and agents always carry a `description` (`description_or_name`): Codex, Copilot, Gemini, OpenCode and Zoo Code skip one without it
-- A skill is its whole folder: every reader fills `NormalizedSkill::files` (`read_bundled_files`) and every `generate_*_skills` writes them beside `SKILL.md` (`bundled_outputs`); each generated skill folder holds the `.conforme` marker (`SKILL_MARKER`); its skills directory is a `ManagedDir::subdirs`, so the copies are kept in step (`stale_bundled_files`, and a marked folder whose skill left the source is deleted by `stale_skill_folder_files`, never in a directory the source reads) and `verify-providers`' `skills_conformity.py` passes
+- A skill is its whole folder: every reader fills `NormalizedSkill::files` (`read_bundled_files`) and `skills::generate_skills` writes them beside `SKILL.md` (`bundled_outputs`), each tool's layout being a `SkillShape`; each generated skill folder holds the `.conforme` marker (`SKILL_MARKER`), and a folder that already held a hand-written `SKILL.md` without it is never adopted; its skills directory is a `ManagedDir::subdirs`, so the copies are kept in step (`stale_bundled_files`, and a marked folder whose skill left the source is deleted by `stale_skill_folder_files`, never in a directory the source reads) and `verify-providers`' `skills_conformity.py` passes
 - Tools with their own tool vocabulary (Claude Code, Gemini CLI, Kiro, Mistral Vibe) get translated `tools` lists (`TOOL_EQUIVALENTS`, MCP names respelled), never names copied verbatim from another host; a `model` another tool cannot use is left out (`claude_model`, `gemini_model`, `opencode_model`, `kiro_model`, `copilot_model`, `cursor_model`)
 - Skill and agent names go through `sanitize_name` (kebab-case ASCII, at most 64 characters), rule file names through `rule_file_name`, and MCP strings through `EnvRefStyle` so `${VAR}` becomes each tool's own reference syntax
-- A tool that reads `AGENTS.md` itself in a project returns `true` from `reads_agents_md(project_root)` (always for Codex, OpenCode, DeepSeek, Mistral Vibe, Kilo Code; Claude Code without `CLAUDE.md`; Gemini CLI when `context.fileName` names it) and reads it with `markdown::read_native_agents_md`; renaming a tool id adds it to `sync::RENAMED_IDS`
+- A tool that reads `AGENTS.md` itself in a project returns `true` from `reads_agents_md(project_root)` (always for Codex, OpenCode, DeepSeek, Mistral Vibe, Kilo Code; Claude Code without `CLAUDE.md`; Gemini CLI when `context.fileName` names it) and reads it with `markdown::read_native_agents_md`; renaming a tool id adds it to `project_config::RENAMED_IDS`
 - A file or directory `read()` loads outside the tool's managed directories (a native or fallback `AGENTS.md` / `CLAUDE.md`, Gemini's context files, Devin's `global_rules.md` / `.windsurfrules`, Zoo's `.roorules`, DeepSeek's and Vibe's `.agents/skills` fallback, Kilo's rule directories) MUST be returned by `source_files(project_root)` when it exists and is used, so that with the tool as source no target writes it, `remove`/`migrate` never delete it and `gitignore install` never ignores it; a new read location also goes into `watch::source_locations`
-- A server entry conforme cannot express (no `command`, no URL, or Claude `type: "sdk"`) is skipped on read and kept on write (`json_settings::is_expressible_server`)
+- A server entry conforme cannot express (no string or list `command`, no URL, a Zed legacy `command: {path, args}` object, or Claude `type: "sdk"`) is skipped on read and kept on write (`json_settings::is_expressible_server`), and so is a disabled one (`json_settings::is_disabled_server`)
 
 ## rust-conventions
 
-- Run `cargo clippy -- -D warnings` before considering any change complete
+- Run `cargo clippy --all-targets -- -D warnings` before considering any change complete
 - Run `cargo test` after modifying adapter logic, MCP generation, or skills generation
 - Use `anyhow::Result` for fallible functions, `anyhow::Context` for error messages
 - Use `BTreeMap` (not `HashMap`) for deterministic output ordering in generated files

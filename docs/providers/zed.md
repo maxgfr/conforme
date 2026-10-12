@@ -41,6 +41,7 @@ Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` 
 - No activation modes, no agents
 - All rules merged into single `.rules` file
 - Skills synced to the shared `.agents/skills/<name>/SKILL.md` location; `read()` reads them back
+- A legacy `command: { path, args }` object is not read and is kept as it is on write
 
 ## Notes
 

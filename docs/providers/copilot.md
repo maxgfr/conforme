@@ -65,6 +65,7 @@
 - Skills -> `.github/skills/<name>/SKILL.md`
 - Detection: `.github/copilot-instructions.md`, or a `.github/instructions/`, `.github/agents/` or `.github/skills/` directory
 - `read()` round-trips instructions/rules plus skills (`.github/skills/*/SKILL.md`), subagents (`.github/agents/*.agent.md`), and MCP (`.vscode/mcp.json`)
+- `${VAR:-default}` loses its default in `${env:VAR}`: `sync` warns
 
 ## Notes
 

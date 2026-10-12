@@ -51,6 +51,7 @@ Detection signals (changelog 1.1.16): `.agents/mcp_config.json`, `.agents/rules/
 - Migrating to Antigravity writes `AGENTS.md`, since that is where its instructions live.
 - Limitation with Antigravity as the source: the rules in `.agents/rules/` do not reach the tools that read only `AGENTS.md` (Codex, OpenCode, Kilo, Vibe, DeepSeek), because `AGENTS.md` is the source's own file and `sync` never rewrites it. `sync` and `check` name each such tool and the rules it misses; add those rules to `AGENTS.md` as `## Rule:` sections to share them.
 - Migrating from Antigravity to one of those tools adds the `.agents/rules/` rules to `AGENTS.md` as `## Rule:` sections before removing the rule files, so none is lost.
+- `type` is owned by conforme in `.agents/mcp_config.json` entries, so a stale hand-written `type` never contradicts a transport change; the `${VAR}` warning ignores `env` on a remote server, which is not written
 
 ## Unconfirmed points
 

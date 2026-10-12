@@ -47,9 +47,11 @@ Mode-specific rules go in `.roo/rules-{modeSlug}/` directories (e.g., `.roo/rule
 - Capabilities: skills, MCP
 - No activation modes, no agents
 - Uses numeric prefixes for ordering: `00-general.md`, `01-rule-name.md`; the 2–3 digit order prefix is stripped on read (`01-security.md` is the rule `security`; `2024-plan.md` stays `2024-plan`)
-- Glob/agent-decision info stored as HTML comments (`<!-- Intended scope: ... -->`); the `Intended scope` comment is read back as the rule's globs
+- Glob/agent-decision info stored as HTML comments: `<!-- Intended scope: ... -->` is read back as the rule's globs and `<!-- Apply when: ... -->` as an agent-decision rule's description
 - `.roorules` is read as the instructions when `.roo/rules/` is missing or empty; with Zoo as the source it is a `source_files()` entry, so no target writes it and `remove`/`migrate` never delete it. Zoo itself reads `.roorules` (and `.clinerules`) only when no `.roo/rules` directory — the global `~/.roo/rules` included — has files; conforme checks only the project's
 - `read()` round-trips rules plus skills (`.roo/skills/`) and MCP (`.roo/mcp.json`)
+- Only the top-level `00-general.md` holds the instructions; a `general.md` in a sub-directory is an ordinary rule
+- A `${VAR:-default}` reference loses its default in `.roo/mcp.json` (`${env:VAR}` has none): `sync` warns
 
 ## Notes
 

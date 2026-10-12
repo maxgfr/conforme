@@ -62,6 +62,9 @@ conforme's tool id was `windsurf` until 4.0.0 and is now `devin`.
 - Orphan cleanup also covers conforme's old copies in the legacy locations, since Devin loads them next to `.devin/`: `.windsurf/rules/<file>.md` once the same file is generated in `.devin/rules/`, and a `.windsurf/skills/<name>/` folder holding nothing but its `SKILL.md` once the same skill is generated in `.devin/skills/`. Other legacy rules, and skill folders that bundle scripts or references, are the user's and stay (a rule an earlier sync wrote and the source has since dropped stays too)
 - A `.conformerc.toml` or command line that still names `windsurf` (`source`, `only`, `exclude`, `--from`, `remove`, `migrate`) is an error naming the new id, so an `exclude = ["windsurf"]` is never silently ignored
 - `.devin/mcp_config.json` is merged (`is_shared_file`): per-server OAuth fields survive, `disabled` is reset so a synced server is enabled, a file conforme cannot parse is left untouched, and `remove`/`migrate` keep it
+- `type` is owned by conforme in `.devin/mcp_config.json` entries (Devin writes `transport`), so a stale hand-written `type` never contradicts a transport change
+- Two rules of the same file name in `.devin/rules/` sub-directories are both read, for validation to report; a `general.md` in a sub-directory is an ordinary rule
+- A `${VAR:-default}` loses its default (`${env:VAR}` has none) and an editor variable is not resolved: `sync` warns
 
 ## Notes
 
