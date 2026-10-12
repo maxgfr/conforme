@@ -163,10 +163,17 @@ impl AiToolAdapter for AntigravityAdapter {
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let mut file_rules = Vec::new();
         for path in top_level_rule_files(&rules_dir(project_root))? {
-            let (fields, body) = frontmatter::read(&path)?;
-            // A file without a `trigger` is not a rule Antigravity loads.
-            if !fields.contains_key("trigger") {
+            // A file Antigravity discards (no valid `trigger`, broken
+            // frontmatter) is not one of its rules.
+            if !is_antigravity_rule_file(&path) {
                 continue;
+            }
+            let (mut fields, body) = frontmatter::read(&path)?;
+            // "singular `glob:` is also accepted" (antigravity.google/docs/rules).
+            if !fields.contains_key("globs") {
+                if let Some(glob) = fields.remove("glob") {
+                    fields.insert("globs".to_string(), glob);
+                }
             }
             let name = path
                 .file_stem()
@@ -273,14 +280,23 @@ impl AiToolAdapter for AntigravityAdapter {
     }
 }
 
-/// Whether `path` is a rule Antigravity loads: its frontmatter parses and has
-/// a `trigger`.
+/// The `trigger` values Antigravity accepts; it "silently discards" a rule
+/// with any other (https://antigravity.google/docs/rules).
+const ANTIGRAVITY_TRIGGERS: &[&str] = &["always_on", "glob", "model_decision", "manual"];
+
+/// Whether `path` is a rule Antigravity loads: its frontmatter parses and
+/// declares a valid `trigger`.
 fn is_antigravity_rule_file(path: &Path) -> bool {
     crate::config::read_text(path)
         .ok()
         .filter(|content| frontmatter::is_strict_yaml(content))
         .and_then(|content| frontmatter::parse(&content).ok())
-        .is_some_and(|(fields, _)| fields.contains_key("trigger"))
+        .is_some_and(|(fields, _)| {
+            fields
+                .get("trigger")
+                .and_then(|t| t.as_str())
+                .is_some_and(|t| ANTIGRAVITY_TRIGGERS.contains(&t))
+        })
 }
 
 /// Whether `path` sits directly in a `.agents/rules/` directory, the only

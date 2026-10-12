@@ -37,14 +37,49 @@ fn config_path(project_root: &Path) -> PathBuf {
 }
 
 impl AiToolAdapter for OpenCodeAdapter {
-    /// What its variable syntax cannot carry (see [`crate::mcp::env_ref_losses`]).
-    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
-        crate::mcp::env_ref_losses(
+    /// What its variable syntax cannot carry (see [`crate::mcp::env_ref_losses`]),
+    /// and the servers and agents conforme writes in the V1 shape that an
+    /// OpenCode 2 native entry of the same name shadows.
+    fn warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+        let mut warnings = crate::mcp::env_ref_losses(
             &config.mcp_servers,
             crate::mcp::EnvRefStyle::OpenCode,
             false,
             "OpenCode",
-        )
+        );
+        for name in CONFIG_FILES {
+            let Ok(Some(root)) = crate::json_settings::load(&project_root.join(name)) else {
+                continue;
+            };
+            let native = |path: &[&str], item: &str| {
+                let mut value = root.get(path[0]);
+                for key in &path[1..] {
+                    value = value.and_then(|v| v.get(key));
+                }
+                value.is_some_and(|map| map.get(item).is_some())
+            };
+            for server in &config.mcp_servers {
+                if native(&["mcp", "servers"], &server.name) {
+                    warnings.push(format!(
+                        "MCP server {}: {name} also defines it under `mcp.servers`, which \
+                         OpenCode 2 uses instead of the `mcp.{}` entry conforme writes; edit or \
+                         remove the native entry",
+                        server.name, server.name
+                    ));
+                }
+            }
+            for agent in &config.agents {
+                let agent = crate::config::sanitize_name(&agent.name);
+                if native(&["agents"], &agent) {
+                    warnings.push(format!(
+                        "agent {agent}: {name} also defines it under `agents`, which OpenCode 2 \
+                         uses instead of the `agent.{agent}` entry conforme writes; edit or \
+                         remove the native entry"
+                    ));
+                }
+            }
+        }
+        warnings
     }
 
     fn name(&self) -> &str {
@@ -155,16 +190,25 @@ impl AiToolAdapter for OpenCodeAdapter {
             let Some(root) = crate::json_settings::load(&project_root.join(name))? else {
                 continue;
             };
+            // OpenCode 2 also reads its native `mcp.servers` and `agents`; a
+            // native value wins over a V1 one of the same name.
             if let Some(mcp) = root.get("mcp") {
-                for server in crate::mcp::OPENCODE_SHAPE.read(mcp) {
+                let v1 = crate::mcp::OPENCODE_SHAPE.read(mcp);
+                let v2 = mcp
+                    .get("servers")
+                    .map(|servers| crate::mcp::OPENCODE_V2_SHAPE.read(servers))
+                    .unwrap_or_default();
+                for server in v1.into_iter().chain(v2) {
                     mcp_servers.retain(|s| s.name != server.name);
                     mcp_servers.push(server);
                 }
             }
-            if let Some(agent) = root.get("agent") {
-                for agent in crate::mcp::parse_opencode_agent_object(agent) {
-                    if !agents.iter().any(|a| a.name == agent.name) {
-                        agents.push(agent);
+            for key in ["agents", "agent"] {
+                if let Some(agent) = root.get(key) {
+                    for agent in crate::mcp::parse_opencode_agent_object(agent) {
+                        if !agents.iter().any(|a| a.name == agent.name) {
+                            agents.push(agent);
+                        }
                     }
                 }
             }

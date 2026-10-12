@@ -188,8 +188,13 @@ pub fn merge_server_entries(
         .into_iter()
         .flatten()
         .filter(|(name, entry)| {
-            !generated.contains_key(*name)
-                && (!is_expressible_server(entry) || is_disabled_server(entry))
+            // Only the tool's own toggle (an owned `disabled` / `enabled`)
+            // turns a server off; elsewhere such a key means nothing.
+            let off = (owned_keys.contains(&"disabled")
+                && entry.get("disabled").and_then(Value::as_bool) == Some(true))
+                || (owned_keys.contains(&"enabled")
+                    && entry.get("enabled").and_then(Value::as_bool) == Some(false));
+            !generated.contains_key(*name) && (!is_expressible_server(entry) || off)
         })
         .map(|(name, entry)| (name.clone(), entry.clone()))
         .collect();
@@ -227,11 +232,11 @@ pub fn is_expressible_server(entry: &Value) -> bool {
     if obj.get("type").and_then(Value::as_str) == Some("sdk") {
         return false;
     }
-    // A string command, or OpenCode's `[cmd, ...args]`; Zed's legacy
-    // `command: { path, args }` object is not one.
-    let command = obj
-        .get("command")
-        .is_some_and(|c| c.is_string() || c.is_array());
+    // A string command, OpenCode's `[cmd, ...args]`, or Zed's legacy
+    // `command: { path, args, env }`, which Zed still loads.
+    let command = obj.get("command").is_some_and(|c| {
+        c.is_string() || c.is_array() || c.get("path").is_some_and(Value::is_string)
+    });
     command
         || ["url", "httpUrl", "serverUrl"]
             .iter()

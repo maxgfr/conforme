@@ -1971,3 +1971,174 @@ fn test_antigravity_does_not_warn_about_env_it_drops() {
         conforme::adapters::antigravity::AntigravityAdapter.warnings(dir.path(), &config);
     assert!(warnings.is_empty(), "{warnings:?}");
 }
+
+/// Claude Code has no per-entry disable key (the `/mcp` toggle is recorded in
+/// `~/.claude.json`), and it skips a `url` with no `type`
+/// (https://code.claude.com/docs/en/mcp).
+#[test]
+fn test_claude_mcp_reads_as_claude_code_loads() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(
+        root.join(".mcp.json"),
+        r#"{"mcpServers":{"on":{"command":"x","disabled":true},"typeless":{"url":"https://e.com/mcp"}}}"#,
+    )
+    .unwrap();
+    fs::write(root.join("CLAUDE.md"), "Hi.\n").unwrap();
+    let read = conforme::adapters::claude::ClaudeAdapter
+        .read(root)
+        .unwrap();
+    assert_eq!(mcp_names(&read), vec!["on".to_string()]);
+}
+
+/// Codex refuses a server whose name is outside `^[a-zA-Z0-9_:@/.-]+$`
+/// (codex-rs/codex-mcp/src/rmcp_client.rs, `validate_mcp_server_name`).
+#[test]
+fn test_codex_warns_about_server_names_it_refuses() {
+    let server = |name: &str| NormalizedMcpServer {
+        name: name.into(),
+        transport: McpTransport::Stdio {
+            command: "npx".into(),
+            args: vec![],
+        },
+        env: Default::default(),
+    };
+    let config = NormalizedConfig {
+        mcp_servers: vec![server("my server"), server("ok_name:v1@scope/x.y-z")],
+        ..Default::default()
+    };
+    let dir = TempDir::new().unwrap();
+    let warnings = conforme::adapters::codex::CodexAdapter.warnings(dir.path(), &config);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("my server"), "{warnings:?}");
+}
+
+/// Antigravity loads only `trigger` values it knows, accepts a singular
+/// `glob:`, and has a `disabled` MCP key
+/// (https://antigravity.google/docs/rules, https://antigravity.google/docs/mcp).
+#[test]
+fn test_antigravity_reads_what_antigravity_loads() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".agents/rules")).unwrap();
+    fs::write(
+        root.join(".agents/rules/camel.md"),
+        "---\ntrigger: alwaysOn\n---\n\nDiscarded by Antigravity.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".agents/rules/broken.md"),
+        "---\ntrigger: always_on\n[[[ not yaml\n---\n\nBroken.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".agents/rules/ts.md"),
+        "---\ntrigger: glob\nglob: \"**/*.ts\"\n---\n\nStrict TS.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".agents/mcp_config.json"),
+        r#"{"mcpServers":{"off":{"command":"x","disabled":true},"on":{"command":"y"}}}"#,
+    )
+    .unwrap();
+    let adapter = conforme::adapters::antigravity::AntigravityAdapter;
+    let read = adapter.read(root).unwrap();
+    assert_eq!(read.rules.len(), 1, "{:?}", read.rules);
+    assert_eq!(
+        read.rules[0].activation,
+        ActivationMode::GlobMatch(vec!["**/*.ts".into()])
+    );
+    assert_eq!(mcp_names(&read), vec!["on".to_string()]);
+
+    // A synced server is enabled again.
+    fs::write(
+        root.join(".agents/mcp_config.json"),
+        r#"{"mcpServers":{"on":{"command":"y","disabled":true}}}"#,
+    )
+    .unwrap();
+    let config = NormalizedConfig {
+        mcp_servers: vec![NormalizedMcpServer {
+            name: "on".into(),
+            transport: McpTransport::Stdio {
+                command: "y".into(),
+                args: vec![],
+            },
+            env: Default::default(),
+        }],
+        ..Default::default()
+    };
+    let files = adapter.generate(root, &config).unwrap();
+    let mcp = &files
+        .iter()
+        .find(|(p, _)| p.ends_with("mcp_config.json"))
+        .unwrap()
+        .1;
+    assert!(!mcp.contains("disabled"), "{mcp}");
+}
+
+/// Gemini CLI has no per-server disable key in `mcpServers` (it uses
+/// `mcp.excluded`): a `disabled: true` there does not stop the server.
+#[test]
+fn test_gemini_has_no_per_server_disable_key() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".gemini")).unwrap();
+    fs::write(
+        root.join(".gemini/settings.json"),
+        r#"{"mcpServers":{"on":{"command":"x","disabled":true}}}"#,
+    )
+    .unwrap();
+    fs::write(root.join("GEMINI.md"), "Hi.\n").unwrap();
+    let read = conforme::adapters::gemini::GeminiAdapter
+        .read(root)
+        .unwrap();
+    assert_eq!(mcp_names(&read), vec!["on".to_string()]);
+}
+
+/// OpenCode 2 keeps servers under `mcp.servers` with `disabled`, and agents
+/// under `agents` with `system`; it still reads the V1 shape, but a native
+/// V2 value wins (https://opencode.ai/v2/docs/migrate-v1/).
+#[test]
+fn test_opencode_v2_native_config_is_read() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".opencode")).unwrap();
+    fs::write(
+        root.join(".opencode/opencode.json"),
+        r#"{
+  "mcp": {
+    "servers": {
+      "native": {"type": "local", "command": ["npx", "native"]},
+      "both": {"type": "local", "command": ["v2"]},
+      "off": {"type": "local", "command": ["x"], "disabled": true}
+    },
+    "both": {"type": "local", "command": ["v1"]}
+  },
+  "agents": {
+    "reviewer": {"description": "Reviews", "mode": "subagent", "system": "Review it."},
+    "gone": {"description": "Off", "system": "x", "disabled": true}
+  }
+}"#,
+    )
+    .unwrap();
+    let adapter = conforme::adapters::opencode::OpenCodeAdapter;
+    let read = adapter.read(root).unwrap();
+    assert_eq!(
+        mcp_names(&read),
+        vec!["both".to_string(), "native".to_string()]
+    );
+    let both = read.mcp_servers.iter().find(|s| s.name == "both").unwrap();
+    assert_eq!(
+        both.transport,
+        McpTransport::Stdio {
+            command: "v2".into(),
+            args: vec![]
+        }
+    );
+    assert_eq!(read.agents.len(), 1);
+    assert_eq!(read.agents[0].content, "Review it.");
+
+    // Writing `both` as a V1 entry would be shadowed by the native one: said.
+    let warnings = adapter.warnings(root, &read);
+    assert!(warnings.iter().any(|w| w.contains("both")), "{warnings:?}");
+}

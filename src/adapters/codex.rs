@@ -150,6 +150,19 @@ impl AiToolAdapter for CodexAdapter {
                     }),
             )
             .chain(builtin_agents)
+            .chain(
+                config
+                    .mcp_servers
+                    .iter()
+                    .filter(|server| !crate::mcp::is_codex_server_name(&server.name))
+                    .map(|server| {
+                        format!(
+                            "MCP server {}: Codex refuses a server name outside \
+                             `^[a-zA-Z0-9_:@/.-]+$` and does not start it; rename it in the source",
+                            server.name
+                        )
+                    }),
+            )
             .collect()
     }
 

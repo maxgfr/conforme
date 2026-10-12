@@ -732,21 +732,30 @@ fn test_disabled_source_server_is_not_synced() {
 
 #[test]
 fn test_disabled_target_server_is_kept() {
+    // Kiro's own `disabled` toggle keeps a server the source does not define;
+    // Cursor has no such key (its toggles live in `mcp-disabled.json`), so
+    // there the source decides as for any other server.
     let agents_md = "# I\n\n## MCP: on\n<!-- command: y -->\n";
-    let dir = create_project_with_tools(agents_md, &["cursor"]);
+    let dir = create_project_with_tools(agents_md, &["cursor", "kiro"]);
     let root = dir.path();
-    fs::write(
-        root.join(".cursor/mcp.json"),
-        r#"{"mcpServers":{"old":{"command":"z","disabled":true}}}"#,
-    )
-    .unwrap();
+    let old = r#"{"mcpServers":{"old":{"command":"z","disabled":true}}}"#;
+    fs::write(root.join(".cursor/mcp.json"), old).unwrap();
+    fs::create_dir_all(root.join(".kiro/settings")).unwrap();
+    fs::write(root.join(".kiro/settings/mcp.json"), old).unwrap();
     conforme()
         .args(["-C", root.to_str().unwrap(), "sync"])
         .assert()
         .success();
+    let kiro = fs::read_to_string(root.join(".kiro/settings/mcp.json")).unwrap();
+    assert!(
+        kiro.contains("\"old\"") && kiro.contains("\"on\""),
+        "{kiro}"
+    );
     let cursor = fs::read_to_string(root.join(".cursor/mcp.json")).unwrap();
-    assert!(cursor.contains("\"old\""), "{cursor}");
-    assert!(cursor.contains("\"on\""), "{cursor}");
+    assert!(
+        !cursor.contains("\"old\"") && cursor.contains("\"on\""),
+        "{cursor}"
+    );
 }
 
 #[test]
@@ -858,22 +867,29 @@ fn test_vibe_inline_empty_mcp_servers_and_exact_header_ref() {
 }
 
 #[test]
-fn test_zed_legacy_command_object_is_kept() {
-    let agents_md = "# I\n\n## MCP: on\n<!-- command: y -->\n";
-    let dir = create_project_with_tools(agents_md, &["zed"]);
+fn test_zed_legacy_command_object_is_read() {
+    // Zed still loads `command: { path, args, env }`: its settings store
+    // migrates project settings in memory (crates/settings/src/settings_store.rs,
+    // `parse_and_migrate_zed_settings`; crates/migrator m_2025_06_27).
+    let agents_md = "# I\n";
+    let dir = create_project_with_tools(agents_md, &["zed", "cursor"]);
     let root = dir.path();
+    fs::remove_file(root.join("AGENTS.md")).unwrap();
+    fs::write(root.join(".rules"), "Be careful.\n").unwrap();
     fs::create_dir_all(root.join(".zed")).unwrap();
     fs::write(
         root.join(".zed/settings.json"),
-        r#"{"context_servers":{"legacy":{"command":{"path":"x","args":[]}}}}"#,
+        r#"{"context_servers":{"legacy":{"command":{"path":"x","args":["--a"],"env":{"K":"v"}}}}}"#,
     )
     .unwrap();
     let r = root.to_str().unwrap();
-    conforme().args(["-C", r, "sync"]).assert().success();
-    let zed = fs::read_to_string(root.join(".zed/settings.json")).unwrap();
-    assert!(zed.contains("\"legacy\""), "{zed}");
     conforme()
         .args(["-C", r, "sync", "--from", "zed"])
         .assert()
         .success();
+    let cursor = fs::read_to_string(root.join(".cursor/mcp.json")).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&cursor).unwrap();
+    assert_eq!(json["mcpServers"]["legacy"]["command"], "x", "{cursor}");
+    assert_eq!(json["mcpServers"]["legacy"]["args"][0], "--a", "{cursor}");
+    assert_eq!(json["mcpServers"]["legacy"]["env"]["K"], "v", "{cursor}");
 }

@@ -163,6 +163,16 @@ pub fn merge_codex_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> 
     Ok(document.to_string())
 }
 
+/// Whether Codex starts a server of this name: it refuses one outside
+/// `^[a-zA-Z0-9_:@/.-]+$` (codex-rs/codex-mcp/src/rmcp_client.rs,
+/// `validate_mcp_server_name`).
+pub(crate) fn is_codex_server_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | '@' | '/' | '.' | '-'))
+}
+
 /// `VAR` for a value that is exactly `${VAR}`.
 fn env_ref_name(text: &str) -> Option<&str> {
     let name = text.strip_prefix("${")?.strip_suffix('}')?;
@@ -560,13 +570,17 @@ pub fn parse_vibe_mcp_toml(content: &str) -> Result<Vec<NormalizedMcpServer>> {
                     .and_then(toml::Value::as_str)
             };
             let mut headers = strings(auth.and_then(|a| a.get("headers")).or(entry.get("headers")));
+            // An explicit header of the same name wins: Vibe only builds the
+            // `api_key_env` one when `headers` lacks it.
             if let Some(var) = field("api_key_env") {
                 let header = field("api_key_header").unwrap_or("Authorization");
                 let format = field("api_key_format").unwrap_or("Bearer {token}");
-                headers.insert(
-                    header.to_string(),
-                    format.replace("{token}", &format!("${{{var}}}")),
-                );
+                if !headers.keys().any(|name| name.eq_ignore_ascii_case(header)) {
+                    headers.insert(
+                        header.to_string(),
+                        format.replace("{token}", &format!("${{{var}}}")),
+                    );
+                }
             }
             (
                 McpTransport::Http {
@@ -1103,6 +1117,9 @@ pub struct ServerShape {
     /// entry that only passes a variable through (`TOKEN=${TOKEN}`) is left
     /// out instead of being set to the literal text.
     drop_passthrough_env: bool,
+    /// Claude Code reads an entry with no `type` as stdio, so one with a `url`
+    /// but no `type` is a configuration error it skips.
+    remote_needs_type: bool,
 }
 
 /// Claude Code `.mcp.json`: `type` is `stdio` or `http`; remote servers take
@@ -1111,6 +1128,7 @@ pub const CLAUDE_SHAPE: ServerShape = ServerShape {
     layout: Layout::Flat,
     toggle: None,
     drop_passthrough_env: false,
+    remote_needs_type: true,
     stdio_type: Some("stdio"),
     http_type: Some("http"),
     url_key: "url",
@@ -1129,6 +1147,7 @@ pub const CURSOR_SHAPE: ServerShape = ServerShape {
     layout: Layout::Flat,
     toggle: None,
     drop_passthrough_env: false,
+    remote_needs_type: false,
     stdio_type: Some("stdio"),
     http_type: None,
     url_key: "url",
@@ -1146,6 +1165,7 @@ pub const KIRO_SHAPE: ServerShape = ServerShape {
     layout: Layout::Flat,
     toggle: Some("disabled"),
     drop_passthrough_env: false,
+    remote_needs_type: false,
     stdio_type: Some("stdio"),
     http_type: Some("http"),
     url_key: "url",
@@ -1164,6 +1184,7 @@ pub const COPILOT_SHAPE: ServerShape = ServerShape {
     layout: Layout::Flat,
     toggle: None,
     drop_passthrough_env: false,
+    remote_needs_type: false,
     stdio_type: Some("stdio"),
     http_type: Some("http"),
     url_key: "url",
@@ -1183,6 +1204,7 @@ pub const ZOOCODE_SHAPE: ServerShape = ServerShape {
     layout: Layout::Flat,
     toggle: Some("disabled"),
     drop_passthrough_env: false,
+    remote_needs_type: false,
     stdio_type: Some("stdio"),
     http_type: Some("streamable-http"),
     url_key: "url",
@@ -1201,6 +1223,7 @@ pub const ZED_SHAPE: ServerShape = ServerShape {
     layout: Layout::Flat,
     toggle: Some("enabled"),
     drop_passthrough_env: false,
+    remote_needs_type: false,
     stdio_type: None,
     http_type: None,
     url_key: "url",
@@ -1215,6 +1238,7 @@ pub const GEMINI_SHAPE: ServerShape = ServerShape {
     layout: Layout::Flat,
     toggle: None,
     drop_passthrough_env: false,
+    remote_needs_type: false,
     stdio_type: None,
     http_type: None,
     url_key: "httpUrl",
@@ -1233,6 +1257,7 @@ pub const DEVIN_SHAPE: ServerShape = ServerShape {
     layout: Layout::Flat,
     toggle: Some("disabled"),
     drop_passthrough_env: false,
+    remote_needs_type: false,
     stdio_type: None,
     http_type: None,
     url_key: "url",
@@ -1250,8 +1275,9 @@ pub const DEVIN_SHAPE: ServerShape = ServerShape {
 /// documented, so `${VAR}` is written as is.
 pub const ANTIGRAVITY_SHAPE: ServerShape = ServerShape {
     layout: Layout::Flat,
-    toggle: None,
+    toggle: Some("disabled"),
     drop_passthrough_env: false,
+    remote_needs_type: false,
     stdio_type: None,
     http_type: None,
     url_key: "serverUrl",
@@ -1279,6 +1305,16 @@ pub const OPENCODE_SHAPE: ServerShape = ServerShape {
     env_refs: EnvRefStyle::OpenCode,
     toggle: Some("enabled"),
     drop_passthrough_env: false,
+    remote_needs_type: false,
+};
+
+/// OpenCode 2's native `mcp.servers`: the V1 entry shape, turned off with
+/// `disabled: true` instead of `enabled: false`
+/// (https://opencode.ai/v2/docs/mcp-servers/). Read only: conforme writes the
+/// V1 shape, which both versions load.
+pub const OPENCODE_V2_SHAPE: ServerShape = ServerShape {
+    toggle: Some("disabled"),
+    ..OPENCODE_SHAPE
 };
 
 /// Kilo Code `mcp`: OpenCode's shape with no variable reference — Kilo
@@ -1287,6 +1323,7 @@ pub const OPENCODE_SHAPE: ServerShape = ServerShape {
 pub const KILO_SHAPE: ServerShape = ServerShape {
     env_refs: EnvRefStyle::Literal,
     drop_passthrough_env: true,
+    remote_needs_type: false,
     ..OPENCODE_SHAPE
 };
 
@@ -1421,16 +1458,27 @@ impl ServerShape {
     /// express (see `json_settings::is_expressible_server`) or that is
     /// disabled is skipped; the merge keeps it in place.
     pub fn read(&self, servers: &serde_json::Value) -> Vec<NormalizedMcpServer> {
-        canonicalize_env_refs(parse_servers(servers), self.env_refs)
+        let servers = parse_servers(servers, |entry| self.is_off(entry), self.remote_needs_type);
+        canonicalize_env_refs(servers, self.env_refs)
+    }
+
+    /// Whether the tool's own toggle turns this entry off. A tool without one
+    /// (Claude Code, Cursor, Gemini CLI, …) loads an entry whatever key it
+    /// carries.
+    fn is_off(&self, entry: &serde_json::Value) -> bool {
+        match self.toggle {
+            Some("enabled") => entry.get("enabled").and_then(|v| v.as_bool()) == Some(false),
+            Some(key) => entry.get(key).and_then(|v| v.as_bool()) == Some(true),
+            None => false,
+        }
     }
 
     /// Read the servers of an MCP JSON file written in this shape (see
     /// [`parse_mcp_json`] for the keys it looks under).
     pub fn read_file(&self, content: &str) -> Result<Vec<NormalizedMcpServer>> {
-        Ok(canonicalize_env_refs(
-            parse_mcp_json(content)?,
-            self.env_refs,
-        ))
+        Ok(servers_object(content)?
+            .map(|servers| self.read(&servers))
+            .unwrap_or_default())
     }
 }
 
@@ -1440,7 +1488,11 @@ impl ServerShape {
 /// Antigravity `serverUrl`); `command` is a string with `args`, or
 /// OpenCode's `[cmd, ...args]`; the environment is `env` or OpenCode's
 /// `environment`.
-fn parse_servers(servers: &serde_json::Value) -> Vec<NormalizedMcpServer> {
+fn parse_servers(
+    servers: &serde_json::Value,
+    is_off: impl Fn(&serde_json::Value) -> bool,
+    remote_needs_type: bool,
+) -> Vec<NormalizedMcpServer> {
     let Some(servers) = servers.as_object() else {
         return Vec::new();
     };
@@ -1449,9 +1501,7 @@ fn parse_servers(servers: &serde_json::Value) -> Vec<NormalizedMcpServer> {
         // Zed extension servers, Claude SDK servers and OpenCode's
         // `{ "enabled": false }` toggles have no portable form, and a disabled
         // server is not part of the config.
-        if !crate::json_settings::is_expressible_server(value)
-            || crate::json_settings::is_disabled_server(value)
-        {
+        if !crate::json_settings::is_expressible_server(value) || is_off(value) {
             continue;
         }
         let Some(obj) = value.as_object() else {
@@ -1459,6 +1509,9 @@ fn parse_servers(servers: &serde_json::Value) -> Vec<NormalizedMcpServer> {
         };
 
         let transport_type = obj.get("type").and_then(|v| v.as_str());
+        if remote_needs_type && transport_type.is_none() && !obj.contains_key("command") {
+            continue;
+        }
         // Devin declares its transport under `transport` (`http`, `sse`), not `type`.
         let transport_key = obj.get("transport").and_then(|v| v.as_str());
         let url_value = ["url", "httpUrl", "serverUrl"]
@@ -1494,10 +1547,19 @@ fn parse_servers(servers: &serde_json::Value) -> Vec<NormalizedMcpServer> {
                     .unwrap_or_default()
             };
             // A string command takes its `args`; OpenCode's array holds them
-            // already, and an `args` left beside it is ignored.
+            // already, and an `args` left beside it is ignored. Zed's legacy
+            // `command: { path, args, env }` is still loaded by Zed, which
+            // migrates its settings in memory.
             let parts = match obj.get("command") {
                 Some(serde_json::Value::String(command)) => std::iter::once(command.clone())
                     .chain(obj.get("args").map(strings).unwrap_or_default())
+                    .collect(),
+                Some(serde_json::Value::Object(legacy)) => legacy
+                    .get("path")
+                    .and_then(|p| p.as_str())
+                    .map(str::to_string)
+                    .into_iter()
+                    .chain(legacy.get("args").map(strings).unwrap_or_default())
                     .collect(),
                 Some(command) => strings(command),
                 None => Vec::new(),
@@ -1509,7 +1571,10 @@ fn parse_servers(servers: &serde_json::Value) -> Vec<NormalizedMcpServer> {
             }
         };
 
-        let env = json_string_map(obj.get("env").or_else(|| obj.get("environment")));
+        let mut env = json_string_map(obj.get("command").and_then(|c| c.get("env")));
+        env.extend(json_string_map(
+            obj.get("env").or_else(|| obj.get("environment")),
+        ));
 
         result.push(NormalizedMcpServer {
             name: name.clone(),
@@ -1599,8 +1664,19 @@ pub fn parse_opencode_agent_object(
                 .and_then(|v| v.as_str())
                 .is_some_and(|s| !s.trim().is_empty())
         };
+        // OpenCode 2's native `agents` entries hold their prompt in `system`
+        // and are turned off with `disabled`.
+        let prompt = if has_text("prompt") {
+            "prompt"
+        } else {
+            "system"
+        };
+        let disabled = ["disabled", "disable"]
+            .iter()
+            .any(|key| entry.get(*key).and_then(|v| v.as_bool()) == Some(true));
         if OPENCODE_BUILTIN_AGENTS.contains(&name.as_str())
-            || !(has_text("prompt") || has_text("description"))
+            || disabled
+            || !(has_text(prompt) || has_text("description"))
         {
             continue;
         }
@@ -1612,7 +1688,7 @@ pub fn parse_opencode_agent_object(
                 .unwrap_or("")
                 .to_string(),
             content: entry
-                .get("prompt")
+                .get(prompt)
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
@@ -1717,13 +1793,21 @@ pub fn merge_opencode_agents(
 /// `httpUrl`, Zed remote `url`; a Devin Desktop-style `serverUrl` is also
 /// accepted for hand-written files).
 pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
+    Ok(servers_object(content)?
+        .map(|servers| parse_servers(&servers, crate::json_settings::is_disabled_server, false))
+        .unwrap_or_default())
+}
+
+/// The servers object of an MCP JSON file: under `mcpServers`, `servers`
+/// (VS Code) or `context_servers` (Zed).
+fn servers_object(content: &str) -> Result<Option<serde_json::Value>> {
     // JSONC-tolerant: Zed, VS Code and Zoo Code settings may hold comments
     // and trailing commas.
-    let root = crate::json_settings::parse_jsonc(content).context("failed to parse MCP JSON")?;
-    let servers = ["mcpServers", "servers", "context_servers"]
+    let mut root =
+        crate::json_settings::parse_jsonc(content).context("failed to parse MCP JSON")?;
+    Ok(["mcpServers", "servers", "context_servers"]
         .iter()
-        .find_map(|key| root.get(*key));
-    Ok(servers.map(parse_servers).unwrap_or_default())
+        .find_map(|key| root.get_mut(*key).map(serde_json::Value::take)))
 }
 
 #[cfg(test)]
@@ -2469,6 +2553,28 @@ callback_port = 5555
                 ("http" | "bare", McpTransport::Http { url, .. }) => assert_eq!(url, "u"),
                 (name, other) => panic!("unexpected transport for {name}: {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn test_vibe_explicit_header_wins_over_api_key_env() {
+        // Vibe sends an explicit `auth.headers` entry rather than the one
+        // `api_key_env` would build (vibe/core/config/models.py, `http_headers`).
+        let toml = r#"[[mcp_servers]]
+name = "api"
+transport = "streamable-http"
+url = "https://e.com/mcp"
+auth = { type = "static", api_key_env = "TOKEN", api_key_header = "Authorization", api_key_format = "Bearer {token}", headers = { Authorization = "Bearer fixed" } }
+"#;
+        let servers = parse_vibe_mcp_toml(toml).unwrap();
+        match &servers[0].transport {
+            McpTransport::Http { headers, .. } => {
+                assert_eq!(
+                    headers.get("Authorization").map(String::as_str),
+                    Some("Bearer fixed")
+                );
+            }
+            other => panic!("{other:?}"),
         }
     }
 

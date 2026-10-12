@@ -132,6 +132,7 @@ pub fn print_help_ai() {
             "No ${VAR} expansion: references written as env_vars, bearer_token_env_var, env_http_headers",
             "Skills synced to .agents/skills/<name>/SKILL.md",
             "Manual skills preserve their Codex agents/openai.yaml invocation policy",
+            "MCP server names must match ^[a-zA-Z0-9_:@/.-]+$ (Codex refuses others; sync warns)",
             "Agents synced to .codex/agents/<name>.toml (name, description, developer_instructions; loaded only in a trusted project; built-in default, worker and explorer are never written)",
             "Legacy SSE servers are written as streamable HTTP with a warning (Codex has no SSE transport)",
         ],
@@ -146,6 +147,7 @@ pub fn print_help_ai() {
             "Legacy SSE servers written as type remote (read back as streamable HTTP)",
             "Agents merged into the same file under `agent` key + per-agent .opencode/agents/<name>.md (model only as provider/model)",
             "Agents read from .opencode/agents/, .opencode/agent/ and the `agent` key together (markdown wins); built-in agent names (build, plan, general, …) are neither written nor read",
+            "OpenCode 2 loads the V1 shape conforme writes; its native mcp.servers and agents keys are read too, and a native entry that shadows one conforme writes is warned about",
             "Skills read from .opencode/skills/ and .opencode/skill/ only; OpenCode also loads .claude/skills/ and .agents/skills/, so a skill synced there too appears twice",
         ],
     );

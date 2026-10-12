@@ -150,7 +150,7 @@ impl AiToolAdapter for CopilotAdapter {
         let cli_path = project_root.join(".github").join("mcp.json");
         if cli_path.exists() {
             let cli_content = crate::config::read_text(&cli_path)?;
-            for server in crate::mcp::CLAUDE_SHAPE.read_file(&cli_content)? {
+            for server in crate::mcp::parse_mcp_json(&cli_content)? {
                 if !mcp_servers.iter().any(|s| s.name == server.name) {
                     mcp_servers.push(server);
                 }

@@ -1027,7 +1027,8 @@ fn write_and_clean_target(
 }
 
 /// Codex loads at most `project_doc_max_bytes` (32 KiB by default) of
-/// instruction files and truncates the rest (codex-rs/config/defaults.toml,
+/// instruction files and truncates the rest
+/// (`DEFAULT_PROJECT_DOC_MAX_BYTES`, codex-rs/config/src/config_toml.rs;
 /// core/src/agents_md.rs).
 const CODEX_INSTRUCTION_BUDGET: u64 = 32 * 1024;
 
