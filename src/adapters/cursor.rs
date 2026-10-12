@@ -471,7 +471,11 @@ mod tests {
 
         let skill_file = files
             .iter()
-            .find(|(p, _)| p.to_string_lossy().contains(".cursor/skills/"))
+            .find(|(p, _)| {
+                p.to_string_lossy()
+                    .replace('\\', "/")
+                    .contains(".cursor/skills/")
+            })
             .unwrap();
         assert!(skill_file.0.ends_with("SKILL.md"));
         assert!(skill_file.1.contains("name: deploy"));
@@ -500,7 +504,11 @@ mod tests {
 
         let agent_file = files
             .iter()
-            .find(|(p, _)| p.to_string_lossy().contains(".cursor/agents/"))
+            .find(|(p, _)| {
+                p.to_string_lossy()
+                    .replace('\\', "/")
+                    .contains(".cursor/agents/")
+            })
             .unwrap();
         assert!(agent_file.0.ends_with("reviewer.md"));
         assert!(agent_file.1.contains("name: reviewer"));
@@ -532,7 +540,11 @@ mod tests {
         let files = adapter.generate(root, &config).unwrap();
 
         let mcp_file = files.iter().find(|(p, _)| p.ends_with("mcp.json")).unwrap();
-        assert!(mcp_file.0.to_string_lossy().contains(".cursor/mcp.json"));
+        assert!(mcp_file
+            .0
+            .to_string_lossy()
+            .replace('\\', "/")
+            .contains(".cursor/mcp.json"));
         assert!(mcp_file.1.contains("mcpServers"));
         assert!(mcp_file.1.contains("test-server"));
         assert!(mcp_file.1.contains("npx"));

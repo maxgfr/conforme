@@ -331,6 +331,7 @@ mod tests {
         assert!(files[0]
             .0
             .to_string_lossy()
+            .replace('\\', "/")
             .contains(".kiro/steering/general.md"));
         assert!(files[0].1.contains("inclusion: always"));
         assert!(files[0].1.contains("Be helpful."));
@@ -419,6 +420,7 @@ mod tests {
         assert!(skill_file
             .0
             .to_string_lossy()
+            .replace('\\', "/")
             .contains(".kiro/skills/deploy/SKILL.md"));
         assert!(skill_file.1.contains("name: deploy"));
         assert!(skill_file.1.contains("description: Deploy app"));
@@ -447,7 +449,11 @@ mod tests {
 
         let agent_file = files
             .iter()
-            .find(|(p, _)| p.to_string_lossy().contains(".kiro/agents/"))
+            .find(|(p, _)| {
+                p.to_string_lossy()
+                    .replace('\\', "/")
+                    .contains(".kiro/agents/")
+            })
             .unwrap();
         assert!(agent_file.0.ends_with("reviewer.md"));
         assert!(agent_file.1.contains("description: Code review"));
@@ -479,6 +485,7 @@ mod tests {
         assert!(mcp_file
             .0
             .to_string_lossy()
+            .replace('\\', "/")
             .contains(".kiro/settings/mcp.json"));
         assert!(mcp_file.1.contains("mcpServers"));
         assert!(mcp_file.1.contains("test-server"));

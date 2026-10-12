@@ -1736,7 +1736,11 @@ mod tests {
         }];
         let files = generate_skills(Path::new("/tmp/test"), &skills, &CLAUDE_SKILLS).unwrap();
         assert_eq!(files.len(), 2); // SKILL.md + conforme marker
-        assert!(files[0].0.to_string_lossy().ends_with("SKILL.md"));
+        assert!(files[0]
+            .0
+            .to_string_lossy()
+            .replace('\\', "/")
+            .ends_with("SKILL.md"));
         assert!(files[0].1.contains("name: deploy"));
         assert!(files[0].1.contains("description: Deploy the app"));
         assert!(files[0].1.contains("allowed-tools: Bash"));
@@ -1757,6 +1761,7 @@ mod tests {
         assert!(files[0]
             .0
             .to_string_lossy()
+            .replace('\\', "/")
             .ends_with(".github/skills/deploy-app/SKILL.md"));
         assert!(files[0].1.contains("name: deploy-app"));
         assert!(files[0].1.contains("description: Deploy the app"));
@@ -1776,7 +1781,11 @@ mod tests {
         }];
         let files = generate_copilot_agents(Path::new("/tmp/test"), &agents).unwrap();
         assert_eq!(files.len(), 1);
-        assert!(files[0].0.to_string_lossy().ends_with(".agent.md"));
+        assert!(files[0]
+            .0
+            .to_string_lossy()
+            .replace('\\', "/")
+            .ends_with(".agent.md"));
         assert!(files[0].1.contains("name: reviewer"));
         assert!(files[0].1.contains("model: gpt-4o"));
     }

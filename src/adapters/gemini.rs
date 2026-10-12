@@ -349,7 +349,11 @@ mod tests {
         assert_eq!(files.len(), 3); // + conforme marker
         let skill_file = files
             .iter()
-            .find(|(p, _)| p.to_string_lossy().contains(".gemini/skills/"))
+            .find(|(p, _)| {
+                p.to_string_lossy()
+                    .replace('\\', "/")
+                    .contains(".gemini/skills/")
+            })
             .unwrap();
         assert!(skill_file.0.ends_with("SKILL.md"));
         assert!(skill_file.1.contains("name: deploy"));
@@ -379,7 +383,11 @@ mod tests {
         assert_eq!(files.len(), 2);
         let agent_file = files
             .iter()
-            .find(|(p, _)| p.to_string_lossy().contains(".gemini/agents/"))
+            .find(|(p, _)| {
+                p.to_string_lossy()
+                    .replace('\\', "/")
+                    .contains(".gemini/agents/")
+            })
             .unwrap();
         assert!(agent_file.0.ends_with("reviewer.md"));
         assert!(agent_file.1.contains("kind: local"));

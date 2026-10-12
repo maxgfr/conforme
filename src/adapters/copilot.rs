@@ -315,6 +315,7 @@ mod tests {
         assert!(files[0]
             .0
             .to_string_lossy()
+            .replace('\\', "/")
             .contains(".github/copilot-instructions.md"));
         assert!(files[0].1.contains("Be helpful."));
     }
@@ -334,6 +335,7 @@ mod tests {
         assert!(api_rule
             .0
             .to_string_lossy()
+            .replace('\\', "/")
             .contains(".github/instructions/"));
         assert!(api_rule.1.contains("applyTo:"));
         assert!(api_rule.1.contains("src/api/**"));
@@ -385,14 +387,16 @@ mod tests {
         assert!(skill_file
             .0
             .to_string_lossy()
+            .replace('\\', "/")
             .contains(".github/skills/deploy/SKILL.md"));
         assert!(skill_file.1.contains("name: deploy"));
         assert!(skill_file.1.contains("description: Deploy app"));
         assert!(skill_file.1.contains("allowed-tools: Bash"));
         assert!(skill_file.1.contains("Run deploy."));
-        assert!(!files
-            .iter()
-            .any(|(p, _)| p.to_string_lossy().contains(".github/prompts/")));
+        assert!(!files.iter().any(|(p, _)| p
+            .to_string_lossy()
+            .replace('\\', "/")
+            .contains(".github/prompts/")));
     }
 
     #[test]
@@ -419,7 +423,11 @@ mod tests {
             .iter()
             .find(|(p, _)| p.ends_with("reviewer.agent.md"))
             .unwrap();
-        assert!(agent_file.0.to_string_lossy().contains(".github/agents/"));
+        assert!(agent_file
+            .0
+            .to_string_lossy()
+            .replace('\\', "/")
+            .contains(".github/agents/"));
         assert!(agent_file.1.contains("name: reviewer"));
         assert!(agent_file.1.contains("description: Code review"));
         assert!(agent_file.1.contains("model: gpt-4o"));

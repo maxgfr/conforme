@@ -361,6 +361,7 @@ mod tests {
         assert!(files[0]
             .0
             .to_string_lossy()
+            .replace('\\', "/")
             .contains(".opencode/skills/deploy/SKILL.md"));
         assert!(files[0].1.contains("name: deploy"));
         assert!(files[0].1.contains("description: Deploy the app"));
@@ -422,7 +423,11 @@ mod tests {
         assert_eq!(files.len(), 2);
         let md_file = files
             .iter()
-            .find(|(p, _)| p.to_string_lossy().contains(".opencode/agents/reviewer.md"))
+            .find(|(p, _)| {
+                p.to_string_lossy()
+                    .replace('\\', "/")
+                    .contains(".opencode/agents/reviewer.md")
+            })
             .expect("missing markdown agent file");
         assert!(md_file.1.contains("description: Code review"));
         assert!(md_file.1.contains("mode: subagent"));

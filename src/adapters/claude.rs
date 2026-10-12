@@ -502,6 +502,7 @@ mod tests {
         assert!(api_rule
             .0
             .to_string_lossy()
+            .replace('\\', "/")
             .contains(".claude/rules/api-rules.md"));
         assert!(api_rule.1.contains("paths:"));
         assert!(api_rule.1.contains("src/api/**"));
@@ -531,6 +532,7 @@ mod tests {
         assert!(skill_file
             .0
             .to_string_lossy()
+            .replace('\\', "/")
             .contains(".claude/skills/deploy/SKILL.md"));
         assert!(skill_file.1.contains("name: deploy"));
         assert!(skill_file.1.contains("description: Deploy app"));
@@ -560,7 +562,11 @@ mod tests {
 
         let agent_file = files
             .iter()
-            .find(|(p, _)| p.to_string_lossy().contains(".claude/agents/"))
+            .find(|(p, _)| {
+                p.to_string_lossy()
+                    .replace('\\', "/")
+                    .contains(".claude/agents/")
+            })
             .unwrap();
         assert!(agent_file.0.ends_with("reviewer.md"));
         assert!(agent_file.1.contains("description: Code review"));

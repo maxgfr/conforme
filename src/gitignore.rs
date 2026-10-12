@@ -432,7 +432,7 @@ mod tests {
                         .strip_prefix(dir.path())
                         .unwrap()
                         .to_string_lossy()
-                        .to_string();
+                        .replace('\\', "/");
                     let ignored = patterns.iter().any(|p| pattern_matches(p, &rel));
                     if adapter.is_shared_file(path) {
                         assert!(!ignored, "{}: shared {rel} is ignored", adapter.id());

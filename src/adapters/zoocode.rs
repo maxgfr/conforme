@@ -359,6 +359,7 @@ mod tests {
         assert!(files[0]
             .0
             .to_string_lossy()
+            .replace('\\', "/")
             .contains(".roo/skills/deploy/SKILL.md"));
         assert!(files[0].1.contains("name: deploy"));
         assert!(files[0].1.contains("description: Deploy the app"));
