@@ -1399,10 +1399,9 @@ impl ServerShape {
     /// `type` `gemini mcp add -t http` writes) never contradicts what conforme
     /// writes.
     pub fn owned_keys(&self) -> Vec<&'static str> {
-        let mut keys = vec!["type", "command", self.env_key()];
-        if self.layout == Layout::Flat {
-            keys.push("args");
-        }
+        // `args` is owned in OpenCode's layout too: one left beside the
+        // `[cmd, ...args]` array would contradict it.
+        let mut keys = vec!["type", "command", "args", self.env_key()];
         keys.extend(["url", "httpUrl", "serverUrl", "headers"]);
         keys.extend(self.http_extra.map(|(key, _)| key));
         keys.extend(
@@ -1494,12 +1493,15 @@ fn parse_servers(servers: &serde_json::Value) -> Vec<NormalizedMcpServer> {
                     })
                     .unwrap_or_default()
             };
-            let mut parts = match obj.get("command") {
-                Some(serde_json::Value::String(command)) => vec![command.clone()],
+            // A string command takes its `args`; OpenCode's array holds them
+            // already, and an `args` left beside it is ignored.
+            let parts = match obj.get("command") {
+                Some(serde_json::Value::String(command)) => std::iter::once(command.clone())
+                    .chain(obj.get("args").map(strings).unwrap_or_default())
+                    .collect(),
                 Some(command) => strings(command),
                 None => Vec::new(),
             };
-            parts.extend(obj.get("args").map(strings).unwrap_or_default());
             let mut parts = parts.into_iter();
             McpTransport::Stdio {
                 command: parts.next().unwrap_or_default(),
@@ -2468,6 +2470,29 @@ callback_port = 5555
                 (name, other) => panic!("unexpected transport for {name}: {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn test_opencode_array_command_ignores_stale_args() {
+        // A leftover `args` beside OpenCode's `[cmd, ...args]` is not read,
+        // and the merge drops it.
+        let mcp = serde_json::json!({
+            "fs": {"type": "local", "command": ["npx", "-y", "fs"], "args": ["-y", "fs"]}
+        });
+        let parsed = OPENCODE_SHAPE.read(&mcp);
+        assert_eq!(
+            parsed[0].transport,
+            McpTransport::Stdio {
+                command: "npx".into(),
+                args: vec!["-y".into(), "fs".into()],
+            }
+        );
+        let merged = crate::json_settings::merge_server_entries(
+            Some(&mcp),
+            OPENCODE_SHAPE.build(&parsed),
+            &OPENCODE_SHAPE.owned_keys(),
+        );
+        assert!(merged["fs"].get("args").is_none(), "{merged:?}");
     }
 
     #[test]
