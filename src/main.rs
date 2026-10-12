@@ -16,14 +16,27 @@ mod sync;
 mod validate;
 mod watch;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 
 fn main() -> Result<()> {
+    // Writing to a closed pipe (`conforme status | head`) ends the process
+    // quietly, as for any Unix tool, instead of panicking in `println!`.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     let args = cli::Cli::parse();
-    let project_root = args
-        .dir
-        .unwrap_or_else(|| std::env::current_dir().expect("cannot determine current directory"));
+    let project_root = match args.dir {
+        Some(dir) => {
+            if !dir.is_dir() {
+                anyhow::bail!("{} is not a directory", dir.display());
+            }
+            dir
+        }
+        None => std::env::current_dir().context("cannot determine the current directory")?,
+    };
 
     match args.command {
         cli::Command::Init { force } => sync::run_init(&project_root, force, args.verbose),

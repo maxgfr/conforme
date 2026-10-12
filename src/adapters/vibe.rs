@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{AiToolAdapter, ManagedDir, WriteReport};
+use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::NormalizedConfig;
 
 /// Mistral Vibe adapter.
@@ -158,21 +158,6 @@ impl AiToolAdapter for VibeAdapter {
                         .is_some_and(|stem| is_builtin_agent(&stem.to_string_lossy()))
             }),
         ]
-    }
-
-    fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport> {
-        let mut report = WriteReport {
-            files_written: Vec::new(),
-            files_unchanged: Vec::new(),
-        };
-        for (path, content) in self.generate(project_root, config)? {
-            if self.is_shared_file(&path) {
-                crate::adapters::write_if_changed_atomic(&path, &content, &mut report)?;
-            } else {
-                crate::adapters::write_if_changed(&path, &content, &mut report)?;
-            }
-        }
-        Ok(report)
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {

@@ -99,19 +99,10 @@ pub trait AiToolAdapter: Send + Sync {
         Vec::new()
     }
 
-    /// Write normalized config into this tool's format.
+    /// Write normalized config into this tool's format (see [`write_files`]).
     /// Returns a report of what files were written/unchanged.
-    /// Default implementation calls generate() then write_if_changed for each file.
     fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport> {
-        let generated = self.generate(project_root, config)?;
-        let mut report = WriteReport {
-            files_written: Vec::new(),
-            files_unchanged: Vec::new(),
-        };
-        for (path, content) in generated {
-            write_if_changed(&path, &content, &mut report)?;
-        }
-        Ok(report)
+        write_files(self, &self.generate(project_root, config)?)
     }
 
     /// Generate expected file contents without writing.
@@ -281,7 +272,8 @@ pub fn clean_orphans(
         });
     }
     for path in find_orphans(managed_dirs, expected_files)? {
-        std::fs::remove_file(&path)?;
+        std::fs::remove_file(&path)
+            .with_context(|| format!("failed to remove {}", path.display()))?;
         remove_emptied_dirs(&path, managed_dirs);
         cleaned.push(path);
     }
@@ -409,6 +401,28 @@ pub fn all_adapters() -> Vec<Box<dyn AiToolAdapter>> {
         Box::new(kilo::KiloAdapter),
         Box::new(antigravity::AntigravityAdapter),
     ]
+}
+
+/// Write the files an adapter generated, each only when its content changed.
+/// A file the tool shares with the user ([`AiToolAdapter::is_shared_file`]:
+/// a settings file holding their own keys) is replaced atomically, so an
+/// interrupted write never truncates it.
+pub fn write_files<A: AiToolAdapter + ?Sized>(
+    adapter: &A,
+    files: &[(PathBuf, String)],
+) -> Result<WriteReport> {
+    let mut report = WriteReport {
+        files_written: Vec::new(),
+        files_unchanged: Vec::new(),
+    };
+    for (path, content) in files {
+        if adapter.is_shared_file(path) {
+            write_if_changed_atomic(path, content, &mut report)?;
+        } else {
+            write_if_changed(path, content, &mut report)?;
+        }
+    }
+    Ok(report)
 }
 
 /// Write a file only if its content differs from what's already on disk.

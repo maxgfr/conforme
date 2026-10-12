@@ -73,9 +73,20 @@ fn static_patterns(id: &str) -> Vec<&'static str> {
     }
 }
 
+/// Whether sync writes to `id`: `only` and `exclude` respected.
+fn is_selected(config: &project_config::ProjectConfig, id: &str) -> bool {
+    config
+        .only
+        .as_ref()
+        .is_none_or(|only| only.iter().any(|o| o == id))
+        && config
+            .exclude
+            .as_ref()
+            .is_none_or(|exclude| !exclude.iter().any(|e| e == id))
+}
+
 /// Build the gitignore block content based on project config.
-fn build_gitignore_block(project_root: &Path) -> String {
-    let config = project_config::ProjectConfig::load(project_root);
+fn build_gitignore_block(project_root: &Path, config: &project_config::ProjectConfig) -> String {
     let source_id = config.source.as_deref().unwrap_or("agents.md");
 
     let all = adapters::all_adapters();
@@ -109,15 +120,7 @@ fn build_gitignore_block(project_root: &Path) -> String {
         if adapter.id() == source_id {
             continue;
         }
-        let selected = config
-            .only
-            .as_ref()
-            .is_none_or(|only| only.iter().any(|id| id == adapter.id()))
-            && config
-                .exclude
-                .as_ref()
-                .is_none_or(|exclude| !exclude.iter().any(|id| id == adapter.id()));
-        if !selected {
+        if !is_selected(config, adapter.id()) {
             continue;
         }
 
@@ -153,44 +156,55 @@ fn build_gitignore_block(project_root: &Path) -> String {
 
 /// Install conforme-managed entries into .gitignore.
 pub fn install(project_root: &Path, verbose: bool) -> Result<()> {
+    let config = project_config::ProjectConfig::load(project_root)?;
     let gitignore_path = project_root.join(".gitignore");
-    let block = build_gitignore_block(project_root);
+    let block = build_gitignore_block(project_root, &config);
 
-    if gitignore_path.exists() {
+    let (existing, updated) = if gitignore_path.exists() {
         let existing = std::fs::read_to_string(&gitignore_path)
             .with_context(|| format!("failed to read {}", gitignore_path.display()))?;
-
-        if existing.contains(BLOCK_START) {
-            // Replace existing block
-            let updated = replace_block(&existing, &block)?;
-            std::fs::write(&gitignore_path, updated)?;
-            println!("{} .gitignore updated.", "+".green());
+        let updated = if existing.contains(BLOCK_START) {
             if verbose {
-                println!("  Replaced existing conforme block");
+                println!("  Replacing the existing conforme block");
             }
+            replace_block(&existing, &block)?
         } else {
-            // Append block
+            if verbose {
+                println!("  Appending the conforme block");
+            }
             let mut content = existing.trim_end().to_string();
-            content.push_str("\n\n");
+            if !content.is_empty() {
+                content.push_str("\n\n");
+            }
             content.push_str(&block);
             content.push('\n');
-            std::fs::write(&gitignore_path, content)?;
-            println!("{} .gitignore updated.", "+".green());
-            if verbose {
-                println!("  Appended conforme block");
-            }
-        }
+            content
+        };
+        (Some(existing), updated)
     } else {
-        // Create new .gitignore
-        std::fs::write(&gitignore_path, format!("{block}\n"))?;
-        println!("{} .gitignore created.", "+".green());
-    }
+        (None, format!("{block}\n"))
+    };
 
-    // Print summary
-    let config = project_config::ProjectConfig::load(project_root);
     let source_id = config.source.as_deref().unwrap_or("agents.md");
-    let all = adapters::all_adapters();
-    let ignored_count = all.iter().filter(|a| a.id() != source_id).count();
+    if existing.as_deref() == Some(updated.as_str()) {
+        println!("{} .gitignore already up to date.", "=".green());
+        return Ok(());
+    }
+    std::fs::write(&gitignore_path, &updated)?;
+    println!(
+        "{} .gitignore {}.",
+        "+".green(),
+        if existing.is_some() {
+            "updated"
+        } else {
+            "created"
+        }
+    );
+
+    let ignored_count = adapters::all_adapters()
+        .iter()
+        .filter(|a| a.id() != source_id && is_selected(&config, a.id()))
+        .count();
     println!(
         "  {} generated tool config(s) ignored (source: {}).",
         ignored_count, source_id
@@ -442,7 +456,10 @@ mod tests {
     fn test_block_keeps_the_source_locations_tracked() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join(".conformerc.toml"), "source = \"codex\"\n").unwrap();
-        let block = build_gitignore_block(dir.path());
+        let block = build_gitignore_block(
+            dir.path(),
+            &project_config::ProjectConfig::load(dir.path()).unwrap(),
+        );
         // Zed also writes `.agents/skills/`, which is Codex's source.
         assert!(!block.contains(".agents/skills/"), "{block}");
         // Codex reads AGENTS.md itself: it is the source, not an output.
@@ -451,7 +468,10 @@ mod tests {
         assert!(!block.contains("settings.json"), "{block}");
 
         std::fs::write(dir.path().join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
-        let block = build_gitignore_block(dir.path());
+        let block = build_gitignore_block(
+            dir.path(),
+            &project_config::ProjectConfig::load(dir.path()).unwrap(),
+        );
         assert_eq!(block.matches(".agents/skills/").count(), 1, "{block}");
         assert!(!block.contains("CLAUDE.md"), "{block}");
         assert!(block.contains("\n/AGENTS.md\n"), "{block}");

@@ -9,26 +9,8 @@ use crate::config::NormalizedConfig;
 use crate::detect;
 use crate::hash::contents_match;
 use crate::markdown;
-use crate::project_config::ProjectConfig;
+use crate::project_config::{check_renamed_ids, ProjectConfig};
 use crate::validate;
-
-/// Tool ids conforme renamed, as `(old, new, version)`. An old id in
-/// `.conformerc.toml` or on the command line is an error rather than an
-/// unknown name to skip: an ignored `exclude = ["windsurf"]` would sync, and
-/// clean, the very tool the user meant to leave alone.
-const RENAMED_IDS: &[(&str, &str, &str)] = &[("windsurf", "devin", "4.0.0")];
-
-fn check_renamed_ids<'a>(ids: impl IntoIterator<Item = &'a str>) -> Result<()> {
-    for id in ids {
-        if let Some((old, new, version)) = RENAMED_IDS.iter().find(|(old, ..)| *old == id) {
-            bail!(
-                "the `{old}` tool id was renamed `{new}` in conforme {version}; \
-                 replace it in .conformerc.toml (source, only, exclude) and on the command line"
-            );
-        }
-    }
-    Ok(())
-}
 
 fn find_adapter(id: &str) -> Option<Box<dyn AiToolAdapter>> {
     adapters::all_adapters().into_iter().find(|a| a.id() == id)
@@ -142,51 +124,32 @@ fn selected_targets<'a>(
         .collect()
 }
 
-/// The files a target tool gets: what it generates from [`target_config`],
-/// minus the files the source reads (an OpenCode source reading `CLAUDE.md`
-/// keeps it out of the Claude Code target's reach).
-fn target_files(
-    project_root: &Path,
-    source_id: &str,
-    target: &dyn AiToolAdapter,
-    config: &NormalizedConfig,
-    source_files: &[std::path::PathBuf],
-) -> Result<Vec<(std::path::PathBuf, String)>> {
-    let config = target_config(project_root, source_id, target, config);
-    Ok(target
-        .generate(project_root, &config)?
-        .into_iter()
-        .filter(|(path, _)| !is_source_file(path, source_files))
-        .collect())
+/// A target's output, generated once per command.
+struct TargetOutput {
+    /// Every file the target generates from [`target_config`]: orphan
+    /// cleanup compares against all of them.
+    expected: Vec<(std::path::PathBuf, String)>,
+    /// The files sync writes: `expected` minus the files the source reads (an
+    /// OpenCode source reading `CLAUDE.md` keeps it out of the Claude Code
+    /// target's reach).
+    files: Vec<(std::path::PathBuf, String)>,
 }
 
-/// Write a target's files (see [`target_files`]). The adapter's own `write`
-/// runs unless a source file had to be left out of its output.
-fn write_target(
+fn target_output(
     project_root: &Path,
     source_id: &str,
     target: &dyn AiToolAdapter,
     config: &NormalizedConfig,
     source_files: &[std::path::PathBuf],
-) -> Result<adapters::WriteReport> {
+) -> Result<TargetOutput> {
     let config = target_config(project_root, source_id, target, config);
-    let generated = target.generate(project_root, &config)?;
-    if !generated
+    let expected = target.generate(project_root, &config)?;
+    let files = expected
         .iter()
-        .any(|(path, _)| is_source_file(path, source_files))
-    {
-        return target.write(project_root, &config);
-    }
-    let mut report = adapters::WriteReport {
-        files_written: Vec::new(),
-        files_unchanged: Vec::new(),
-    };
-    for (path, content) in generated {
-        if !is_source_file(&path, source_files) {
-            adapters::write_if_changed(&path, &content, &mut report)?;
-        }
-    }
-    Ok(report)
+        .filter(|(path, _)| !is_source_file(path, source_files))
+        .cloned()
+        .collect();
+    Ok(TargetOutput { expected, files })
 }
 
 /// The AGENTS.md sync generates, when it does: a tool is the source, the
@@ -739,7 +702,7 @@ clean = true
 /// List what a later `sync` would remove (see [`target_orphans`]), after an
 /// `init` that left it in place.
 fn report_pending_orphans(project_root: &Path) -> Result<()> {
-    let project_cfg = ProjectConfig::load(project_root);
+    let project_cfg = ProjectConfig::load(project_root)?;
     let (config, source_id) = resolve_config(project_root, None, &project_cfg, false)?;
     if config.is_empty() || !project_cfg.clean {
         return Ok(());
@@ -782,7 +745,7 @@ pub fn run_sync(
     no_clean: bool,
     verbose: bool,
 ) -> Result<()> {
-    let project_cfg = ProjectConfig::load(project_root);
+    let project_cfg = ProjectConfig::load(project_root)?;
     let (config, source_id) = resolve_config(project_root, from, &project_cfg, verbose)?;
     refuse_source_changed_by_hand(project_root, &source_id)?;
 
@@ -866,113 +829,72 @@ pub fn run_sync(
     warn_agents_md_readers_without_agents_md(project_root, &source_id, &targets, &config)?;
     let codex_reads_agents_md =
         source_id == "codex" || targets.iter().any(|adapter| adapter.id() == "codex");
+    // One tool that cannot be synced (an unparsable settings file) does not
+    // stop the others; the command fails at the end.
+    let mut failed = Vec::new();
     for adapter in targets {
         // Warn about capability loss
         warn_capability_loss(adapter, project_root, &config);
         warn_rules_outside_agents_md(project_root, &source_id, adapter, &config)?;
 
-        if dry_run {
-            let generated =
-                target_files(project_root, &source_id, adapter, &config, &source_files)?;
-            println!("{} {} (dry-run):", ">".cyan(), adapter.name().bold());
-            for (path, expected) in &generated {
-                if path.exists() {
-                    let existing = std::fs::read_to_string(path)?;
-                    if contents_match(&existing, expected) {
-                        println!(
-                            "    {} {}",
-                            "unchanged".dimmed(),
-                            path.strip_prefix(project_root).unwrap_or(path).display()
-                        );
-                    } else {
-                        println!(
-                            "    {} {}",
-                            "would update".yellow(),
-                            path.strip_prefix(project_root).unwrap_or(path).display()
-                        );
-                        // Show diff in dry-run
-                        print_diff(&existing, expected);
-                    }
+        let synced = target_output(project_root, &source_id, adapter, &config, &source_files)
+            .and_then(|output| {
+                if dry_run {
+                    preview_target(project_root, &source_id, adapter, &output, should_clean)
+                        .map(|()| false)
                 } else {
-                    println!(
-                        "    {} {}",
-                        "would create".green(),
-                        path.strip_prefix(project_root).unwrap_or(path).display()
-                    );
+                    write_and_clean_target(
+                        project_root,
+                        &source_id,
+                        adapter,
+                        &output,
+                        should_clean,
+                        verbose,
+                    )
                 }
-            }
-        } else {
-            let report = write_target(project_root, &source_id, adapter, &config, &source_files)?;
-            if !report.files_written.is_empty() {
-                any_written = true;
-                println!("{} {}:", ">".green(), adapter.name().bold());
-                for path in &report.files_written {
-                    println!(
-                        "    {} {}",
-                        "wrote".green(),
-                        path.strip_prefix(project_root).unwrap_or(path).display()
-                    );
-                }
-            }
-            if verbose {
-                for path in &report.files_unchanged {
-                    println!(
-                        "    {} {}",
-                        "unchanged".dimmed(),
-                        path.strip_prefix(project_root).unwrap_or(path).display()
-                    );
-                }
-            }
-
-            // Clean orphans
-            if should_clean {
-                let managed_dirs = target_managed_dirs(project_root, &source_id, adapter);
-                if !managed_dirs.is_empty() {
-                    let target_config = target_config(project_root, &source_id, adapter, &config);
-                    let generated = adapter.generate(project_root, &target_config)?;
-                    match clean_orphans(&managed_dirs, &generated) {
-                        Ok(cleaned) => {
-                            for path in &cleaned {
-                                any_written = true;
-                                println!(
-                                    "    {} {}",
-                                    "cleaned".red(),
-                                    path.strip_prefix(project_root).unwrap_or(path).display()
-                                );
-                            }
-                        }
-                        Err(e) if verbose => {
-                            eprintln!("  {} Failed to clean orphans: {}", "!".yellow(), e);
-                        }
-                        _ => {}
-                    }
-                }
+            });
+        match synced {
+            Ok(written) => any_written |= written,
+            Err(e) => {
+                eprintln!("{} {}: {e:#}", "x".red(), adapter.name().bold());
+                failed.push(adapter.name().to_string());
             }
         }
     }
 
     // Optionally generate AGENTS.md as output — unless the source tool reads
     // AGENTS.md itself, in which case that file is the source.
-    if let Some((agents_path, agents_content)) = (!dry_run)
-        .then(|| generated_agents_md(project_root, &source_id, &project_cfg, &config))
-        .flatten()
+    if let Some((agents_path, agents_content)) =
+        generated_agents_md(project_root, &source_id, &project_cfg, &config)
     {
-        let should_write = if agents_path.exists() {
-            let existing = std::fs::read_to_string(&agents_path)?;
-            !contents_match(&existing, &agents_content)
+        if dry_run {
+            preview_files(
+                project_root,
+                std::slice::from_ref(&(agents_path, agents_content)),
+            )?;
         } else {
-            true
-        };
-        if should_write {
-            std::fs::write(&agents_path, &agents_content)?;
-            any_written = true;
-            println!(
-                "{} {} (generated from {})",
-                ">".green(),
-                "AGENTS.md".bold(),
-                source_id
-            );
+            let should_write = match std::fs::read_to_string(&agents_path) {
+                Ok(existing) => !contents_match(&existing, &agents_content),
+                Err(_) => true,
+            };
+            if should_write {
+                std::fs::write(&agents_path, &agents_content)?;
+                any_written = true;
+                println!(
+                    "{} {} (generated from {})",
+                    ">".green(),
+                    "AGENTS.md".bold(),
+                    source_id
+                );
+            }
         }
+    }
+
+    if !failed.is_empty() {
+        bail!(
+            "{} could not be synced (see above); the other tools were.",
+            failed.join(", ")
+        );
     }
 
     if !dry_run && codex_reads_agents_md {
@@ -984,6 +906,91 @@ pub fn run_sync(
     }
 
     Ok(())
+}
+
+/// Print what a dry run would do to a target: each file it would create or
+/// update (with its diff), and each orphan it would remove.
+fn preview_target(
+    project_root: &Path,
+    source_id: &str,
+    target: &dyn AiToolAdapter,
+    output: &TargetOutput,
+    clean: bool,
+) -> Result<()> {
+    println!("{} {} (dry-run):", ">".cyan(), target.name().bold());
+    preview_files(project_root, &output.files)?;
+    if clean {
+        for path in target_orphans(project_root, source_id, target, output)? {
+            println!(
+                "    {} {}",
+                "would remove".red(),
+                path.strip_prefix(project_root).unwrap_or(&path).display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn preview_files(project_root: &Path, files: &[(std::path::PathBuf, String)]) -> Result<()> {
+    for (path, expected) in files {
+        let rel = path.strip_prefix(project_root).unwrap_or(path).display();
+        if path.exists() {
+            let existing = std::fs::read_to_string(path)?;
+            if contents_match(&existing, expected) {
+                println!("    {} {rel}", "unchanged".dimmed());
+            } else {
+                println!("    {} {rel}", "would update".yellow());
+                print_diff(&existing, expected);
+            }
+        } else {
+            println!("    {} {rel}", "would create".green());
+        }
+    }
+    Ok(())
+}
+
+/// Write a target's files, then remove its orphans; whether anything changed.
+fn write_and_clean_target(
+    project_root: &Path,
+    source_id: &str,
+    target: &dyn AiToolAdapter,
+    output: &TargetOutput,
+    clean: bool,
+    verbose: bool,
+) -> Result<bool> {
+    let report = adapters::write_files(target, &output.files)?;
+    let mut changed = !report.files_written.is_empty();
+    if changed {
+        println!("{} {}:", ">".green(), target.name().bold());
+        for path in &report.files_written {
+            println!(
+                "    {} {}",
+                "wrote".green(),
+                path.strip_prefix(project_root).unwrap_or(path).display()
+            );
+        }
+    }
+    if verbose {
+        for path in &report.files_unchanged {
+            println!(
+                "    {} {}",
+                "unchanged".dimmed(),
+                path.strip_prefix(project_root).unwrap_or(path).display()
+            );
+        }
+    }
+    if clean {
+        let managed_dirs = target_managed_dirs(project_root, source_id, target);
+        for path in clean_orphans(&managed_dirs, &output.expected)? {
+            changed = true;
+            println!(
+                "    {} {}",
+                "cleaned".red(),
+                path.strip_prefix(project_root).unwrap_or(&path).display()
+            );
+        }
+    }
+    Ok(changed)
 }
 
 /// Codex loads at most `project_doc_max_bytes` (32 KiB by default) of
@@ -1060,7 +1067,7 @@ fn warn_capability_loss(
 
 /// Run the `remove` command.
 pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Result<()> {
-    let project_cfg = ProjectConfig::load(project_root);
+    let project_cfg = ProjectConfig::load(project_root)?;
     check_renamed_ids(tools.iter().map(String::as_str))?;
     let (config, source_id) = resolve_config(project_root, None, &project_cfg, verbose)?;
 
@@ -1126,18 +1133,7 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
                 removed_files.push(path.clone());
             }
         }
-        // A directory left empty would keep the tool detected (`.cursor/`),
-        // so the next sync would write everything back.
-        for path in &removed_files {
-            for dir in path.ancestors().skip(1) {
-                if dir == project_root
-                    || !dir.starts_with(project_root)
-                    || std::fs::remove_dir(dir).is_err()
-                {
-                    break;
-                }
-            }
-        }
+        prune_empty_parents(project_root, &removed_files);
 
         if !removed_files.is_empty() {
             any_removed = true;
@@ -1156,14 +1152,7 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
                 adapter.name().dimmed()
             );
         }
-        if adapter.detect(project_root) {
-            println!(
-                "  {} {} is still detected, so the next sync writes its files back: add \"{}\" to `exclude` in .conformerc.toml to stop syncing it",
-                "!".yellow(),
-                adapter.name(),
-                adapter.id()
-            );
-        }
+        warn_still_detected(project_root, adapter.as_ref());
     }
 
     if !any_removed {
@@ -1173,20 +1162,101 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
     Ok(())
 }
 
-/// Run the `check` command.
-pub fn run_check(project_root: &Path, from: Option<&str>, verbose: bool) -> Result<()> {
-    let project_cfg = ProjectConfig::load(project_root);
-    let (config, source_id) = resolve_config(project_root, from, &project_cfg, verbose)?;
-    // What sync would refuse to touch, check explains rather than diffing.
+/// The source `check` and `diff` compare against, refused where `sync` would
+/// refuse it: they never report as in sync, or preview, what sync would not
+/// write.
+fn checked_source(
+    project_root: &Path,
+    from: Option<&str>,
+    project_cfg: &ProjectConfig,
+    verbose: bool,
+) -> Result<(NormalizedConfig, String)> {
+    let (config, source_id) = resolve_config(project_root, from, project_cfg, verbose)?;
     refuse_source_changed_by_hand(project_root, &source_id)?;
-
-    // Configs sync would refuse are not "in sync" either.
     if !validate::validate(&config, verbose) {
         bail!("Validation failed. Fix the errors above, then run `conforme sync`.");
     }
     if !config.is_empty() {
-        refuse_hand_written_agents_md(project_root, &source_id, &project_cfg, &config)?;
+        refuse_hand_written_agents_md(project_root, &source_id, project_cfg, &config)?;
     }
+    Ok((config, source_id))
+}
+
+/// A target's files that differ from what sync writes, then the orphans it
+/// would remove (when cleaning is on).
+fn target_differences(
+    project_root: &Path,
+    source_id: &str,
+    target: &dyn AiToolAdapter,
+    config: &NormalizedConfig,
+    source_files: &[std::path::PathBuf],
+    clean: bool,
+) -> Result<(TargetOutput, Vec<std::path::PathBuf>)> {
+    let output = target_output(project_root, source_id, target, config, source_files)?;
+    let mut differing = differing_files(&output.files)?;
+    if clean {
+        differing.extend(target_orphans(project_root, source_id, target, &output)?);
+    }
+    Ok((output, differing))
+}
+
+/// Remove the directories that deleting `removed` left empty, up to (not
+/// including) the project root: a directory left behind would keep the tool
+/// detected (`.cursor/`), so the next sync would write everything back.
+fn prune_empty_parents(project_root: &Path, removed: &[std::path::PathBuf]) {
+    for path in removed {
+        for dir in path.ancestors().skip(1) {
+            if dir == project_root
+                || !dir.starts_with(project_root)
+                || std::fs::remove_dir(dir).is_err()
+            {
+                break;
+            }
+        }
+    }
+}
+
+/// Say that a tool whose files were removed is still detected, and how to
+/// stop syncing it.
+fn warn_still_detected(project_root: &Path, adapter: &dyn AiToolAdapter) {
+    if adapter.detect(project_root) {
+        println!(
+            "  {} {} is still detected, so the next sync writes its files back: add \"{}\" to `exclude` in .conformerc.toml to stop syncing it",
+            "!".yellow(),
+            adapter.name(),
+            adapter.id()
+        );
+    }
+}
+
+/// Point `source` in `.conformerc.toml` at `output` when it named `source`,
+/// keeping the file's comments and layout.
+fn retarget_conformerc(project_root: &Path, source: &str, output: &str) -> Result<bool> {
+    let path = project_root.join(".conformerc.toml");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Ok(false);
+    };
+    let mut document: toml_edit::DocumentMut = text
+        .parse()
+        .with_context(|| format!("invalid {}", path.display()))?;
+    let Some(value) = document
+        .get_mut("source")
+        .and_then(toml_edit::Item::as_value_mut)
+        .filter(|v| v.as_str() == Some(source))
+    else {
+        return Ok(false);
+    };
+    let decor = value.decor().clone();
+    *value = toml_edit::Value::from(output);
+    *value.decor_mut() = decor;
+    std::fs::write(&path, document.to_string())?;
+    Ok(true)
+}
+
+/// Run the `check` command.
+pub fn run_check(project_root: &Path, from: Option<&str>, verbose: bool) -> Result<()> {
+    let project_cfg = ProjectConfig::load(project_root)?;
+    let (config, source_id) = checked_source(project_root, from, &project_cfg, verbose)?;
 
     let adapters = adapters::all_adapters();
     let mut out_of_sync = Vec::new();
@@ -1202,17 +1272,16 @@ pub fn run_check(project_root: &Path, from: Option<&str>, verbose: bool) -> Resu
 
     for adapter in targets {
         warn_rules_outside_agents_md(project_root, &source_id, adapter, &config)?;
-        let generated = target_files(project_root, &source_id, adapter, &config, &source_files)?;
-        let mut tool_diffs = differing_files(&generated)?;
         // An orphan sync would remove (a stale rule, a bundled file the source
         // dropped) is out of sync too.
-        tool_diffs.extend(target_orphans(
+        let (_, tool_diffs) = target_differences(
             project_root,
             &source_id,
             adapter,
             &config,
-            &project_cfg,
-        )?);
+            &source_files,
+            project_cfg.clean,
+        )?;
 
         if !tool_diffs.is_empty() {
             out_of_sync.push((adapter.name().to_string(), tool_diffs));
@@ -1257,7 +1326,7 @@ pub fn run_check(project_root: &Path, from: Option<&str>, verbose: bool) -> Resu
 pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
     let has_agents = detect::has_agents_md(project_root);
     let tools = detect::detect_tools(project_root);
-    let project_cfg = ProjectConfig::load(project_root);
+    let project_cfg = ProjectConfig::load(project_root)?;
 
     println!("{}", "Tool Status".bold().underline());
     println!();
@@ -1304,14 +1373,37 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
         );
     }
 
-    // Check sync status for each tool
-    let config = resolve_config(project_root, None, &project_cfg, false).ok();
+    // Check sync status for each tool. A source that cannot be read says
+    // why; one that reads back empty has nothing to compare.
+    let resolved = resolve_config(project_root, None, &project_cfg, false);
+    let no_source = (project_cfg.source.is_none() && !has_agents).then(|| "No source".to_string());
+    let (config, source_id, blocked) = match resolved {
+        Ok((config, id)) if config.is_empty() => {
+            println!(
+                "  {:<20} {}",
+                "",
+                format!("{id} has nothing to sync").yellow()
+            );
+            (config, id, Some("Nothing to sync".to_string()))
+        }
+        Ok((config, id)) => (config, id, None),
+        Err(e) => {
+            if no_source.is_none() {
+                println!(
+                    "  {:<20} {}",
+                    "",
+                    format!("cannot read the source: {e:#}").red()
+                );
+            }
+            (
+                NormalizedConfig::default(),
+                project_cfg.source.clone().unwrap_or_default(),
+                Some(no_source.unwrap_or_else(|| "Source unreadable".to_string())),
+            )
+        }
+    };
 
     let adapters = adapters::all_adapters();
-    let source_id = config
-        .as_ref()
-        .map(|(_, id)| id.clone())
-        .unwrap_or_default();
     let selected: Vec<&str> =
         selected_targets(&adapters, project_root, &source_id, None, &project_cfg)
             .iter()
@@ -1327,37 +1419,25 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
 
         let sync_status = if !tool.detected {
             "--".dimmed().to_string()
-        } else if let Some((ref cfg, ref source_id)) = config {
-            if adapter.id() == source_id.as_str() {
-                "Source".cyan().to_string()
-            } else if !selected.contains(&adapter.id()) {
-                "Excluded".dimmed().to_string()
-            } else {
-                match target_files(
-                    project_root,
-                    source_id,
-                    adapter.as_ref(),
-                    cfg,
-                    &source_files,
-                )
-                .and_then(|generated| differing_files(&generated))
-                .and_then(|mut differing| {
-                    differing.extend(target_orphans(
-                        project_root,
-                        source_id,
-                        adapter.as_ref(),
-                        cfg,
-                        &project_cfg,
-                    )?);
-                    Ok(differing)
-                }) {
-                    Ok(differing) if differing.is_empty() => "In sync".green().to_string(),
-                    Ok(_) => "Out of sync".yellow().to_string(),
-                    Err(_) => "Error".red().to_string(),
-                }
-            }
+        } else if adapter.id() == source_id.as_str() {
+            "Source".cyan().to_string()
+        } else if let Some(blocked) = &blocked {
+            blocked.dimmed().to_string()
+        } else if !selected.contains(&adapter.id()) {
+            "Excluded".dimmed().to_string()
         } else {
-            "No source".dimmed().to_string()
+            match target_differences(
+                project_root,
+                &source_id,
+                adapter.as_ref(),
+                &config,
+                &source_files,
+                project_cfg.clean,
+            ) {
+                Ok((_, differing)) if differing.is_empty() => "In sync".green().to_string(),
+                Ok(_) => "Out of sync".yellow().to_string(),
+                Err(e) => format!("{}: {e:#}", "Error".red()),
+            }
         };
 
         println!("  {:<20} {:<12} {}", tool.name, detected_str, sync_status);
@@ -1368,21 +1448,16 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
 }
 
 /// The orphans `sync` would remove from a target's managed directories (see
-/// [`adapters::find_orphans`]); none when cleaning is turned off.
+/// [`adapters::find_orphans`]).
 fn target_orphans(
     project_root: &Path,
     source_id: &str,
     target: &dyn AiToolAdapter,
-    config: &NormalizedConfig,
-    project_cfg: &ProjectConfig,
+    output: &TargetOutput,
 ) -> Result<Vec<std::path::PathBuf>> {
-    if !project_cfg.clean {
-        return Ok(Vec::new());
-    }
-    let config = target_config(project_root, source_id, target, config);
     adapters::find_orphans(
         &target_managed_dirs(project_root, source_id, target),
-        &target.generate(project_root, &config)?,
+        &output.expected,
     )
 }
 
@@ -1405,9 +1480,9 @@ pub fn run_diff(
     from: Option<&str>,
     verbose: bool,
 ) -> Result<()> {
-    let project_cfg = ProjectConfig::load(project_root);
-    let (config, source_id) = resolve_config(project_root, from, &project_cfg, verbose)?;
+    let project_cfg = ProjectConfig::load(project_root)?;
     check_renamed_ids(only.into_iter().flatten().map(String::as_str))?;
+    let (config, source_id) = checked_source(project_root, from, &project_cfg, verbose)?;
 
     let adapters = adapters::all_adapters();
     let mut any_diff = false;
@@ -1420,11 +1495,13 @@ pub fn run_diff(
     let mut outputs: Vec<Output> = Vec::new();
     if !config.is_empty() {
         for adapter in selected_targets(&adapters, project_root, &source_id, only, &project_cfg) {
-            outputs.push((
-                adapter.name().to_string(),
-                target_files(project_root, &source_id, adapter, &config, &source_files)?,
-                target_orphans(project_root, &source_id, adapter, &config, &project_cfg)?,
-            ));
+            let output = target_output(project_root, &source_id, adapter, &config, &source_files)?;
+            let orphans = if project_cfg.clean {
+                target_orphans(project_root, &source_id, adapter, &output)?
+            } else {
+                Vec::new()
+            };
+            outputs.push((adapter.name().to_string(), output.files, orphans));
         }
         if let Some(agents_md) =
             generated_agents_md(project_root, &source_id, &project_cfg, &config)
@@ -1739,6 +1816,7 @@ pub fn run_migrate(
             }
         }
 
+        prune_empty_parents(project_root, &removed_paths);
         if !removed_paths.is_empty() {
             any_removed = true;
             println!("{} {}:", "x".red(), source_adapter.name().bold());
@@ -1773,6 +1851,10 @@ pub fn run_migrate(
                 )?;
             }
         }
+        if retarget_conformerc(project_root, source, output)? {
+            println!("  {} .conformerc.toml: source = \"{output}\"", "+".green());
+        }
+        warn_still_detected(project_root, source_adapter.as_ref());
         if output == "codex" {
             warn_codex_instruction_budget(project_root);
         }
@@ -1787,7 +1869,7 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
 
     // With a tool source that does not read AGENTS.md, the next sync
     // regenerates AGENTS.md from that tool and the addition is lost.
-    if let Some(source) = ProjectConfig::load(project_root).source {
+    if let Some(source) = ProjectConfig::load(project_root)?.source {
         if find_adapter(&source).is_some_and(|a| !a.reads_agents_md(project_root)) {
             bail!(
                 "the source is {source}, so AGENTS.md is regenerated from it on every sync; \
@@ -1823,7 +1905,7 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
         content.push('\n');
     }
 
-    match target {
+    let added = match target {
         AddTarget::Rule {
             name,
             activation,
@@ -1836,7 +1918,7 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
             } else {
                 content.push_str("\n<!-- Add rule content here -->\n");
             }
-            println!("{} Added rule '{}'", "+".green(), name.bold());
+            format!("rule '{}'", name.bold())
         }
         AddTarget::Skill {
             name,
@@ -1856,7 +1938,7 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
             } else {
                 content.push_str("\n<!-- Add skill content here -->\n");
             }
-            println!("{} Added skill '{}'", "+".green(), name.bold());
+            format!("skill '{}'", name.bold())
         }
         AddTarget::Agent {
             name,
@@ -1880,7 +1962,7 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
             } else {
                 content.push_str("\n<!-- Add agent instructions here -->\n");
             }
-            println!("{} Added agent '{}'", "+".green(), name.bold());
+            format!("agent '{}'", name.bold())
         }
         AddTarget::Mcp {
             name,
@@ -1898,11 +1980,20 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
                 content.push_str(&format!("<!-- url: {u} -->\n"));
             }
             content.push('\n');
-            println!("{} Added MCP server '{}'", "+".green(), name.bold());
+            format!("MCP server '{}'", name.bold())
         }
-    }
+    };
 
+    // The addition must leave a config sync accepts: a duplicate or colliding
+    // name, or a glob activation without a pattern, is refused here rather
+    // than breaking every later sync.
+    let parsed = markdown::parse_agents_md(&content)
+        .context("the entry would not read back; AGENTS.md was not changed")?;
+    if !validate::validate(&parsed, verbose) {
+        bail!("Validation failed; AGENTS.md was not changed.");
+    }
     std::fs::write(&agents_path, &content)?;
+    println!("{} Added {added}", "+".green());
 
     if verbose {
         println!("  Updated AGENTS.md");

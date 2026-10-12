@@ -178,7 +178,7 @@ pub enum AddTarget {
         /// Server name
         name: String,
         /// Command for stdio transport
-        #[arg(long)]
+        #[arg(long, conflicts_with = "url", required_unless_present = "url")]
         command: Option<String>,
         /// Arguments (comma-separated)
         #[arg(long, default_value = "")]

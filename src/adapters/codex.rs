@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{AiToolAdapter, ManagedDir, WriteReport};
+use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::NormalizedConfig;
 
 /// OpenAI Codex CLI adapter.
@@ -151,22 +151,6 @@ impl AiToolAdapter for CodexAdapter {
             )
             .chain(builtin_agents)
             .collect()
-    }
-
-    fn write(&self, project_root: &Path, config: &NormalizedConfig) -> Result<WriteReport> {
-        let generated = self.generate(project_root, config)?;
-        let mut report = WriteReport {
-            files_written: Vec::new(),
-            files_unchanged: Vec::new(),
-        };
-        for (path, content) in generated {
-            if self.is_shared_file(&path) {
-                crate::adapters::write_if_changed_atomic(&path, &content, &mut report)?;
-            } else {
-                crate::adapters::write_if_changed(&path, &content, &mut report)?;
-            }
-        }
-        Ok(report)
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {

@@ -4092,3 +4092,242 @@ fn test_crlf_only_difference_is_in_sync() {
         .stdout(predicate::str::contains("All configs already in sync."));
     assert_eq!(fs::read_to_string(&path).unwrap(), crlf);
 }
+
+// ===== Audit pass 3: every command agrees =====
+
+#[test]
+fn test_conformerc_errors_stop_every_command() {
+    for (text, needle) in [
+        ("exlude = [\"zed\"]\n", "exlude"),
+        ("only = [\"cursr\"]\n", "cursr"),
+        ("source = \n", ".conformerc.toml"),
+    ] {
+        let dir = create_project_with_tools("# Rules\n\nBe careful.\n", &["cursor", "zed"]);
+        let root = dir.path();
+        fs::write(root.join(".conformerc.toml"), text).unwrap();
+        for args in [
+            &["sync"][..],
+            &["check"],
+            &["diff"],
+            &["status"],
+            &["watch"],
+            &["gitignore", "install"],
+        ] {
+            run(root, args)
+                .failure()
+                .stderr(predicate::str::contains(needle));
+        }
+        assert!(!root.join(".cursor/rules/general.mdc").exists());
+        assert!(!root.join(".gitignore").exists());
+    }
+}
+
+#[test]
+fn test_conformerc_gitignore_counts_selected_tools_and_is_idempotent() {
+    let dir = create_project_with_tools("# Rules\n\nBe careful.\n", &["cursor", "zed"]);
+    let root = dir.path();
+    fs::write(root.join(".conformerc.toml"), "only = [\"cursor\"]\n").unwrap();
+    run(root, &["gitignore", "install"])
+        .success()
+        .stdout(predicate::str::contains("1 generated tool config(s)"));
+    run(root, &["gitignore", "install"])
+        .success()
+        .stdout(predicate::str::contains("already up to date"));
+}
+
+#[test]
+fn test_dry_run_lists_orphans_and_agents_md() {
+    let dir = create_project_with_tools("# Rules\n\nBe careful.\n", &["cursor"]);
+    let root = dir.path();
+    run(root, &["sync"]).success();
+    fs::write(
+        root.join(".cursor/rules/gone.mdc"),
+        "---\nalwaysApply: true\n---\n\nGone.\n",
+    )
+    .unwrap();
+    run(root, &["sync", "-n"])
+        .success()
+        .stdout(predicate::str::contains("gone.mdc"));
+    assert!(root.join(".cursor/rules/gone.mdc").exists());
+
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("CLAUDE.md"), "Be careful.\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    run(root, &["sync", "-n"])
+        .success()
+        .stdout(predicate::str::contains("AGENTS.md"));
+    assert!(!root.join("AGENTS.md").exists());
+}
+
+#[test]
+fn test_diff_validates_and_refuses_a_switched_source() {
+    let dir =
+        create_project_with_tools("# Rules\n\n## Rule: a\nA.\n\n## Rule: a\nB.\n", &["cursor"]);
+    run(dir.path(), &["diff"])
+        .failure()
+        .stderr(predicate::str::contains("Validation failed"));
+
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("CLAUDE.md"), "Be careful.\n").unwrap();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    run(root, &["sync"]).success();
+    run(root, &["diff", "--from", "cursor"])
+        .failure()
+        .stderr(predicate::str::contains("generated from"));
+}
+
+#[test]
+fn test_status_reports_read_errors_and_empty_sources() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    fs::write(
+        root.join(".cursor/rules/bad.mdc"),
+        "---\nalwaysApply: true\n[[[ not yaml\n---\nx\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"cursor\"\n").unwrap();
+    run(root, &["status"])
+        .success()
+        .stdout(predicate::str::contains("bad.mdc"))
+        .stdout(predicate::str::contains("No source").not());
+
+    fs::remove_file(root.join(".cursor/rules/bad.mdc")).unwrap();
+    run(root, &["status"])
+        .success()
+        .stdout(predicate::str::contains("Out of sync").not())
+        .stdout(predicate::str::contains("nothing to sync"));
+}
+
+#[test]
+fn test_sync_continues_past_an_unparsable_settings_file() {
+    let agents_md = "# Rules\n\nBe careful.\n\n## MCP: on\n<!-- command: y -->\n";
+    let dir = create_project_with_tools(agents_md, &["cursor", "kiro"]);
+    let root = dir.path();
+    fs::write(root.join(".cursor/mcp.json"), "{ broken").unwrap();
+    run(root, &["sync"])
+        .failure()
+        .stderr(predicate::str::contains(".cursor/mcp.json"));
+    assert!(root.join(".kiro/settings/mcp.json").exists());
+    assert_eq!(
+        fs::read_to_string(root.join(".cursor/mcp.json")).unwrap(),
+        "{ broken"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_sync_fails_when_an_orphan_cannot_be_removed() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = create_project_with_tools("# Rules\n\nBe careful.\n", &["cursor"]);
+    let root = dir.path();
+    run(root, &["sync"]).success();
+    let rules = root.join(".cursor/rules");
+    fs::write(
+        rules.join("gone.mdc"),
+        "---\nalwaysApply: true\n---\n\nGone.\n",
+    )
+    .unwrap();
+    fs::set_permissions(&rules, fs::Permissions::from_mode(0o555)).unwrap();
+    let result = run(root, &["sync"]);
+    fs::set_permissions(&rules, fs::Permissions::from_mode(0o755)).unwrap();
+    result
+        .failure()
+        .stderr(predicate::str::contains("gone.mdc"));
+}
+
+#[test]
+fn test_migrate_finishes_the_switch() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor/rules/backend")).unwrap();
+    fs::write(
+        root.join(".cursor/rules/backend/rpc.mdc"),
+        "---\nalwaysApply: true\n---\n\nRPC.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".cursor/mcp.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join(".conformerc.toml"),
+        "# my config\nsource = \"cursor\" # the tool we use\nclean = true\n",
+    )
+    .unwrap();
+    run(
+        root,
+        &["migrate", "--source", "cursor", "--output", "claude"],
+    )
+    .success()
+    .stdout(predicate::str::contains("exclude"));
+    assert!(!root.join(".cursor/rules").exists());
+    let rc = fs::read_to_string(root.join(".conformerc.toml")).unwrap();
+    assert!(rc.contains("# my config"), "{rc}");
+    assert!(rc.contains("source = \"claude\""), "{rc}");
+    assert!(rc.contains("clean = true"), "{rc}");
+}
+
+#[test]
+fn test_add_validates_before_writing() {
+    let dir = create_project("# Rules\n\nBe careful.\n");
+    let root = dir.path();
+    run(root, &["add", "rule", "TS Rule", "--content", "A."]).success();
+    let before = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+    for name in ["TS Rule", "ts-rule"] {
+        run(root, &["add", "rule", name, "--content", "B."]).failure();
+        assert_eq!(fs::read_to_string(root.join("AGENTS.md")).unwrap(), before);
+    }
+    run(root, &["add", "rule", "globby", "--activation", "glob"]).failure();
+    run(root, &["add", "rule", "globby", "--activation", "glob "]).failure();
+    assert_eq!(fs::read_to_string(root.join("AGENTS.md")).unwrap(), before);
+    run(
+        root,
+        &[
+            "add",
+            "mcp",
+            "both",
+            "--command",
+            "x",
+            "--url",
+            "https://e.com",
+        ],
+    )
+    .failure();
+    run(root, &["add", "mcp", "neither"]).failure();
+    assert_eq!(fs::read_to_string(root.join("AGENTS.md")).unwrap(), before);
+    run(root, &["sync"]).success();
+}
+
+#[test]
+fn test_dir_that_does_not_exist_fails_clearly() {
+    conforme()
+        .args(["-C", "/nonexistent/conforme-project", "status"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("/nonexistent/conforme-project"));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_dir_status_into_a_closed_pipe_does_not_panic() {
+    let dir = create_project_with_tools("# Rules\n\nBe careful.\n", &["cursor", "claude", "kiro"]);
+    let bin = assert_cmd::cargo::cargo_bin("conforme");
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "'{}' -C '{}' status | head -c 1 >/dev/null",
+            bin.display(),
+            dir.path().display()
+        ))
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+}

@@ -12,7 +12,7 @@ use crate::project_config::ProjectConfig;
 
 /// Run the `watch` command — watch source files and auto-sync on changes.
 pub fn run_watch(project_root: &Path, only: Option<&[String]>, verbose: bool) -> Result<()> {
-    let project_cfg = ProjectConfig::load(project_root);
+    let project_cfg = ProjectConfig::load(project_root)?;
 
     // Determine what paths to watch based on the source
     let relevant = get_watch_paths(project_root, &project_cfg)?;
@@ -43,46 +43,56 @@ pub fn run_watch(project_root: &Path, only: Option<&[String]>, verbose: bool) ->
         &mut watched,
     );
 
+    // Each sync reads `.conformerc.toml` again (no `--from`), so an edit
+    // to it (a new source, `exclude`) applies from the next change on.
+    let sync = || {
+        crate::sync::run_sync(project_root, false, only, None, false, verbose)
+            .map_err(|e| eprintln!("{} Sync failed: {e:#}", "!".red()))
+            .ok();
+    };
+
     // Initial sync
-    if let Err(e) = crate::sync::run_sync(
-        project_root,
-        false,
-        only,
-        project_cfg.source.as_deref(),
-        false,
-        verbose,
-    ) {
-        eprintln!("{} Initial sync failed: {}", "!".red(), e);
-    }
+    sync();
+    let mut last = fingerprint(&relevant);
 
     // Watch loop
     loop {
         match rx.recv() {
             Ok(Ok(events)) => {
-                let relevant_now = get_watch_paths(project_root, &project_cfg)?;
-                let changed = events
-                    .iter()
-                    .any(|e| !is_noise(&e.path) && is_relevant(&e.path, &relevant_now));
-
-                if changed {
-                    println!("\n{} Change detected, syncing...", ">".cyan());
-                    if let Err(e) = crate::sync::run_sync(
-                        project_root,
-                        false,
-                        only,
-                        project_cfg.source.as_deref(),
-                        false,
-                        verbose,
-                    ) {
-                        eprintln!("{} Sync failed: {}", "!".red(), e);
+                let relevant_now = match ProjectConfig::load(project_root)
+                    .and_then(|cfg| get_watch_paths(project_root, &cfg))
+                {
+                    Ok(paths) => paths,
+                    Err(e) => {
+                        eprintln!("{} {e:#}", "!".red());
+                        continue;
                     }
+                };
+                // A watched path that disappeared is watched again once it
+                // is back; a directory created since is watched from now on.
+                for path in forget_missing(&mut watched) {
+                    debouncer.watcher().unwatch(&path).ok();
                 }
-                // A directory or file created since: watch it from now on.
                 add_watches(
                     debouncer.watcher(),
                     &watch_plan(project_root, &relevant_now),
                     &mut watched,
                 );
+
+                let touched = events.iter().any(|e| {
+                    !is_noise(&e.path)
+                        && (is_relevant(&e.path, &relevant_now)
+                            || (e.path.is_dir()
+                                && relevant_now.iter().any(|p| p.starts_with(&e.path))))
+                });
+                // Only a change of content syncs: the sync's own write of
+                // AGENTS.md, or a file saved unchanged, does not.
+                let now = fingerprint(&relevant_now);
+                if touched && now != last {
+                    println!("\n{} Change detected, syncing...", ">".cyan());
+                    sync();
+                    last = fingerprint(&relevant_now);
+                }
             }
             Ok(Err(errors)) => {
                 eprintln!("{} Watch error: {}", "!".red(), errors);
@@ -113,12 +123,42 @@ fn add_watches(
     }
 }
 
-/// An event concerns the source when it is inside a relevant path, or is a
-/// directory on the way to one (`.opencode/` created before `agent/`).
-fn is_relevant(event: &Path, relevant: &[PathBuf]) -> bool {
-    relevant
+/// Drop the watched paths that no longer exist, so the next plan watches them
+/// again when they come back; returns them, to unwatch.
+fn forget_missing(watched: &mut HashSet<(PathBuf, bool)>) -> Vec<PathBuf> {
+    let mut gone: Vec<PathBuf> = watched
         .iter()
-        .any(|path| event.starts_with(path) || path.starts_with(event))
+        .filter(|(path, _)| !path.exists())
+        .map(|(path, _)| path.clone())
+        .collect();
+    watched.retain(|(path, _)| path.exists());
+    gone.sort();
+    gone.dedup();
+    gone
+}
+
+/// The content of every file under the relevant paths (directories walked
+/// without following links), to tell a real change from an event alone.
+fn fingerprint(relevant: &[PathBuf]) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = std::collections::BTreeMap::new();
+    let mut stack: Vec<PathBuf> = relevant.to_vec();
+    while let Some(path) = stack.pop() {
+        if adapters::is_real_dir(&path) {
+            if let Ok(entries) = std::fs::read_dir(&path) {
+                stack.extend(entries.filter_map(|e| e.ok()).map(|e| e.path()));
+            }
+        } else if path.is_file() && !is_noise(&path) {
+            if let Ok(content) = std::fs::read(&path) {
+                files.insert(path, content);
+            }
+        }
+    }
+    files
+}
+
+/// An event concerns the source when it is inside a relevant path.
+fn is_relevant(event: &Path, relevant: &[PathBuf]) -> bool {
+    relevant.iter().any(|path| event.starts_with(path))
 }
 
 /// How to watch the relevant paths: an existing directory recursively; a file
@@ -412,7 +452,10 @@ mod tests {
         let root = Path::new("/p");
         let relevant = vec![root.join(".claude/rules"), root.join("CLAUDE.md")];
         assert!(is_relevant(&root.join(".claude/rules/ts.md"), &relevant));
-        assert!(is_relevant(&root.join(".claude"), &relevant));
+        // An ancestor (`.claude/` touched by `.claude/settings.local.json`) is
+        // not a change to the source.
+        assert!(!is_relevant(&root.join(".claude"), &relevant));
+        assert!(!is_relevant(root, &relevant));
         assert!(!is_relevant(&root.join("src/main.rs"), &relevant));
         assert!(!is_relevant(&root.join(".cursor/rules/ts.mdc"), &relevant));
     }
@@ -424,5 +467,38 @@ mod tests {
         assert!(is_noise(Path::new("/p/.DS_Store")));
         assert!(is_noise(Path::new("/p/.CLAUDE.md.swp")));
         assert!(is_noise(Path::new("/p/CLAUDE.md~")));
+    }
+
+    #[test]
+    fn test_watch_fingerprint_follows_content() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".claude/rules")).unwrap();
+        std::fs::write(root.join(".claude/rules/a.md"), "A").unwrap();
+        std::fs::write(root.join("CLAUDE.md"), "x").unwrap();
+        let relevant = vec![root.join(".claude/rules"), root.join("CLAUDE.md")];
+        let first = fingerprint(&relevant);
+        assert_eq!(first, fingerprint(&relevant));
+        std::fs::write(root.join("CLAUDE.md"), "x").unwrap();
+        assert_eq!(first, fingerprint(&relevant));
+        std::fs::write(root.join(".claude/rules/a.md"), "B").unwrap();
+        assert_ne!(first, fingerprint(&relevant));
+    }
+
+    #[test]
+    fn test_watch_forgets_paths_that_disappeared() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".claude/rules")).unwrap();
+        let mut watched = HashSet::from([
+            (root.join(".claude/rules"), true),
+            (root.to_path_buf(), false),
+        ]);
+        std::fs::remove_dir(root.join(".claude/rules")).unwrap();
+        assert_eq!(
+            forget_missing(&mut watched),
+            vec![root.join(".claude/rules")]
+        );
+        assert_eq!(watched, HashSet::from([(root.to_path_buf(), false)]));
     }
 }
