@@ -250,12 +250,15 @@ A mechanical complement to step 3: a `200` only says the page exists, not
 that it still says what the doc cites.
 
 ```bash
-grep -oh 'https://[^ )>,`"]*' docs/providers/*.md README.md CLAUDE.md | sed 's/[.,]$//' | sort -u > urls.txt
+grep -oh 'https://[^ )>,`"]*' docs/providers/*.md README.md CLAUDE.md | sed 's/[?!.,:*_~]*$//' | sort -u > urls.txt
 while read -r u; do printf '%s %s\n' "$(curl -sS -o /dev/null -w '%{http_code}' -A 'Mozilla/5.0' --max-time 60 -L "$u")" "$u"; done < urls.txt | sort | grep -v '^200'
 ```
 
-GitHub answers `429` under a burst and slow sites time out (`000`); retry
-those alone. An example endpoint in a config snippet (an MCP server URL) may
+The `sed` drops only the trailing punctuation GitHub leaves out of a bare
+link ("?, !, ., ,, :, *, _, and ~", https://github.github.com/gfm/); a `;`
+stays in the rendered link, so `https://…;` is a broken link: put a comma or a
+space after the URL. GitHub answers `429` under a burst and slow sites time
+out (`000`); retry those alone. An example endpoint in a config snippet (an MCP server URL) may
 answer `401`. Any other non-200 is a broken link: find the replacement on the
 vendor domain and fix it in step 11. Done when: the loop prints nothing
 unexplained.

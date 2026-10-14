@@ -41,7 +41,7 @@ Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` 
 - No activation modes, no agents
 - All rules merged into single `.rules` file
 - Skills synced to the shared `.agents/skills/<name>/SKILL.md` location; `read()` reads them back
-- A legacy `command: { path, args, env }` object is read like the flat form: Zed still loads it, since its settings store migrates project settings in memory (`parse_and_migrate_zed_settings`, https://github.com/zed-industries/zed/blob/main/crates/settings/src/settings_store.rs; `flatten_context_server_command`, https://github.com/zed-industries/zed/blob/main/crates/migrator/src/migrations/m_2025_06_27/settings.rs)
+- A legacy `command: { path, args, env }` object is read like the flat form: Zed still loads it, since its settings store migrates project settings in memory (`parse_and_migrate_zed_settings`, https://github.com/zed-industries/zed/blob/main/crates/settings/src/settings_store.rs, `flatten_context_server_command`, https://github.com/zed-industries/zed/blob/main/crates/migrator/src/migrations/m_2025_06_27/settings.rs)
 - Server keys conforme does not write (`timeout`, `remote`, `oauth`) are kept on merge
 
 ## Notes
