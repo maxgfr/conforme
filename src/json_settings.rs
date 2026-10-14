@@ -109,6 +109,51 @@ pub fn server_settings_file(
     Ok(Some((path.to_path_buf(), json)))
 }
 
+/// The servers of a file in the bare format, where each top-level key is a
+/// server name (Copilot CLI accepts it beside `mcpServers`): the top-level
+/// entries that look like a server, when the file has no `key` object.
+pub fn bare_server_entries(root: &Value, key: &str) -> Option<Map<String, Value>> {
+    let root = root.as_object()?;
+    if root.contains_key(key) {
+        return None;
+    }
+    let servers: Map<String, Value> = root
+        .iter()
+        .filter(|(_, entry)| {
+            ["command", "url", "type"]
+                .iter()
+                .any(|field| entry.get(field).is_some())
+        })
+        .map(|(name, entry)| (name.clone(), entry.clone()))
+        .collect();
+    (!servers.is_empty()).then_some(servers)
+}
+
+/// [`server_settings_file`] for a file that may be in the bare format: its
+/// top-level servers move under `key`, merged like existing entries, since a
+/// tool that finds `key` reads only that (Copilot CLI drops the bare ones).
+pub fn server_settings_file_or_bare(
+    path: &Path,
+    key: &str,
+    generated: Map<String, Value>,
+    owned_keys: &[&str],
+) -> Result<Option<(std::path::PathBuf, String)>> {
+    if generated.is_empty() {
+        return Ok(None);
+    }
+    let existing = load(path)?;
+    let Some((file, bare)) = existing
+        .as_ref()
+        .and_then(|file| Some((file, bare_server_entries(&file.value, key)?)))
+    else {
+        return server_settings_file(path, key, generated, owned_keys, &[]);
+    };
+    let merged = merge_server_entries(Some(&Value::Object(bare.clone())), generated, owned_keys);
+    let moved: Vec<&str> = bare.keys().map(String::as_str).collect();
+    let json = render_edit(file, &[(key, Value::Object(merged))], &[], &moved)?;
+    Ok(Some((path.to_path_buf(), json)))
+}
+
 /// Render the settings file with each `(key, value)` in `set` replaced or
 /// added, and each `(key, value)` in `defaults` added only when missing.
 pub fn render(
@@ -118,14 +163,28 @@ pub fn render(
 ) -> Result<String> {
     // A new (or empty) file is pretty-printed with serde. An existing one is
     // edited in place, which keeps its key order, indentation and comments.
-    let file = match existing {
-        Some(f) if !f.text.trim().is_empty() => f,
-        _ => return render_plain(Map::new(), set, defaults),
-    };
+    match existing {
+        Some(f) if !f.text.trim().is_empty() => render_edit(f, set, defaults, &[]),
+        _ => render_plain(Map::new(), set, defaults),
+    }
+}
 
+/// [`render`] of an existing file, in place, with the top-level keys in
+/// `remove` taken out.
+fn render_edit(
+    file: &SettingsFile,
+    set: &[(&str, Value)],
+    defaults: &[(&str, Value)],
+    remove: &[&str],
+) -> Result<String> {
     let root = CstRootNode::parse(&file.text, &ParseOptions::default())
         .map_err(|e| anyhow::anyhow!("failed to parse settings JSON: {e}"))?;
     let object = root.object_value_or_set();
+    for key in remove {
+        if let Some(prop) = object.get(key) {
+            prop.remove();
+        }
+    }
     for (key, value) in defaults {
         if object.get(key).is_none() {
             object.append(key, to_cst(value));

@@ -156,6 +156,16 @@ impl AiToolAdapter for AntigravityAdapter {
                     server.name
                 ));
             }
+            // The web docs take SSE on `serverUrl`; the reference built into
+            // `agy` says "The legacy HTTP+SSE transport … is not supported".
+            if matches!(server.transport, crate::config::McpTransport::Sse { .. }) {
+                warnings.push(format!(
+                    "MCP server {}: Antigravity CLI's own reference does not support the legacy \
+                     SSE transport, so it connects only if the server also speaks streamable HTTP \
+                     at that URL (or run it through a stdio bridge such as mcp-remote)",
+                    server.name
+                ));
+            }
         }
         warnings
     }
@@ -771,6 +781,44 @@ mod tests {
             AntigravityAdapter.warnings(project.path(), &config).len(),
             1
         );
+    }
+
+    #[test]
+    fn test_antigravity_warns_about_sse_servers() {
+        // `agy` 1.3.5's built-in MCP reference: "The legacy HTTP+SSE
+        // transport (MCP spec 2024-11-05) is not supported."
+        let project = tempfile::TempDir::new().unwrap();
+        let server = |name: &str, transport| crate::config::NormalizedMcpServer {
+            name: name.to_string(),
+            transport,
+            env: Default::default(),
+        };
+        let config = NormalizedConfig {
+            mcp_servers: vec![
+                server(
+                    "events",
+                    crate::config::McpTransport::Sse {
+                        url: "https://example.com/sse".to_string(),
+                        headers: Default::default(),
+                    },
+                ),
+                server(
+                    "api",
+                    crate::config::McpTransport::Http {
+                        url: "https://example.com/mcp".to_string(),
+                        headers: Default::default(),
+                    },
+                ),
+            ],
+            ..Default::default()
+        };
+        let warnings = AntigravityAdapter.warnings(project.path(), &config);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].starts_with("MCP server events:"),
+            "{warnings:?}"
+        );
+        assert!(warnings[0].contains("SSE"), "{warnings:?}");
     }
 
     #[test]

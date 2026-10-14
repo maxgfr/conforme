@@ -60,6 +60,103 @@ fn is_conforme_written_agent(path: &Path) -> bool {
             .is_some_and(|(name, stem)| stem == name.as_str())
 }
 
+/// The directories Codex looks up in its `projects` trust table for this
+/// project: the directory itself (as given and canonical) and the root of
+/// its main git repository, a worktree resolving to the main checkout
+/// (`codex-rs/config/src/loader/mod.rs` `decision_for_dir`,
+/// `git-utils/src/trust.rs`).
+fn codex_trust_keys(project_root: &Path) -> Vec<PathBuf> {
+    let canonical = canonical_path(project_root);
+    let mut keys = vec![project_root.to_path_buf(), canonical.clone()];
+    if let Some(repo) = canonical.ancestors().find(|dir| dir.join(".git").exists()) {
+        let git = repo.join(".git");
+        let main = std::fs::read_to_string(&git)
+            .ok()
+            .and_then(|text| {
+                text.lines()
+                    .find_map(|line| line.strip_prefix("gitdir:"))
+                    .map(|dir| repo.join(dir.trim()))
+            })
+            .and_then(|gitdir| {
+                let gitdir = canonical_path(&gitdir);
+                let worktrees = gitdir.parent()?;
+                (worktrees.file_name()? == "worktrees")
+                    .then(|| worktrees.parent()?.parent().map(Path::to_path_buf))
+                    .flatten()
+            });
+        keys.push(main.unwrap_or_else(|| repo.to_path_buf()));
+    }
+    keys
+}
+
+/// The canonical form of a path as Codex writes it in its trust table:
+/// without the `\\?\` verbatim prefix `canonicalize` adds on Windows.
+fn canonical_path(path: &Path) -> PathBuf {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    strip_verbatim_prefix(&canonical.to_string_lossy())
+        .map(PathBuf::from)
+        .unwrap_or(canonical)
+}
+
+/// `C:\dir` for `\\?\C:\dir`; `None` for any other path (a verbatim UNC path
+/// keeps its prefix).
+fn strip_verbatim_prefix(path: &str) -> Option<&str> {
+    path.strip_prefix(r"\\?\")
+        .filter(|rest| !rest.starts_with(r"UNC\"))
+}
+
+/// The `[projects."<dir>"]` table header that trusts the project, its key
+/// escaped as a TOML string so a Windows path pastes as written.
+fn codex_trust_table(project_root: &Path) -> String {
+    let dir = codex_trust_keys(project_root)
+        .pop()
+        .unwrap_or_else(|| project_root.to_path_buf());
+    format!(
+        "[projects.{}]",
+        toml::Value::String(dir.display().to_string())
+    )
+}
+
+/// Whether Codex trusts the project: `[projects."<dir>"] trust_level =
+/// "trusted"` in `$CODEX_HOME/config.toml` (default `~/.codex`) for one of
+/// [`codex_trust_keys`]. Without a home directory to look in, assume it does.
+fn codex_trusts(project_root: &Path) -> bool {
+    let codex_home = std::env::var_os("CODEX_HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(|home| PathBuf::from(home).join(".codex"))
+        });
+    let Some(codex_home) = codex_home else {
+        return true;
+    };
+    let projects = crate::config::read_text(&codex_home.join("config.toml"))
+        .ok()
+        .and_then(|content| content.parse::<toml::Table>().ok())
+        .and_then(|mut table| match table.remove("projects") {
+            Some(toml::Value::Table(projects)) => Some(projects),
+            _ => None,
+        })
+        .unwrap_or_default();
+    // Codex compares keys case-insensitively on Windows.
+    let same = |a: &str, b: &str| {
+        if cfg!(windows) {
+            a.eq_ignore_ascii_case(b)
+        } else {
+            a == b
+        }
+    };
+    codex_trust_keys(project_root).iter().any(|dir| {
+        let dir = dir.to_string_lossy();
+        projects.iter().any(|(key, entry)| {
+            same(key, &dir)
+                && entry.get("trust_level").and_then(toml::Value::as_str) == Some("trusted")
+        })
+    })
+}
+
 impl AiToolAdapter for CodexAdapter {
     fn name(&self) -> &str {
         "Codex CLI"
@@ -110,7 +207,23 @@ impl AiToolAdapter for CodexAdapter {
         path.ends_with(Path::new(".codex/config.toml"))
     }
 
-    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+    fn warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+        // Codex loads project `.codex/` layers (config.toml, so the MCP
+        // servers, and agents/) only in a trusted project; skills are not gated.
+        let gated = !config.mcp_servers.is_empty()
+            || config
+                .agents
+                .iter()
+                .any(|agent| !crate::skills::is_codex_builtin_agent(&agent.name));
+        let untrusted = (gated && !codex_trusts(project_root)).then(|| {
+            format!(
+                "Codex loads .codex/config.toml (MCP servers) and .codex/agents/ only in a trusted \
+                 project, and {} is not trusted: accept Codex's trust prompt, or add \
+                 `{}` with `trust_level = \"trusted\"` to ~/.codex/config.toml",
+                project_root.display(),
+                codex_trust_table(project_root)
+            )
+        });
         let builtin_agents = config
             .agents
             .iter()
@@ -163,6 +276,7 @@ impl AiToolAdapter for CodexAdapter {
                         )
                     }),
             )
+            .chain(untrusted)
             .collect()
     }
 
@@ -239,6 +353,57 @@ mod tests {
     };
     use std::collections::BTreeMap;
     use std::path::Path;
+
+    #[test]
+    fn test_codex_trust_table_is_valid_toml_for_any_path() {
+        // A Windows path holds `\`, which a TOML basic string escapes; the
+        // advice must paste into ~/.codex/config.toml as written.
+        assert_eq!(
+            strip_verbatim_prefix(r"\\?\C:\Users\me"),
+            Some(r"C:\Users\me")
+        );
+        assert_eq!(strip_verbatim_prefix(r"\\?\UNC\server\share"), None);
+        assert_eq!(strip_verbatim_prefix("/home/me"), None);
+
+        let tmp = tempfile::tempdir().unwrap();
+        // Windows forbids `"` in a file name; its `\` separators are escaped.
+        let root = tmp
+            .path()
+            .join(if cfg!(windows) { "repo" } else { "my \"repo\"" });
+        std::fs::create_dir_all(&root).unwrap();
+        let table = codex_trust_table(&root);
+        let parsed: toml::Table = format!("{table}\ntrust_level = \"trusted\"\n")
+            .parse()
+            .unwrap();
+        let (key, _) = parsed["projects"]
+            .as_table()
+            .unwrap()
+            .iter()
+            .next()
+            .unwrap();
+        assert_eq!(Path::new(key), canonical_path(&root));
+    }
+
+    #[test]
+    fn test_codex_trust_keys_resolve_a_worktree_to_its_main_checkout() {
+        // Codex checks trust on "the root of the main repository", a
+        // worktree included (codex-rs/git-utils/src/trust.rs).
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().canonicalize().unwrap().join("repo");
+        let gitdir = main.join(".git").join("worktrees").join("wt");
+        std::fs::create_dir_all(&gitdir).unwrap();
+        let worktree = main.join("wt");
+        std::fs::create_dir_all(worktree.join("sub")).unwrap();
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", gitdir.display()),
+        )
+        .unwrap();
+
+        let keys = codex_trust_keys(&worktree.join("sub"));
+        assert_eq!(keys.last(), Some(&main), "{keys:?}");
+        assert_eq!(codex_trust_keys(&main).last(), Some(&main));
+    }
 
     fn make_adapter() -> CodexAdapter {
         CodexAdapter

@@ -1798,6 +1798,20 @@ pub fn parse_mcp_json(content: &str) -> Result<Vec<NormalizedMcpServer>> {
         .unwrap_or_default())
 }
 
+/// [`parse_mcp_json`] for Copilot CLI's project files, which may also be in
+/// "the bare top-level format where each key is an MCP server name".
+pub fn parse_mcp_json_or_bare(content: &str) -> Result<Vec<NormalizedMcpServer>> {
+    let root = crate::json_settings::parse_jsonc(content).context("failed to parse MCP JSON")?;
+    match crate::json_settings::bare_server_entries(&root, "mcpServers") {
+        Some(servers) => Ok(parse_servers(
+            &serde_json::Value::Object(servers),
+            crate::json_settings::is_disabled_server,
+            false,
+        )),
+        None => parse_mcp_json(content),
+    }
+}
+
 /// The servers object of an MCP JSON file: under `mcpServers`, `servers`
 /// (VS Code) or `context_servers` (Zed).
 fn servers_object(content: &str) -> Result<Option<serde_json::Value>> {

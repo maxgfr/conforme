@@ -90,6 +90,17 @@ fn roundtrip_config() -> NormalizedConfig {
     }
 }
 
+/// Codex's warnings, without the one about project trust: that one depends
+/// on the user's `~/.codex/config.toml` (covered in tests/integration.rs with
+/// an isolated `CODEX_HOME`).
+fn codex_warnings(root: &std::path::Path, config: &NormalizedConfig) -> Vec<String> {
+    conforme::adapters::codex::CodexAdapter
+        .warnings(root, config)
+        .into_iter()
+        .filter(|warning| !warning.contains("only in a trusted project"))
+        .collect()
+}
+
 fn setup_tool(dir: &TempDir, tool: &str) {
     match tool {
         "cursor" => fs::create_dir_all(dir.path().join(".cursor")).unwrap(),
@@ -624,7 +635,6 @@ fn test_unresolved_variable_references_are_warned_about() {
 
     // Codex forwards `NAME=${NAME}`, `Bearer ${VAR}` and an exact `${VAR}`
     // header by name (codex-rs/config/src/mcp_types.rs); nothing else.
-    let codex = conforme::adapters::codex::CodexAdapter;
     let forwarded = config(vec![
         server("fs", stdio("npx", &["fs"]), &[("TOKEN", "${TOKEN}")]),
         server(
@@ -636,7 +646,7 @@ fn test_unresolved_variable_references_are_warned_about() {
             &[],
         ),
     ]);
-    assert!(codex.warnings(root, &forwarded).is_empty());
+    assert!(codex_warnings(root, &forwarded).is_empty());
     for literal in [
         server("a", stdio("npx", &["--root", "${HOME}/src"]), &[]),
         server("b", stdio("npx", &[]), &[("TOKEN", "${OTHER}")]),
@@ -648,7 +658,7 @@ fn test_unresolved_variable_references_are_warned_about() {
     ] {
         let name = literal.name.clone();
         assert_eq!(
-            codex.warnings(root, &config(vec![literal])).len(),
+            codex_warnings(root, &config(vec![literal])).len(),
             1,
             "{name}"
         );
@@ -707,11 +717,10 @@ fn test_sse_is_warned_about_where_it_cannot_be_written() {
              HTTP and connects only if the server speaks that too"
         )
     };
-    let codex = conforme::adapters::codex::CodexAdapter;
     let zed = conforme::adapters::zed::ZedAdapter;
     let vibe = conforme::adapters::vibe::VibeAdapter;
     let claude = conforme::adapters::claude::ClaudeAdapter;
-    assert_eq!(codex.warnings(root, &config), vec![warning("Codex")]);
+    assert_eq!(codex_warnings(root, &config), vec![warning("Codex")]);
     assert_eq!(zed.warnings(root, &config), vec![warning("Zed")]);
     assert_eq!(vibe.warnings(root, &config), vec![warning("Mistral Vibe")]);
     assert!(claude.warnings(root, &config).is_empty());
@@ -2008,7 +2017,7 @@ fn test_codex_warns_about_server_names_it_refuses() {
         ..Default::default()
     };
     let dir = TempDir::new().unwrap();
-    let warnings = conforme::adapters::codex::CodexAdapter.warnings(dir.path(), &config);
+    let warnings = codex_warnings(dir.path(), &config);
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(warnings[0].contains("my server"), "{warnings:?}");
 }

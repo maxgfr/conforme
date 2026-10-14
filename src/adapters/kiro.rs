@@ -97,8 +97,15 @@ impl AiToolAdapter for KiroAdapter {
         // Read skills, agents, and MCP so a Kiro project round-trips as a source.
         let skills =
             crate::skills::read_skills_from_dir(&project_root.join(".kiro").join("skills"))?;
-        let agents =
+        let mut agents =
             crate::skills::read_agents_from_dir(&project_root.join(".kiro").join("agents"), false)?;
+        // Kiro's `task` is its task-list tool (aliases `todo`, `todo_list`),
+        // which other hosts would read as their subagent tool.
+        for tool in agents.iter_mut().flat_map(|a| a.tools.iter_mut()) {
+            if tool == "task" {
+                *tool = "todo".to_string();
+            }
+        }
         let mut mcp_servers = Vec::new();
         let mcp_path = project_root.join(".kiro").join("settings").join("mcp.json");
         if mcp_path.exists() {

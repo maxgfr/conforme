@@ -13,12 +13,15 @@ use crate::skills::parse_frontmatter_tool_list as parse_tool_list;
 
 pub struct ClaudeAdapter;
 
-/// Whether a file is one Claude Code loads as a subagent: it needs a
-/// non-empty `name` and `description` (a file without `name` is documentation
-/// kept beside the agents, one without `description` is skipped).
+/// Whether a file is one Claude Code loads as a subagent: strict YAML
+/// frontmatter ("YAML that doesn't parse: Claude Code reads no fields from
+/// the file, skips it") with a non-empty `name` it accepts and a
+/// `description` (a file without `name` is documentation kept beside the
+/// agents, one without `description` is skipped).
 fn is_claude_agent_file(path: &Path) -> bool {
     crate::config::read_text(path)
         .ok()
+        .filter(|content| frontmatter::is_strict_yaml(content))
         .and_then(|content| frontmatter::parse(&content).ok())
         .is_some_and(|(fields, _)| {
             ["name", "description"].iter().all(|key| {
@@ -26,8 +29,42 @@ fn is_claude_agent_file(path: &Path) -> bool {
                     .get(*key)
                     .and_then(|v| v.as_str())
                     .is_some_and(|v| !v.trim().is_empty())
-            })
+            }) && fields
+                .get("name")
+                .and_then(|v| v.as_str())
+                .is_some_and(|name| is_claude_agent_name(name.trim()))
         })
+}
+
+/// Whether Claude Code (2.1.299+) loads a skill folder or command file or
+/// folder of this name. It refuses "a zero-width space or a control
+/// character", "a private-use or unassigned character", "a character that
+/// changes the direction of the text around it", "a blank other than one
+/// plain space between words" and "`<` or `>`"
+/// (https://code.claude.com/docs/en/skills). Unassigned code points are not
+/// checked: telling them apart needs Unicode tables.
+fn claude_loads_name(name: &str) -> bool {
+    let refused = |c: char| {
+        c.is_control()
+            || matches!(c, '<' | '>')
+            // zero-width and invisible format characters
+            || matches!(c, '\u{200B}'..='\u{200D}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' | '\u{00AD}')
+            // direction marks, embeddings, overrides and isolates
+            || matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+            // private use
+            || matches!(c, '\u{E000}'..='\u{F8FF}' | '\u{F0000}'..='\u{10FFFF}')
+            || (c.is_whitespace() && c != ' ')
+    };
+    !name.chars().any(refused)
+        && !name.starts_with(' ')
+        && !name.ends_with(' ')
+        && !name.contains("  ")
+}
+
+/// Claude Code skips a subagent whose `name` "starts with `-`, contains `:`,
+/// or is longer than 256 characters".
+fn is_claude_agent_name(name: &str) -> bool {
+    !name.starts_with('-') && !name.contains(':') && name.chars().count() <= 256
 }
 
 /// Resolve the project instruction file.
@@ -180,7 +217,7 @@ impl AiToolAdapter for ClaudeAdapter {
             entries.sort_by_key(|e| e.file_name());
             for entry in entries {
                 let skill_dir = entry.path();
-                if skill_dir.is_dir() {
+                if skill_dir.is_dir() && claude_loads_name(&entry.file_name().to_string_lossy()) {
                     let skill_file = skill_dir.join("SKILL.md");
                     if skill_file.exists() {
                         let (fields, body) = frontmatter::read(&skill_file)?;
@@ -223,15 +260,18 @@ impl AiToolAdapter for ClaudeAdapter {
         let mut command_paths = crate::adapters::collect_rule_files(&commands_dir, "md")?;
         command_paths.sort();
         for path in command_paths {
-            let (fields, body) = frontmatter::read(&path)?;
-            let name = path
+            let parts: Vec<String> = path
                 .strip_prefix(&commands_dir)
                 .unwrap_or(&path)
                 .with_extension("")
                 .components()
                 .map(|c| c.as_os_str().to_string_lossy().to_string())
-                .collect::<Vec<_>>()
-                .join(":");
+                .collect();
+            if !parts.iter().all(|part| claude_loads_name(part)) {
+                continue;
+            }
+            let (fields, body) = frontmatter::read(&path)?;
+            let name = parts.join(":");
             // A skill and a command of the same name: Claude Code runs the skill.
             if skills.iter().any(|s| s.name == name) {
                 continue;
@@ -260,10 +300,18 @@ impl AiToolAdapter for ClaudeAdapter {
         let mut agents = Vec::new();
         let agents_dir = project_root.join(".claude").join("agents");
         for path in crate::adapters::collect_rule_files(&agents_dir, "md")? {
-            let (fields, body) = frontmatter::read(&path)?;
+            let content = crate::config::read_text(&path)?;
+            // Claude Code skips an agent whose frontmatter is not YAML.
+            if !frontmatter::is_strict_yaml(&content) {
+                continue;
+            }
+            let (fields, body) = frontmatter::parse(&content).with_context(|| {
+                format!("failed to parse the frontmatter of {}", path.display())
+            })?;
             // Claude Code treats a file without `name` as documentation kept
             // beside the agents (a README), and skips one without
-            // `description`; neither is an agent to propagate.
+            // `description` or with a `name` it refuses; none is an agent to
+            // propagate.
             let field = |key: &str| {
                 fields
                     .get(key)
@@ -275,6 +323,9 @@ impl AiToolAdapter for ClaudeAdapter {
             let (Some(name), Some(description)) = (field("name"), field("description")) else {
                 continue;
             };
+            if !is_claude_agent_name(&name) {
+                continue;
+            }
             let model = fields
                 .get("model")
                 .and_then(|v| v.as_str())
@@ -645,6 +696,38 @@ mod tests {
                 .unwrap();
         assert!(root.join(".claude/agents/README.md").exists());
         assert!(cleaned.contains(&root.join(".claude/agents/reviewer.md")));
+    }
+
+    #[test]
+    fn test_read_skips_skills_and_commands_whose_name_claude_code_refuses() {
+        // "A custom command or skill doesn't load when Claude Code refuses its
+        // directory or file name" (https://code.claude.com/docs/en/skills).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for dir in ["good", "zero\u{200b}width", "no\u{a0}break"] {
+            let skill = root.join(".claude/skills").join(dir);
+            std::fs::create_dir_all(&skill).unwrap();
+            std::fs::write(
+                skill.join("SKILL.md"),
+                "---\ndescription: A skill\n---\nDo it.\n",
+            )
+            .unwrap();
+        }
+        std::fs::create_dir_all(root.join(".claude/commands/team\u{202e}x")).unwrap();
+        std::fs::write(
+            root.join(".claude/commands/team\u{202e}x/run.md"),
+            "---\ndescription: Run\n---\nRun it.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".claude/commands/lint.md"),
+            "---\ndescription: Lint\n---\nLint it.\n",
+        )
+        .unwrap();
+
+        let config = ClaudeAdapter.read(root).unwrap();
+        let names: Vec<_> = config.skills.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["good", "lint"]);
     }
 
     #[test]

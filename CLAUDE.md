@@ -58,6 +58,7 @@ src/
                        or a Claude `type: "sdk"` one, is skipped on read and kept untouched on write
                        (Zed extension servers, Claude SDK servers, OpenCode `{ "enabled": false }` toggles);
                        server_settings_file leaves the file untouched when the source has no server;
+                       server_settings_file_or_bare moves a bare-format file's servers under the key (Copilot CLI);
                        a tool's own toggle (ServerShape.toggle, an owned `disabled` / `enabled`) skips a disabled
                        entry on read and keeps one absent from the source on write; Zed's legacy
                        `command: {path, args, env}` is expressible; an existing file is edited in place (key order, indent, comments; an
@@ -122,7 +123,7 @@ src/
                        round-trip skills/agents on read(); parse_frontmatter_tool_list splits outside parentheses
                        (`Bash(git add:*)`); a skill folder holding a SKILL.md without the marker is never adopted
                        nor pruned; TOOL_EQUIVALENTS translates agent tools
-                       for Claude/Gemini/Kiro/Vibe (Gemini `mcp_*` ⇄ Kiro `@mcp`, Kiro todo tool `todo`);
+                       for Claude/Gemini/Kiro/Vibe (Gemini `mcp_*` ⇄ Kiro `@mcp`, Kiro todo tool `todo`; a Kiro agent's `task`, its task-list tool, reads as `todo`);
                        claude_model/gemini_model/opencode_model keep only values the tool accepts
                        (claude_model drops dotted ids such as Kiro's `claude-sonnet-4.5`;
                        gemini_model also keeps `gemma-*`); kiro_model/copilot_model/cursor_model drop
@@ -141,14 +142,22 @@ src/
                        + .claude/rules/**/*.md, read recursively (paths: frontmatter); with no CLAUDE.md
                        nor .claude/CLAUDE.md, reads AGENTS.md and .claude/AGENTS.md (root first) as Claude
                        Code does (CLAUDE.local.md deliberately ignored); a skill and a command of the same
-                       name read as the skill
+                       name read as the skill; skips what Claude Code refuses: a skill or command name with
+                       control, zero-width, bidi, private-use, odd blank or </> characters (claude_loads_name),
+                       an agent whose frontmatter is not strict YAML or whose name starts with -, holds : or
+                       passes 256 characters
     cursor.rs       — Cursor: .cursor/rules/**/*.mdc, read recursively (alwaysApply/globs/description), plus .cursorrules; subagents at .cursor/agents/*.md
     devin.rs        — Devin Desktop (formerly Windsurf): writes .devin/{rules,skills,mcp_config.json}; reads
                        .devin/ and the legacy .windsurf/ (both loaded upstream) and cleans conforme's legacy copies;
                        global_rules.md (.devin/, else .windsurf/) and .windsurfrules are read into the instructions
-    copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md; MCP merged into .vscode/mcp.json;
+    copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md; MCP merged into .vscode/mcp.json
+                       and .github/mcp.json (a bare-format file is read, and moved under mcpServers on write:
+                       server_settings_file_or_bare); agents read from .github/agents/ recursively;
                        detected from copilot-instructions.md or .github/{instructions,agents,skills}/
-    codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively; agents at .codex/agents/*.toml
+    codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively; agents at .codex/agents/*.toml; warns when the
+                       source has MCP servers or agents and $CODEX_HOME/config.toml (default ~/.codex) trusts
+                       neither the project nor its main repository root (codex_trusts: untrusted .codex/ layers
+                       are ignored)
     opencode.rs     — OpenCode: reads AGENTS.md natively; agents read from .opencode/agents/, .opencode/agent/
                        and the opencode.json `agent` key together (markdown wins; built-in overrides skipped);
                        an agent named like a built-in one (build, plan, …) is never written; config merged into
@@ -176,7 +185,7 @@ src/
     antigravity.rs  — Antigravity CLI: reads AGENTS.md (else GEMINI.md); rules in .agents/rules/*.md (top level,
                        Devin's trigger vocabulary); skills in the shared .agents/skills/; subagents in
                        .agents/agents/*.md (built-in names never written); MCP merged into .agents/mcp_config.json
-                       (`serverUrl`, no `type`); warns about `${VAR}` and manual skills
+                       (`serverUrl`, no `type`); warns about `${VAR}`, SSE servers and manual skills
 tests/
   integration.rs    — CLI integration tests (assert_cmd + tempfile)
   roundtrip.rs      — Write→read round-trip tests for every adapter (rules, skills, agents, MCP)

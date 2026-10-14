@@ -133,10 +133,11 @@ impl AiToolAdapter for CopilotAdapter {
         let skills =
             crate::skills::read_skills_from_dir(&project_root.join(".github").join("skills"))?;
 
-        // Read subagents (.github/agents/<name>.agent.md).
+        // Read subagents (.github/agents/<name>.agent.md); Copilot CLI also
+        // discovers them in sub-directories.
         let agents = crate::skills::read_agents_from_dir(
             &project_root.join(".github").join("agents"),
-            false,
+            true,
         )?;
 
         // Read MCP servers from .vscode/mcp.json (VS Code `servers` key), then
@@ -150,7 +151,7 @@ impl AiToolAdapter for CopilotAdapter {
         let cli_path = project_root.join(".github").join("mcp.json");
         if cli_path.exists() {
             let cli_content = crate::config::read_text(&cli_path)?;
-            for server in crate::mcp::parse_mcp_json(&cli_content)? {
+            for server in crate::mcp::parse_mcp_json_or_bare(&cli_content)? {
                 if !mcp_servers.iter().any(|s| s.name == server.name) {
                     mcp_servers.push(server);
                 }
@@ -241,13 +242,13 @@ impl AiToolAdapter for CopilotAdapter {
         )?);
         // Copilot CLI never reads .vscode/mcp.json: it loads .github/mcp.json
         // (or .mcp.json) with `mcpServers`, the Claude Code shape. A server in
-        // both is listed once.
-        files.extend(crate::json_settings::server_settings_file(
+        // both is listed once. A hand-written file in the bare format moves
+        // under `mcpServers`, which is all Copilot CLI reads once it is there.
+        files.extend(crate::json_settings::server_settings_file_or_bare(
             &github_dir.join("mcp.json"),
             "mcpServers",
             crate::mcp::CLAUDE_SHAPE.build(&config.mcp_servers),
             &crate::mcp::CLAUDE_SHAPE.owned_keys(),
-            &[],
         )?);
 
         Ok(files)

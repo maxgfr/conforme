@@ -3615,6 +3615,122 @@ fn test_sync_warns_when_codex_would_truncate_agents_md() {
         .stderr(predicate::str::contains("32 KiB").not());
 }
 
+/// Copilot CLI project files "can use either the `mcpServers` top-level object
+/// … or the bare top-level format where each key is an MCP server name"
+/// (https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers).
+const BARE_COPILOT_MCP: &str = r#"{
+  // hand-written, bare format
+  "playwright": {"type": "local", "command": "npx", "args": ["@playwright/mcp@latest"], "deferTools": true}
+}
+"#;
+
+#[test]
+fn test_copilot_bare_mcp_json_is_read_as_a_source() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".github")).unwrap();
+    fs::create_dir_all(dir.path().join(".claude")).unwrap();
+    fs::write(
+        dir.path().join(".github/copilot-instructions.md"),
+        "Be helpful.\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join(".github/mcp.json"), BARE_COPILOT_MCP).unwrap();
+    fs::write(
+        dir.path().join(".conformerc.toml"),
+        "source = \"copilot\"\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let claude: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dir.path().join(".mcp.json")).unwrap()).unwrap();
+    assert_eq!(
+        claude["mcpServers"]["playwright"]["command"], "npx",
+        "{claude}"
+    );
+}
+
+#[test]
+fn test_sync_moves_a_bare_copilot_mcp_json_under_mcp_servers() {
+    // Once `mcpServers` is in the file, Copilot CLI 1.0.97 lists only its
+    // servers: a bare entry left beside it is silently dropped.
+    let agents_md = "# Instructions\nBe helpful.\n\n## MCP: fs\n<!-- command: npx -->\n<!-- args: -y, @mcp/fs -->\n\n## MCP: playwright\n<!-- command: npx -->\n<!-- args: @playwright/mcp@latest -->\n";
+    let dir = create_project_with_tools(agents_md, &["copilot"]);
+    fs::write(dir.path().join(".github/mcp.json"), BARE_COPILOT_MCP).unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let text = fs::read_to_string(dir.path().join(".github/mcp.json")).unwrap();
+    let json = conforme::json_settings::parse_jsonc(&text).unwrap();
+    let root = json.as_object().unwrap();
+    assert_eq!(
+        root.keys().collect::<Vec<_>>(),
+        ["mcpServers"],
+        "no bare entry is left beside mcpServers: {text}"
+    );
+    assert_eq!(json["mcpServers"]["fs"]["command"], "npx", "{text}");
+    // Copilot CLI's own per-server key survives the move.
+    assert_eq!(
+        json["mcpServers"]["playwright"]["deferTools"], true,
+        "{text}"
+    );
+    assert!(text.contains("// hand-written, bare format"), "{text}");
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_sync_warns_when_codex_does_not_trust_the_project() {
+    // Codex "loads project `.codex/` layers only when you trust the project"
+    // (https://learn.chatgpt.com/docs/config-file/config-basic): an untrusted
+    // project's MCP servers and agents are dropped without a word.
+    let codex_home = TempDir::new().unwrap();
+    let dir = create_project_with_tools(MCP_AGENTS_MD, &["codex"]);
+    let sync = || {
+        let mut cmd = conforme();
+        cmd.env("CODEX_HOME", codex_home.path())
+            .args(["-C", dir.path().to_str().unwrap(), "sync"]);
+        cmd
+    };
+    sync()
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("only in a trusted project"));
+
+    let root = dir.path().canonicalize().unwrap();
+    fs::write(
+        codex_home.path().join("config.toml"),
+        format!(
+            "[projects.{}]\ntrust_level = \"trusted\"\n",
+            toml::Value::String(root.display().to_string())
+        ),
+    )
+    .unwrap();
+    sync()
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("trusted project").not());
+
+    // Nothing gated (no MCP server, no agent): nothing to say.
+    let plain = create_project_with_tools("# Instructions\nShort.\n", &["codex"]);
+    conforme()
+        .env("CODEX_HOME", TempDir::new().unwrap().path())
+        .args(["-C", plain.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("trusted project").not());
+}
+
 #[test]
 fn test_long_skill_description_warning_names_the_tools_that_skip_it() {
     // Zoo Code and Mistral Vibe skip a skill whose description is over 1024

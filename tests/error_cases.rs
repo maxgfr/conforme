@@ -608,6 +608,108 @@ Review all changes for bugs.
 }
 
 #[test]
+fn test_kiro_task_tool_is_the_task_list_not_a_subagent() {
+    // Kiro's `task` is its task-list tool (aliases `todo`, `todo_list`,
+    // https://kiro.dev/docs/tools/), not OpenCode's subagent `task`.
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".kiro/agents")).unwrap();
+    fs::create_dir_all(dir.path().join(".claude")).unwrap();
+    fs::write(dir.path().join(".conformerc.toml"), "source = \"kiro\"\n").unwrap();
+    fs::write(
+        dir.path().join(".kiro/agents/planner.md"),
+        "---\nname: planner\ndescription: Plans work\ntools:\n- read\n- task\n---\nPlan the work.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let claude = fs::read_to_string(dir.path().join(".claude/agents/planner.md")).unwrap();
+    assert!(claude.contains("TodoWrite"), "{claude}");
+    assert!(!claude.contains("Agent"), "{claude}");
+}
+
+#[test]
+fn test_copilot_nested_agents_are_read() {
+    // "If the file is in a subdirectory of `agents`, the subdirectory name is
+    // included in the ID" (https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli).
+    let dir = TempDir::new().unwrap();
+    let nested = dir.path().join(".github/agents/security");
+    fs::create_dir_all(&nested).unwrap();
+    fs::create_dir_all(dir.path().join(".claude")).unwrap();
+    fs::write(
+        dir.path().join(".github/copilot-instructions.md"),
+        "Be helpful.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".conformerc.toml"),
+        "source = \"copilot\"\n",
+    )
+    .unwrap();
+    fs::write(
+        nested.join("auditor.agent.md"),
+        "---\ndescription: Audits security\n---\nAudit.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let claude = fs::read_to_string(dir.path().join(".claude/agents/auditor.md")).unwrap();
+    assert!(claude.contains("description: Audits security"), "{claude}");
+    // The nested source file is left where it is.
+    assert!(nested.join("auditor.agent.md").exists());
+}
+
+#[test]
+fn test_claude_agents_claude_code_skips_are_not_propagated() {
+    // "YAML that doesn't parse: Claude Code reads no fields from the file,
+    // skips it", and so does "A `name` that starts with `-`, contains `:`, or
+    // is longer than 256 characters" (https://code.claude.com/docs/en/sub-agents).
+    let dir = TempDir::new().unwrap();
+    let agents = dir.path().join(".claude/agents");
+    fs::create_dir_all(&agents).unwrap();
+    fs::create_dir_all(dir.path().join(".cursor")).unwrap();
+    fs::write(dir.path().join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    fs::write(dir.path().join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    fs::write(
+        agents.join("good.md"),
+        "---\nname: good\ndescription: Reviews code\n---\nReview.\n",
+    )
+    .unwrap();
+    fs::write(
+        agents.join("broken.md"),
+        "---\nname: broken\ndescription: Reviews: code: twice\n---\nReview.\n",
+    )
+    .unwrap();
+    fs::write(
+        agents.join("colon.md"),
+        "---\nname: \"team:colon\"\ndescription: Reviews code\n---\nReview.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert!(dir.path().join(".cursor/agents/good.md").exists());
+    assert!(!dir.path().join(".cursor/agents/broken.md").exists());
+    assert!(!dir.path().join(".cursor/agents/team-colon.md").exists());
+    assert_eq!(
+        fs::read_dir(dir.path().join(".cursor/agents"))
+            .unwrap()
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn test_sync_mcp_to_zed() {
     let agents_md = r#"# Instructions
 Be helpful.
