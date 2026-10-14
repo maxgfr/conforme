@@ -389,7 +389,8 @@ mod tests {
         // Codex checks trust on "the root of the main repository", a
         // worktree included (codex-rs/git-utils/src/trust.rs).
         let tmp = tempfile::tempdir().unwrap();
-        let main = tmp.path().canonicalize().unwrap().join("repo");
+        // Codex's form of the path: no `\\?\` prefix on Windows.
+        let main = canonical_path(tmp.path()).join("repo");
         let gitdir = main.join(".git").join("worktrees").join("wt");
         std::fs::create_dir_all(&gitdir).unwrap();
         let worktree = main.join("wt");

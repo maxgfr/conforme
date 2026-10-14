@@ -3707,12 +3707,14 @@ fn test_sync_warns_when_codex_does_not_trust_the_project() {
         .success()
         .stderr(predicate::str::contains("only in a trusted project"));
 
-    let root = dir.path().canonicalize().unwrap();
+    // Codex writes the plain path, without Windows' `\\?\` verbatim prefix.
+    let root = dir.path().canonicalize().unwrap().display().to_string();
+    let root = root.strip_prefix(r"\\?\").unwrap_or(&root);
     fs::write(
         codex_home.path().join("config.toml"),
         format!(
             "[projects.{}]\ntrust_level = \"trusted\"\n",
-            toml::Value::String(root.display().to_string())
+            toml::Value::String(root.to_string())
         ),
     )
     .unwrap();
