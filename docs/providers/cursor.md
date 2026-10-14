@@ -2,7 +2,7 @@
 
 > AI code editor with .mdc rule files. Source: `--from cursor`
 
-**Last verified online:** 2026-10-12, against Cursor 3.24.12 and Cursor CLI 2026.10.01 (https://cursor.com/changelog)
+**Last verified online:** 2026-10-14, against Cursor 3.24.18 and Cursor CLI 2026.10.08 (https://cursor.com/changelog, https://cursor.com/docs/cli/changelog)
 
 ## Official docs
 
@@ -59,7 +59,8 @@
 - `.mdc` is Cursor's custom markdown format used for **rules only** (same as `.md` with YAML frontmatter). A plain `.md` file in `.cursor/rules/` is ignored by Cursor
 - `.cursor/rules/` may be organised in subdirectories; conforme reads nested `.mdc` rules too (written back flat, one file per rule name)
 - Subagents use plain `.md` (not `.mdc`) — per Cursor's v2.4 docs
-- Cursor subagents recognize only `name`, `description`, `model`, `readonly`, `is_background`. No `tools` field — tool access is inherited from the parent agent
+- Cursor subagents recognize only `name`, `description`, `model`, `readonly`, `is_background`. No `tools` field — tool access is inherited from the parent agent. The CLI bundle (2026.10.14) does split a `tools` key it finds, and reads frontmatter line by line without unquoting values; whether either reaches the agent is unconfirmed, so conforme keeps to the documented keys
+- CLI v2026.10.08: "`/skills` flags skills that break the Agent Skills limits" (a name over 64 characters or not lowercase-hyphen, a `name` that differs from the folder, a description over 1,024 characters, a body over about 5,000 tokens); such a skill still loads (https://cursor.com/docs/cli/changelog). conforme writes the folder name as `name` and caps names at 64 characters
 - Subagent names use lowercase letters and hyphens; conforme sanitizes the `name` it writes (`Code Reviewer` → `code-reviewer`)
 - A glob rule is written with `globs` and a `description`; a rule with non-empty `globs` is file-scoped whatever its description, and conforme reads it that way
 - `globs` is one comma-separated string ("Separate multiple patterns with commas"), so brace groups are expanded on write (`src/*.{ts,tsx}` → `src/*.ts, src/*.tsx`) and kept whole on read. On read a YAML list is accepted too; an empty `globs` scopes nothing, so the rule falls through to its `description` (agent-decision) or to manual

@@ -2,7 +2,7 @@
 
 > GitHub's AI coding assistant. Source: `--from copilot`
 
-**Last verified online:** 2026-10-12, against Copilot CLI 1.0.95 and VS Code 1.141 (https://github.com/github/copilot-cli/blob/main/changelog.md, https://code.visualstudio.com/updates)
+**Last verified online:** 2026-10-14, against Copilot CLI 1.0.97 and VS Code 1.142 (https://github.com/github/copilot-cli/blob/main/changelog.md, https://code.visualstudio.com/updates)
 
 ## Official docs
 
@@ -64,11 +64,11 @@
 - GlobMatch rules -> separate `.instructions.md` files
 - Skills -> `.github/skills/<name>/SKILL.md`
 - Detection: `.github/copilot-instructions.md`, or a `.github/instructions/`, `.github/agents/` or `.github/skills/` directory
-- `read()` round-trips instructions/rules plus skills (`.github/skills/*/SKILL.md`), subagents (`.github/agents/*.agent.md`), and MCP (`.vscode/mcp.json`)
+- `read()` round-trips instructions/rules plus skills (`.github/skills/*/SKILL.md`), subagents (`.github/agents/**/*.agent.md`), and MCP (`.vscode/mcp.json`, then `.github/mcp.json` in either format)
 - `${VAR:-default}` loses its default in `${env:VAR}`: `sync` warns
 - `.github/mcp.json` (Copilot CLI): `env` "Supports `$VAR`, `${VAR}`, and `${VAR:-default}` expansion" (Copilot CLI command reference, https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference); conforme writes it in the Claude Code shape, which keeps the default
 - VS Code has no per-server disable key: the enable/disable state "is stored separately from the server configuration in `mcp.json`" (https://code.visualstudio.com/docs/agent-customization/mcp-servers)
-- Verified 2026-10-12 with Copilot CLI 1.0.95 (`copilot mcp list`, `copilot skill list` with a scratch `HOME` trusting the fixture)
+- Verified 2026-10-14 with Copilot CLI 1.0.97 (`copilot mcp list`, `copilot skill list`, `copilot instruction list` with a scratch `HOME` trusting the fixture, Claude's `.mcp.json` removed): both servers of `.github/mcp.json`, the three project skills, `.github/copilot-instructions.md` plus the generated `AGENTS.md` and `GEMINI.md`, and the glob rule as a working-directory instruction
 
 ## Notes
 
@@ -81,6 +81,8 @@
 - VS Code 1.140 (2026-09-30) lists `.vscode/mcp.json` as deprecated in favour of the portable workspace `.mcp.json` (`mcpServers`). VS Code still reads it; conforme keeps writing it until the move can be coordinated with the Claude Code target, which owns `.mcp.json`
 - `.vscode/mcp.json` also holds VS Code's `inputs` (prompted secrets referenced as `${input:…}`) and `sandbox` settings, and VS Code parses it as JSONC. conforme **merges** only the `servers` key: comments, `inputs`, `sandbox`, and per-server keys it never emits (`envFile`, …) survive, a file it cannot parse is left untouched (sync fails), and `remove copilot` / `migrate --source copilot` keep the file
 - Copilot CLI reads MCP servers from `.mcp.json` or `.github/mcp.json` (`mcpServers` key), never `.vscode/mcp.json` (checked live with `copilot mcp list`, Copilot CLI 1.0.94: with only `.vscode/mcp.json` it reports no server). conforme therefore also merges the servers into `.github/mcp.json` in the Claude Code shape (`type: stdio/http`, `${VAR}`); a server present in both `.mcp.json` and `.github/mcp.json` is listed once. `read()` takes `.vscode/mcp.json` first, then any server only `.github/mcp.json` holds
+- Copilot CLI loads "`.mcp.json` (in any directory from your working directory up to the repository root)" and `.github/mcp.json`; "If both `.mcp.json` and `.github/mcp.json` exist in the same directory, `.mcp.json` takes precedence", and "definitions in files closer to your working directory take precedence" (https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers). With the Claude Code target synced, both files hold the same servers, so whichever copy wins is the source's
+- Bare format: project files "can use either the `mcpServers` top-level object … or the bare top-level format where each key is an MCP server name" (same page). `read()` takes a bare `.github/mcp.json` too. Once `mcpServers` is in the file, Copilot CLI reads only that: checked live with 1.0.97, a bare `playwright` entry left beside `mcpServers` is not listed by `copilot mcp list`. So `sync` moves the bare entries under `mcpServers` (keeping their own keys, such as `tools` or `deferTools`, and the file's comments) instead of adding `mcpServers` beside them; a bare server the source does not define is dropped, as one under `mcpServers` would be
 - The Copilot cloud agent (and Copilot code review) reads no MCP file from the repository: its servers are entered as JSON in the repository settings on GitHub.com, with secrets named `COPILOT_MCP_*` (https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/configure-mcp-servers). conforme cannot write that configuration
 - VS Code now calls `.vscode/mcp.json` deprecated and prefers the portable project `.mcp.json` (`mcpServers`, the file Claude Code reads); it still reads `.vscode/mcp.json` for compatibility (https://code.visualstudio.com/docs/agent-customization/mcp-servers). conforme keeps writing `.vscode/mcp.json` (known gap: moving VS Code to `.mcp.json` means sharing that file with the Claude Code target)
 - `.github/instructions/` may be organised in sub-directories; conforme reads nested `*.instructions.md` too (written back flat)
@@ -94,6 +96,7 @@
 - Copilot also loads `.claude/agents/` (VS Code custom agents page, Copilot CLI 1.0.62): with the Claude Code target synced too, an agent can be listed twice
 - `handoffs` is not supported on the Copilot cloud agent on GitHub.com (CLI only)
 - Agent files are accepted as `<name>.agent.md` **or** plain `<name>.md`; the filename minus extension is what deduplicates an agent across config levels. conforme writes the `.agent.md` form, and an agent file without a `name` reads back as `<name>` (the whole `.agent.md` suffix is stripped). Hand-written plain `.md` agents in `.github/agents/` are never deleted by orphan cleanup
+- Nested agents: "If the file is in a subdirectory of `agents`, the subdirectory name is included in the ID" (https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli; CLI 1.0.97 "Discover all custom agents even when repositories define more than 100 or nest agent files deeply"). `read()` takes agents in sub-directories too; Copilot names `security/auditor.agent.md` `security--auditor` (its example: `security--security-auditor`), conforme by its `name` or file (`auditor`), so a nested agent is renamed on a round trip (known gap, as in OpenCode). Orphan cleanup stays top-level, so nested files are never swept
 - `infer` is a retired agent field, superseded by `disable-model-invocation`; conforme emits neither
 - Agent prompt bodies are capped at 30,000 characters upstream
 - Copilot now has hooks support (CLI and cloud agent) -- not synced by conforme

@@ -2,7 +2,7 @@
 
 > Mistral's open-source coding agent CLI (`vibe`). Source: `--from vibe`
 
-**Last verified online:** 2026-10-12, against Mistral Vibe 2.26.1 (https://github.com/mistralai/mistral-vibe/releases)
+**Last verified online:** 2026-10-14, against Mistral Vibe 2.26.1 (https://github.com/mistralai/mistral-vibe/releases)
 
 ## Official docs
 

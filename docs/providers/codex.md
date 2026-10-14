@@ -2,7 +2,7 @@
 
 > OpenAI's AI CLI agent. Source: `--from codex`
 
-**Last verified online:** 2026-10-12, against Codex CLI 0.162.1 (https://github.com/openai/codex/releases)
+**Last verified online:** 2026-10-14, against Codex CLI 0.162.1 (https://github.com/openai/codex/releases)
 
 ## Official docs
 
@@ -29,7 +29,7 @@
 |---------|------|--------|
 | Instructions | `AGENTS.md` (native) | Markdown |
 | Skills | `.agents/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` |
-| MCP | `~/.codex/config.toml` (global) or `.codex/config.toml` (project) | TOML: `[mcp_servers.<name>]` (NOT JSON) |
+| MCP | `~/.codex/config.toml` (global) or `.codex/config.toml` (project; loaded only in a trusted project) | TOML: `[mcp_servers.<name>]` (NOT JSON) |
 | Agents | `.codex/agents/<name>.toml` (project; loaded only in a trusted project) | TOML: `name`, `description`, `developer_instructions` (all required) |
 
 ## Activation modes
@@ -50,7 +50,7 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - Skills in `.agents/skills/` (shared format, also read by Zed, Gemini CLI, OpenCode, Kilo Code and Mistral Vibe)
 - `read()` round-trips AGENTS.md, skills (`.agents/skills/`), agents (`.codex/agents/*.toml`), and MCP servers (`.codex/config.toml`); the file is parsed with conforme's AGENTS.md convention (instructions plus `## Rule:` sections), and its `## Skill:`/`## Agent:`/`## MCP:` sections are added to what this tool's own files hold (which win on a name clash). With this tool as the source, AGENTS.md *is* the source: sync never regenerates it (`generate_agents_md` does not apply), `gitignore install` keeps it tracked, and `remove`/`migrate` never delete it (`source_files()`)
 - A server whose table says `enabled = false` is not read when Codex is the source, and is kept when Codex is a target; any other server the source no longer defines is dropped
-- Codex refuses a server whose name does not match `^[a-zA-Z0-9_:@/.-]+$` ("Invalid MCP server name '{server_name}': must match pattern {pattern}", `validate_mcp_server_name` in https://github.com/openai/codex/blob/main/codex-rs/codex-mcp/src/rmcp_client.rs, checked per server at startup): `sync` warns about such a name. Verified 2026-10-12 with `codex mcp get --json` (0.162.1): `env_vars`, `bearer_token_env_var`; `codex debug prompt-input` lists the automatic skill and not the manual one
+- Codex refuses a server whose name does not match `^[a-zA-Z0-9_:@/.-]+$` ("Invalid MCP server name '{server_name}': must match pattern {pattern}", `validate_mcp_server_name` in https://github.com/openai/codex/blob/main/codex-rs/codex-mcp/src/rmcp_client.rs, checked per server at startup): `sync` warns about such a name. Verified 2026-10-14 with `codex mcp get --json` (0.162.1): `env_vars`, `bearer_token_env_var`; `codex debug prompt-input` lists the automatic skills and not the manual one, whose body is not in the loaded `AGENTS.md`
 
 ## Notes
 
@@ -70,7 +70,7 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - The Codex source also scans `<project>/.codex/skills`, which its docs do not mention; conforme does not use it
 - Project-level config at `.codex/config.toml`
 - Custom agents are TOML files in project `.codex/agents/*.toml` (scanned recursively) and in `~/.codex/agents/`, which conforme never reads. Codex requires a non-empty `name` and the keys `description` and `developer_instructions` (`codex-rs/agent-roles/src/agent_role_config.rs:80-84`, `:125-128`, `:148-151`); it skips a file without them with a warning (`codex-rs/agent-roles/src/loader.rs:119-123`), and scans `.codex/agents/` for `.toml` files recursively (`codex-rs/agent-roles/src/discovery.rs:23-38`). The minimal file is `name = "reviewer"`, `description = "Review role"`, `developer_instructions = "Review carefully"` (`codex-rs/core/src/config/config_tests.rs:9006-9010`)
-- Trust: Codex loads the project `.codex/agents/` only in a trusted project (`codex-rs/config/src/loader/mod.rs:133-134`; `codex-rs/agent-roles/src/loader.rs:75-78`), so a synced agent takes effect once the project is trusted. Codex has no tools allowlist (`codex-rs/core/src/agent/role.rs:36-48`), so conforme writes no `model`, `tools` or `nickname_candidates`
+- Trust: "For security, Codex loads project `.codex/` layers only when you trust the project" (https://learn.chatgpt.com/docs/config-file/config-basic). An untrusted project's `.codex/config.toml` is "loaded but disabled" (`codex-rs/config/src/loader/mod.rs:132-134`), and agent roles come only from enabled layers (`codex-rs/agent-roles/src/loader.rs:75-78` over `layers_low_to_high()`, "enabled config layers", `codex-rs/config/src/state.rs:603-605`), so neither the synced MCP servers nor the synced agents load until the project is trusted. Skills are not gated: `.agents/skills` is found by walking up from the working directory with no trust check (`codex-rs/ext/skills/src/host_roots.rs:137-148`). Trust is `[projects."<dir>"] trust_level = "trusted"` in `~/.codex/config.toml` (`$CODEX_HOME`), looked up for the directory, the project root and the root of the main git repository, a worktree resolving to its main checkout (`decision_for_dir` in `loader/mod.rs`, `codex-rs/git-utils/src/trust.rs`). When the source has MCP servers or agents and none of those directories is trusted there, `sync` and `migrate` warn and name the table to add. Verified 2026-10-14 with 0.162.1: with an empty `CODEX_HOME`, `codex mcp list` in the fixture prints "No MCP servers configured yet", and with the trust passed inline it lists both servers. Codex has no tools allowlist (`codex-rs/core/src/agent/role.rs:36-48`), so conforme writes no `model`, `tools` or `nickname_candidates`
 - Built-in names: `default`, `worker` and `explorer` are Codex's built-in agents (`codex-rs/core/src/agent/role.rs:348-385`). conforme never writes nor reads an agent with one of those names, and `sync` warns about it: a custom file of that name would override the built-in (`codex-rs/core/src/agent/role.rs:168-171`)
 - Ownership: `sync` writes each agent as `.codex/agents/<name>.toml` with only `name`, `description` and `developer_instructions`. Orphan cleanup removes a top-level `.toml` only when all its keys are among those three and its name is not a built-in one (`is_conforme_codex_agent_file` and `is_codex_builtin_agent` in `src/skills.rs`); a hand-written file with another key, such as `model`, is never swept
 - `developers.openai.com/codex/*` now 308-redirects to `learn.chatgpt.com/docs/*`

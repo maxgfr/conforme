@@ -2,7 +2,7 @@
 
 > Open-source coding agent, a fork of OpenCode: the `kilo` CLI and the VS Code extension built on it read the same project files. Source: `--from kilo`
 
-**Last verified online:** 2026-10-12, against Kilo Code 7.8.8 (https://github.com/Kilo-Org/kilocode/releases)
+**Last verified online:** 2026-10-14, against Kilo Code 7.8.8 (https://github.com/Kilo-Org/kilocode/releases)
 
 ## Official docs
 

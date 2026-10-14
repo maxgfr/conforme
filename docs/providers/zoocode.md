@@ -2,7 +2,7 @@
 
 > VS Code AI extension, the community fork of Roo Code. Source: `--from zoocode`
 
-**Last verified online:** 2026-10-12, against Zoo Code 3.88.0 (https://github.com/Zoo-Code-Org/Zoo-Code/releases)
+**Last verified online:** 2026-10-14, against Zoo Code 3.88.0 (https://github.com/Zoo-Code-Org/Zoo-Code/releases)
 
 Roo Code was shut down on 2026-05-15 (its repository, `RooCodeInc/Roo-Code`, is
 archived; the docs homepage points users to Zoo Code). Zoo Code continues the

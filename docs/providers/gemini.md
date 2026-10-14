@@ -2,7 +2,7 @@
 
 > Google's AI CLI tool. Source: `--from gemini`
 
-**Last verified online:** 2026-10-12, against Gemini CLI v0.63.0 (https://github.com/google-gemini/gemini-cli/releases)
+**Last verified online:** 2026-10-14, against Gemini CLI v0.64.0 (https://github.com/google-gemini/gemini-cli/releases)
 
 Since 2026-06-18 Gemini CLI serves only paid Gemini API keys and Gemini Code Assist Standard or Enterprise licences; Google AI Pro, Ultra and free users moved to **Antigravity CLI** (https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli). Antigravity reads the same `GEMINI.md` and `AGENTS.md`, but its project skills live in `.agents/skills/` and its MCP servers in `.agents/mcp_config.json` (remote key `serverUrl`, not `url`/`httpUrl`) (https://antigravity.google/docs/cli/gcli-migration). conforme has an Antigravity target, see [antigravity.md](antigravity.md): it writes `.agents/rules/`, `.agents/skills/`, `.agents/agents/` and `.agents/mcp_config.json`
 

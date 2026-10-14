@@ -2,7 +2,7 @@
 
 > High-performance editor with AI agent. Source: `--from zed`
 
-**Last verified online:** 2026-10-12, against Zed 1.23.2 (https://zed.dev/releases/stable)
+**Last verified online:** 2026-10-14, against Zed 1.24.2 (https://zed.dev/releases/stable)
 
 ## Official docs
 

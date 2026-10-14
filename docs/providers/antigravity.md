@@ -2,7 +2,7 @@
 
 > Google's Antigravity command-line agent (`agy`). Source: `--from antigravity`
 
-**Last verified online:** 2026-10-12, against Antigravity CLI 1.3.3 (https://github.com/google-antigravity/antigravity-cli/releases)
+**Last verified online:** 2026-10-14, against Antigravity CLI 1.3.5 (https://github.com/google-antigravity/antigravity-cli/releases)
 
 ## Official docs
 
@@ -47,14 +47,15 @@ Detection signals (changelog 1.1.16): `.agents/mcp_config.json`, `.agents/rules/
 - Skills: written to the shared `.agents/skills/` and read back from it. A manual skill is written with a warning, since Antigravity has no manual-only skill.
 - Subagents: `.agents/agents/<name>.md` with `name`, `description` and `model`; `model` is kept only as `inherit`, `flash` or `pro`. No `tools` field is written. A built-in name is never written, and a user file with one of those names is neither read nor cleaned.
 - MCP: merged under `mcpServers` through `json_settings`, so comments and keys conforme does not own survive, and an unparsable file is refused rather than overwritten. Local servers keep `env`; remote servers get `serverUrl` and `headers`, with no `env` and no `type`. HTTP and SSE share that key, so an SSE server is written the same way and reads back as streamable HTTP.
-- Warnings: a manual skill, a built-in subagent name, and any `${` in a server ("Antigravity documents no ${VAR} expansion"); the value may be sent as written.
+- Warnings: a manual skill, a built-in subagent name, any `${` in a server ("Antigravity documents no ${VAR} expansion"; the value may be sent as written), and an SSE server (see the disagreement below).
+- Docs versus the CLI: the web page gives `serverUrl` as the "URL for remote Streamable HTTP or SSE servers" and says "Legacy fields like `url` or `httpUrl` aren't supported" (https://antigravity.google/docs/mcp). The MCP reference built into `agy` 1.3.5 (read with `strings`, `# MCP Servers (mcp_config.json)`) says the opposite: "**`url`** (string, required) … The legacy key `serverUrl` is also accepted" and "The legacy HTTP+SSE transport (MCP spec 2024-11-05) is not supported"; it lists only the global `~/.gemini/config/mcp_config.json` and plugin files, not `.agents/`. conforme keeps `serverUrl`, which both accept, and warns about an SSE server, which connects only if it also speaks streamable HTTP at that URL
 - Migrating to Antigravity writes `AGENTS.md`, since that is where its instructions live.
 - Limitation with Antigravity as the source: the rules in `.agents/rules/` do not reach the tools that read only `AGENTS.md` (Codex, OpenCode, Kilo, Vibe, DeepSeek), because `AGENTS.md` is the source's own file and `sync` never rewrites it. `sync` and `check` name each such tool and the rules it misses; add those rules to `AGENTS.md` as `## Rule:` sections to share them.
 - Migrating from Antigravity to one of those tools adds the `.agents/rules/` rules to `AGENTS.md` as `## Rule:` sections before removing the rule files, so none is lost.
 - `type` is owned by conforme in `.agents/mcp_config.json` entries, so a stale hand-written `type` never contradicts a transport change; the `${VAR}` warning ignores `env` on a remote server, which is not written
 - Rules: "an unrecognized trigger value (such as camelCase alwaysOn or modelDecision), Antigravity silently discards the rule", and `glob:` is "also accepted" for `globs:` (https://antigravity.google/docs/rules). conforme reads only rules with `always_on`, `glob`, `model_decision` or `manual` and strict-YAML frontmatter, reads `glob:` as `globs:`, and never treats the other files as orphans
 - MCP `disabled` (boolean): "Temporarily disable a server without removing its configuration" (https://antigravity.google/docs/mcp). A disabled server is not read, a synced one is enabled again, and a disabled server of Antigravity's own is kept
-- `agy mcp list` (1.3.2) lists only the user configuration (`~/.gemini/config/mcp_config.json`, seen with `agy mcp add` under a scratch `HOME`), so the project `.agents/mcp_config.json` could not be confirmed with the CLI
+- `agy mcp list` (1.3.2, again 1.3.5 on 2026-10-14) lists only the user configuration (`~/.gemini/config/mcp_config.json`, seen with `agy mcp add` under a scratch `HOME`), so the project `.agents/mcp_config.json` could not be confirmed with the CLI
 
 ## Unconfirmed points
 
@@ -77,6 +78,7 @@ Reading: `agy mcp list` and `agy agents` show nothing from the project's `.agent
 
 - Antigravity always loads a root `AGENTS.md` (and `GEMINI.md`) whole, without activation modes, next to `.agents/rules/`, so in a project that keeps an `AGENTS.md` with rule sections its rules reach Antigravity twice and glob/manual rules are always on there. This is the same trade-off as Kiro, Cursor, Devin and Zoo Code: the generated `AGENTS.md` keeps its sections for the tools that read only `AGENTS.md` (Codex, OpenCode, …), and when `AGENTS.md` is the source's own file (`migrate --source codex --output antigravity`) it is left as it is.
 - Antigravity also reads `AGENTS.md` or `GEMINI.md` under `.agents/` (https://antigravity.google/docs/rules); conforme reads only the root files.
+- Legacy folders: the rules page keeps a "legacy path at `.agent/rules/`" and the skills page "backward compatibility for `.agent/skills`" (https://antigravity.google/docs/rules, https://antigravity.google/docs/skills); conforme reads and writes only `.agents/` (deliberate: it never writes the legacy folders, and a project still on them is migrated by renaming the folder)
 - `.agents/skills/` is shared with Codex and Zed. `remove` and `migrate` never delete a file another kept tool generates there.
 - Not handled: workflows, hooks, plugins, `.agents/*.json` manifests, nested rule folders listed in `.agents/rules.json`, and the `<name>/agent.md` subagent layout on write.
 - The Gemini CLI target is unchanged; see [gemini.md](gemini.md).
