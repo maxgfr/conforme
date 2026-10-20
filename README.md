@@ -268,7 +268,7 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | Zoo Code | `.roo/mcp.json` (merged) | `mcpServers` | HTTP uses `type: streamable-http` (not `http`), no `env` on remote servers; Zoo's `alwaysAllow`/`disabledTools` preserved |
 | Gemini CLI | `.gemini/settings.json` (merged) | `mcpServers` | No `type` field, uses `httpUrl` (not `url`) for HTTP |
 | OpenCode | `.opencode/opencode.jsonc` if it exists, else `.opencode/opencode.json` (merged) | `mcp.servers` | OpenCode 2's native shape: `type: local/remote`; `command` as single array; env key is `environment` (local only); `{env:VAR}` references; `disabled` toggle. Never the root `opencode.json`, which Kilo Code also loads and refuses when it holds `{env:VAR}`; OpenCode 1 `mcp.<name>` servers earlier versions wrote there are moved to `mcp.servers` |
-| Kilo Code | `.kilo/kilo.jsonc`, or the existing `kilo.json(c)` (merged) | `mcp` | OpenCode shape with no variable reference: Kilo refuses `{env:VAR}` in a project config, so `NAME=${NAME}` is left out (a local server inherits the environment) and any other `${VAR}` is written as is, with a warning |
+| Kilo Code | `.kilo/kilo.jsonc`, or the existing `kilo.json(c)` (merged) | `mcp` | OpenCode 1 shape with no variable reference: Kilo refuses `{env:VAR}` in a project config, so `NAME=${NAME}` is left out (a local server inherits the environment) and any other `${VAR}` is written as is, with a warning |
 | Zed AI | `.zed/settings.json` (merged) | `context_servers` | No `type` field; remote uses `url` + `headers`; no variable expansion |
 | Codex CLI | `.codex/config.toml` (merged) | `[mcp_servers.<name>]` | TOML, loaded only in a trusted project (`sync` warns when `~/.codex/config.toml` does not trust it); no `${VAR}` expansion: `NAME=${NAME}` → `env_vars`, `Authorization: Bearer ${VAR}` → `bearer_token_env_var`, a `${VAR}` header → `env_http_headers`; atomic merge preserves unrelated settings, comments and Codex-specific options |
 | DeepSeek Harness | _(not project-scoped)_ | — | MCP servers are `@deepseek-ai/dsh-mcp-client` plugin entries in the user-level `cordis.patch.yml` under `$DSH_HOME`, so conforme generates nothing |
@@ -691,7 +691,7 @@ Or use the pre-commit hook for local enforcement.
 
 Manual skills preserve `disable-model-invocation: true` and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. OpenCode 2 reads `disable-model-invocation: true` like its own `metadata.opencode/autoinvoke: false` (https://opencode.ai/v2/docs/skills/): the skill is left out of the model's list and still loads when asked for by name. conforme reads `metadata.opencode/autoinvoke: false` as manual too, but writes only `disable-model-invocation`.
 
-These skills run when explicitly invoked: `verify-providers`. Use `$name` in Codex, `/name` in Claude Code (with the plugin namespace when installed as a Claude plugin) or `@name` in OpenCode.
+These skills run when explicitly invoked: `verify-providers`. Use `$name` in Codex, `/name` in Claude Code or `@name` in OpenCode.
 
 The skill bundle disables implicit selection in Codex, Claude Code and OpenCode 2. To also keep OpenCode from loading it at all, merge a deny rule into `permissions` in `~/.config/opencode/opencode.json` or the project configuration; retain unrelated permissions:
 
