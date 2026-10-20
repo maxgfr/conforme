@@ -31,7 +31,7 @@
 | Rules | `.kilo/rules/*.md`, legacy `.kilocode/rules/*.md` | Plain Markdown, every file loaded |
 | Skills | `.kilo/skills/<name>/SKILL.md` (also `.kilo/skill/`, `.kilocode/`, `.claude/skills/`, `.agents/skills/`) | YAML frontmatter: `name` (required), `description` |
 | Agents | `.kilo/agents/<name>.md` (also `.kilo/agent/`, `.kilocode/`) and the `agent` key of the config | OpenCode format: `description`, `mode`, `model` (`provider/model`) |
-| MCP | `mcp` key of `kilo.json(c)` then `opencode.json(c)` at the root, then in `.kilocode/` and `.kilo/` (`ALL_CONFIG_FILES`, `packages/opencode/src/kilocode/config/config.ts`); later files win | OpenCode shape: `type: local/remote`, `command` array, `environment`, `url`, `headers` |
+| MCP | `mcp` key of `kilo.json(c)` then `opencode.json(c)` at the root, then in `.kilocode/` and `.kilo/` (`ALL_CONFIG_FILES`, `packages/opencode/src/kilocode/config/config.ts`); later files win | OpenCode 1 shape: `type: local/remote`, `command` array, `environment`, `url`, `headers` |
 
 Kilo's docs name the project file `.kilo/kilo.jsonc` (auto-approving actions) or `.kilo/kilo.json` (CLI runtime); it reads both, and `.kilo/` wins over the root files. Its Orchestrator agent is deprecated but still built in. It no longer reads `.opencode/` directories.
 
@@ -59,7 +59,7 @@ None: every rule file and the instruction file are always loaded.
 - Kilo also discovers skills in `.claude/skills/` and `.agents/skills/`: when Claude Code or Codex is synced too, the same skill exists in several roots, and Kilo keeps one copy per name (`kilo debug skill` lists each once, checked with 7.8.8). Kilo ships a built-in `kilo-config` skill that a synced skill of that name would override
 - Kilo loads the legacy `.kilocoderules`, `.kilocoderules-<mode>` and the mode rule directories `.kilo/rules-<mode>/` and `.kilocode/rules-<mode>/` (`packages/opencode/src/kilocode/rules-migrator.ts`); conforme reads none of them (known gap)
 - A local MCP server accepts `env` as an alias of `environment` but has no `cwd` (`packages/core/src/v1/config/mcp.ts`); conforme writes `environment` and no `cwd`
-- A legacy SSE server is written as `type: "remote"`: OpenCode and Kilo Code try streamable HTTP and then SSE on a `remote` URL (opencode v1.18.35 `packages/opencode/src/mcp/index.ts:269-289`), and the server reads back as streamable HTTP, since there is no SSE marker (documented, not modelled)
+- A legacy SSE server is written as `type: "remote"`: Kilo Code, like OpenCode 1, tries streamable HTTP and then SSE on a `remote` URL (opencode v1.18.35 `packages/opencode/src/mcp/index.ts:269-289`; OpenCode 2 speaks streamable HTTP only, see [opencode.md](opencode.md)), and the server reads back as streamable HTTP, since there is no SSE marker (documented, not modelled)
 
 ## Live check
 

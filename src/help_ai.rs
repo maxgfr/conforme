@@ -149,7 +149,7 @@ pub fn print_help_ai() {
             "Agents written to .opencode/agents/<name>.md only (model only as provider/model); conforme's OpenCode 1 `agent.<name>` keys and `mcp.<name>` servers from earlier versions are taken out (servers moved to `mcp.servers`), the user's keys kept",
             "Agents read from .opencode/agents/, .opencode/agent/ and the `agents` (and OpenCode 1 `agent`) keys together (markdown wins); built-in agent names (build, plan, general, …) are neither written nor read",
             "MCP read from `mcp.servers` and OpenCode 1 `mcp.<name>` entries of every project opencode.json(c), which OpenCode 2 still loads (native wins)",
-            "Skills read from .opencode/skills/ and .opencode/skill/ only; OpenCode also loads .claude/skills/ and .agents/skills/, so a skill synced there too appears twice",
+            "Skills read from .opencode/skills/ and .opencode/skill/ only; OpenCode also loads .claude/skills/ and .agents/skills/ and keeps one copy of a skill synced there too (the project .opencode/skills/ one)",
         ],
     );
     print_tool(
