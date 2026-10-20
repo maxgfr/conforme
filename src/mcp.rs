@@ -1110,7 +1110,7 @@ pub struct ServerShape {
     sse: Option<SseShape>,
     env_refs: EnvRefStyle,
     /// The key that turns a server off (`disabled`; `enabled` for Zed and
-    /// OpenCode): owned, so a synced server is enabled again — leaving it
+    /// OpenCode 1's shape): owned, so a synced server is enabled again — leaving it
     /// disabled would make `check` pass while the tool still hides it.
     toggle: Option<&'static str>,
     /// Kilo Code: a local server inherits Kilo's environment, so an `env`
@@ -1290,10 +1290,12 @@ pub const ANTIGRAVITY_SHAPE: ServerShape = ServerShape {
     env_refs: EnvRefStyle::Dollar,
 };
 
-/// OpenCode `opencode.json` `mcp`: `type` is `local` / `remote` (SSE is
-/// `remote`, OpenCode tries it itself), `command` is one `[cmd, ...args]`
-/// array, the environment is `environment` (local servers only), and
-/// references are written `{env:VAR}`.
+/// OpenCode 2 `mcp.servers` (https://opencode.ai/v2/docs/mcp-servers/):
+/// `type` is `local` / `remote` (remote is streamable HTTP only, so SSE is
+/// written as `remote` and read back as HTTP), `command` is one
+/// `[cmd, ...args]` array, the environment is `environment` (local servers
+/// only), references are written `{env:VAR}`, and `disabled: true` turns a
+/// server off.
 pub const OPENCODE_SHAPE: ServerShape = ServerShape {
     layout: Layout::OpenCode,
     stdio_type: Some("local"),
@@ -1303,28 +1305,76 @@ pub const OPENCODE_SHAPE: ServerShape = ServerShape {
     env_on_http: false,
     sse: None,
     env_refs: EnvRefStyle::OpenCode,
-    toggle: Some("enabled"),
+    toggle: Some("disabled"),
     drop_passthrough_env: false,
     remote_needs_type: false,
 };
 
-/// OpenCode 2's native `mcp.servers`: the V1 entry shape, turned off with
-/// `disabled: true` instead of `enabled: false`
-/// (https://opencode.ai/v2/docs/mcp-servers/). Read only: conforme writes the
-/// V1 shape, which both versions load.
-pub const OPENCODE_V2_SHAPE: ServerShape = ServerShape {
-    toggle: Some("disabled"),
+/// OpenCode 1's `mcp.<name>` entries: the same entry shape, turned off with
+/// `enabled: false`. OpenCode 2 still loads them, so they are read; conforme
+/// writes only `mcp.servers` and moves its own V1 entries there
+/// ([`opencode_v1_server_to_v2`]). Kilo Code, an OpenCode 1 fork, keeps this
+/// shape.
+pub const OPENCODE_V1_SHAPE: ServerShape = ServerShape {
+    toggle: Some("enabled"),
     ..OPENCODE_SHAPE
 };
 
-/// Kilo Code `mcp`: OpenCode's shape with no variable reference — Kilo
+/// An OpenCode 1 `mcp.<name>` entry in OpenCode 2's `mcp.servers` shape
+/// (https://opencode.ai/v2/docs/migrate-v1/#mcp-servers): `enabled: false`
+/// becomes `disabled: true`, a numeric `timeout` both `timeout.catalog` and
+/// `timeout.execution`, and the OAuth keys are snake_case. Every other key is
+/// kept as is.
+pub fn opencode_v1_server_to_v2(entry: &serde_json::Value) -> serde_json::Value {
+    let Some(fields) = entry.as_object() else {
+        return entry.clone();
+    };
+    let mut v2 = serde_json::Map::new();
+    for (key, value) in fields {
+        match (key.as_str(), value) {
+            ("enabled", serde_json::Value::Bool(enabled)) => {
+                if !enabled {
+                    v2.insert("disabled".into(), serde_json::Value::Bool(true));
+                }
+            }
+            ("timeout", serde_json::Value::Number(_)) => {
+                v2.insert(
+                    "timeout".into(),
+                    serde_json::json!({ "catalog": value, "execution": value }),
+                );
+            }
+            ("oauth", serde_json::Value::Object(oauth)) => {
+                let oauth = oauth
+                    .iter()
+                    .map(|(key, value)| {
+                        let key = match key.as_str() {
+                            "clientId" => "client_id",
+                            "clientSecret" => "client_secret",
+                            "callbackPort" => "callback_port",
+                            "redirectUri" => "redirect_uri",
+                            other => other,
+                        };
+                        (key.to_string(), value.clone())
+                    })
+                    .collect();
+                v2.insert("oauth".into(), serde_json::Value::Object(oauth));
+            }
+            _ => {
+                v2.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    serde_json::Value::Object(v2)
+}
+
+/// Kilo Code `mcp`: OpenCode 1's shape with no variable reference — Kilo
 /// refuses a project config holding `{env:VAR}`, so strings are copied
 /// verbatim (see [`ServerShape::drop_passthrough_env`]).
 pub const KILO_SHAPE: ServerShape = ServerShape {
     env_refs: EnvRefStyle::Literal,
     drop_passthrough_env: true,
     remote_needs_type: false,
-    ..OPENCODE_SHAPE
+    ..OPENCODE_V1_SHAPE
 };
 
 fn string_map(map: &BTreeMap<String, String>) -> serde_json::Value {
@@ -1641,8 +1691,9 @@ pub fn is_kilo_builtin_agent(name: &str) -> bool {
             .contains(&crate::config::sanitize_name(name).as_str())
 }
 
-/// Parse the OpenCode `agent` object from an `opencode.json` value back into
-/// normalized agents (the inverse of [`build_opencode_agent_object`]).
+/// Parse an OpenCode `agents` object (OpenCode 2, prompt in `system`) or
+/// OpenCode 1 / Kilo Code `agent` object (prompt in `prompt`) from an
+/// `opencode.json` value into normalized agents.
 pub fn parse_opencode_agent_object(
     agent: &serde_json::Value,
 ) -> Vec<crate::config::NormalizedAgent> {
@@ -1703,88 +1754,11 @@ pub fn parse_opencode_agent_object(
     result
 }
 
-/// Keys conforme writes into an OpenCode `agent.<name>` entry. Anything else
-/// (`permission`, `temperature`, `steps`, `color`, …) is the user's.
+/// Keys earlier conforme versions wrote into an OpenCode 1 `agent.<name>`
+/// entry (they now write `.opencode/agents/<name>.md` only, and take these
+/// keys back out). Anything else (`permission`, `temperature`, `steps`,
+/// `color`, …) is the user's.
 pub const OPENCODE_OWNED_AGENT_KEYS: &[&str] = &["description", "mode", "model", "prompt"];
-
-/// Build the OpenCode `agent` object for `opencode.json` (merged by the adapter).
-pub fn build_opencode_agent_object(
-    agents: &[crate::config::NormalizedAgent],
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut agent_map = serde_json::Map::new();
-
-    for agent in agents {
-        let mut entry = serde_json::Map::new();
-        entry.insert(
-            "description".to_string(),
-            serde_json::Value::String(crate::skills::description_or_name(
-                &agent.description,
-                &agent.name,
-            )),
-        );
-        entry.insert(
-            "mode".to_string(),
-            serde_json::Value::String("subagent".to_string()),
-        );
-        if let Some(model) = crate::skills::opencode_model(agent.model.as_deref()) {
-            entry.insert(
-                "model".to_string(),
-                serde_json::Value::String(model.to_string()),
-            );
-        }
-        if !agent.content.is_empty() {
-            entry.insert(
-                "prompt".to_string(),
-                serde_json::Value::String(agent.content.clone()),
-            );
-        }
-
-        agent_map.insert(
-            crate::config::sanitize_name(&agent.name),
-            serde_json::Value::Object(entry),
-        );
-    }
-
-    agent_map
-}
-
-/// Merge freshly generated OpenCode agents into the `agent` object on disk.
-///
-/// Unlike MCP servers, `agent` is shared with the user: it is where OpenCode
-/// documents overrides of its built-in agents (`build`, `plan`), per-agent
-/// `permission`, and agents written by hand. So every existing entry the
-/// source does not define is kept here; the OpenCode adapter drops the ones
-/// an earlier sync wrote for an agent that has left the source
-/// (`stale_agent_entries`).
-/// For a synced agent, `description`, `mode` and `prompt` are replaced,
-/// `model` only when the source has one OpenCode can use, and the user's own
-/// keys (`permission`, `temperature`, …) are kept.
-pub fn merge_opencode_agents(
-    existing: Option<&serde_json::Value>,
-    generated: serde_json::Map<String, serde_json::Value>,
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut merged = existing
-        .and_then(|v| v.as_object())
-        .cloned()
-        .unwrap_or_default();
-    for (name, entry) in generated {
-        let serde_json::Value::Object(new) = entry else {
-            continue;
-        };
-        let mut agent = match merged.remove(&name) {
-            Some(serde_json::Value::Object(old)) => old,
-            _ => serde_json::Map::new(),
-        };
-        for key in OPENCODE_OWNED_AGENT_KEYS {
-            if *key != "model" {
-                agent.remove(*key);
-            }
-        }
-        agent.extend(new);
-        merged.insert(name, serde_json::Value::Object(agent));
-    }
-    merged
-}
 
 /// Parse an MCP config file into normalized servers. Handles every key conforme
 /// emits — `mcpServers` (standard), `servers` (Copilot/VS Code),
@@ -2617,13 +2591,13 @@ auth = { type = "static", api_key_env = "TOKEN", api_key_header = "Authorization
 
     #[test]
     fn test_parse_opencode_mcp_object_skips_toggle_entries() {
-        // `mcp.<name>` may be just `{ "enabled": false }`, toggling a server
-        // defined in the global config.
+        // An OpenCode 1 `mcp.<name>` may be just `{ "enabled": false }`,
+        // toggling a server defined in the global config.
         let mcp = serde_json::json!({
             "github": {"enabled": false},
             "fs": {"type": "local", "command": ["npx", "-y", "fs"]}
         });
-        let parsed = OPENCODE_SHAPE.read(&mcp);
+        let parsed = OPENCODE_V1_SHAPE.read(&mcp);
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].name, "fs");
     }
@@ -2883,46 +2857,56 @@ auth = { type = "static", api_key_env = "TOKEN", api_key_header = "Authorization
     }
 
     #[test]
-    fn test_build_opencode_agent_object() {
-        let agents = vec![crate::config::NormalizedAgent {
-            name: "reviewer".to_string(),
-            description: "Code review".to_string(),
-            content: "Review code.".to_string(),
-            model: Some("openai/gpt-4o".to_string()),
-            tools: vec![],
-            ..Default::default()
-        }];
-        let map = build_opencode_agent_object(&agents);
-        let entry = map.get("reviewer").unwrap().as_object().unwrap();
-        assert_eq!(
-            entry.get("description").unwrap().as_str().unwrap(),
-            "Code review"
-        );
-        assert_eq!(entry.get("mode").unwrap().as_str().unwrap(), "subagent");
-        assert_eq!(
-            entry.get("model").unwrap().as_str().unwrap(),
-            "openai/gpt-4o"
-        );
-        assert_eq!(
-            entry.get("prompt").unwrap().as_str().unwrap(),
-            "Review code."
-        );
+    fn test_opencode_disabled_toggle_is_v2_only() {
+        // OpenCode 2 turns a server off with `disabled: true`; OpenCode 1's
+        // `enabled: false` belongs to the V1 shape (and Kilo Code's).
+        let v2 = serde_json::json!({
+            "off": {"type": "local", "command": ["a"], "disabled": true},
+            "on": {"type": "local", "command": ["b"], "enabled": false}
+        });
+        let names: Vec<_> = OPENCODE_SHAPE
+            .read(&v2)
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(names, ["on"]);
+        let names: Vec<_> = OPENCODE_V1_SHAPE
+            .read(&v2)
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(names, ["off"]);
+        assert!(OPENCODE_SHAPE.owned_keys().contains(&"disabled"));
+        assert!(!OPENCODE_SHAPE.owned_keys().contains(&"enabled"));
     }
 
     #[test]
-    fn test_opencode_agent_drops_bare_model_and_fills_description() {
-        // OpenCode resolves `model` as `provider/model`: a bare id would become
-        // provider `gpt-4o` with an empty model, so it is left out. An agent
-        // without a description is not listed, so the name stands in.
-        let agents = vec![crate::config::NormalizedAgent {
-            name: "reviewer".to_string(),
-            model: Some("gpt-4o".to_string()),
-            ..Default::default()
-        }];
-        let map = build_opencode_agent_object(&agents);
-        let entry = map["reviewer"].as_object().unwrap();
-        assert!(entry.get("model").is_none());
-        assert_eq!(entry["description"], "reviewer");
+    fn test_opencode_v1_server_to_v2() {
+        let v1 = serde_json::json!({
+            "type": "remote",
+            "url": "https://e.x/mcp",
+            "enabled": false,
+            "timeout": 30000,
+            "oauth": {"clientId": "id", "clientSecret": "s", "callbackPort": 1, "redirectUri": "r", "scope": "x"},
+            "headers": {"A": "b"}
+        });
+        assert_eq!(
+            opencode_v1_server_to_v2(&v1),
+            serde_json::json!({
+                "type": "remote",
+                "url": "https://e.x/mcp",
+                "disabled": true,
+                "timeout": {"catalog": 30000, "execution": 30000},
+                "oauth": {"client_id": "id", "client_secret": "s", "callback_port": 1, "redirect_uri": "r", "scope": "x"},
+                "headers": {"A": "b"}
+            })
+        );
+        // `enabled: true` is the default: nothing to carry over.
+        let on = serde_json::json!({"type": "local", "command": ["x"], "enabled": true});
+        assert_eq!(
+            opencode_v1_server_to_v2(&on),
+            serde_json::json!({"type": "local", "command": ["x"]})
+        );
     }
 
     fn remote_with_env(url: &str) -> NormalizedMcpServer {
@@ -3069,32 +3053,6 @@ auth = { type = "static", api_key_env = "TOKEN", api_key_header = "Authorization
         assert!(gemini["remote"].get("url").is_none());
         assert_eq!(gemini["remote"]["httpUrl"], "https://e.x/mcp");
         assert_eq!(gemini["remote"]["trust"], true);
-    }
-
-    #[test]
-    fn test_merge_opencode_agents_keeps_user_entries() {
-        let existing = serde_json::json!({
-            "build": {"permission": {"bash": "ask"}},
-            "reviewer": {"description": "old", "mode": "subagent", "temperature": 0.1, "model": "anthropic/claude-sonnet-4-5"},
-            "stale": {"description": "gone", "mode": "subagent", "prompt": "x"},
-            "mine": {"description": "hand-made", "mode": "subagent", "prompt": "y", "steps": 5}
-        });
-        let generated = build_opencode_agent_object(&[crate::config::NormalizedAgent {
-            name: "reviewer".to_string(),
-            description: "Review".to_string(),
-            content: "Review.".to_string(),
-            ..Default::default()
-        }]);
-        let merged = merge_opencode_agents(Some(&existing), generated);
-        assert_eq!(merged["build"], existing["build"]);
-        assert_eq!(merged["reviewer"]["description"], "Review");
-        assert_eq!(merged["reviewer"]["temperature"], 0.1);
-        // The source's model is no `provider/model`, so the user's is kept.
-        assert_eq!(merged["reviewer"]["model"], "anthropic/claude-sonnet-4-5");
-        // Nothing the source does not define is deleted: a hand-written agent
-        // looks exactly like a generated one.
-        assert_eq!(merged["stale"], existing["stale"]);
-        assert_eq!(merged["mine"], existing["mine"]);
     }
 
     #[test]

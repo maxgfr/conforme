@@ -49,7 +49,7 @@ You can set your source tool once in `.conformerc.toml` or pass it on the comman
 | Tool | Primary file | Notes |
 |------|-------------|-------|
 | OpenAI Codex CLI | `AGENTS.md` | Also supports `AGENTS.override.md` (personal; not used as a conforme source) |
-| OpenCode | `AGENTS.md` | Falls back to `CLAUDE.md`, then the deprecated `CONTEXT.md` |
+| OpenCode | `AGENTS.md` | OpenCode 2 reads `AGENTS.md` only (no `CLAUDE.md` fallback) |
 | Gemini CLI | `GEMINI.md` | Reads AGENTS.md when `context.fileName` in `.gemini/settings.json` names it; conforme writes the first other `context.fileName` entry (none when it names only `AGENTS.md`) |
 | Zed AI | `.rules` | First match wins: `.rules` → `.cursorrules` → `.windsurfrules` → `.clinerules` → `.github/copilot-instructions.md` → `AGENT.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` |
 | DeepSeek Harness (`dsh`) | `AGENTS.md` | Also loads `CLAUDE.md` when present; skills in `.dsh/skills/` |
@@ -201,7 +201,7 @@ Metadata comments are read only in the comment lines right after a section's hea
 | Devin Desktop | `.devin/rules/*.md` | `.devin/skills/` | - | `.devin/mcp_config.json` (merged) |
 | Zoo Code | `.roo/rules/*.md` | `.roo/skills/` | - | `.roo/mcp.json` (merged) |
 | Gemini CLI | `GEMINI.md` | `.gemini/skills/` | `.gemini/agents/*.md` | `.gemini/settings.json` (merged) |
-| OpenCode | native (AGENTS.md) | `.opencode/skills/` | `opencode.json#agent` (merged) + `.opencode/agents/*.md` | `.opencode/opencode.json#mcp` or an existing root `opencode.json` (merged) |
+| OpenCode | native (AGENTS.md) | `.opencode/skills/` | `.opencode/agents/*.md` | `.opencode/opencode.json(c)#mcp.servers` (merged) |
 | Zed AI | `.rules` | `.agents/skills/` | - | `.zed/settings.json` (merged) |
 | Codex CLI | native (AGENTS.md) | `.agents/skills/` | `.codex/agents/*.toml` | `.codex/config.toml` (merged) |
 | DeepSeek Harness | native (AGENTS.md) | `.dsh/skills/` | - | - (user-level `cordis.patch.yml`) |
@@ -244,7 +244,7 @@ Agents (sub-agents) are custom AI assistants with a model, tools, and system pro
 | Cursor | `.cursor/agents/<name>.md` | YAML frontmatter: `name`, `description`, `model` (no other host's alias; no `tools` — inherited) |
 | Kiro | `.kiro/agents/<name>.md` | YAML frontmatter: `description`, `model` (no other host's alias, no `inherit`), `tools` (Kiro tools and tags: `read`, `grep`, `shell`, `@server/tool`, …; name from the file) |
 | Gemini CLI | `.gemini/agents/<name>.md` | YAML frontmatter: `name`, `description`, `kind: local`, `model` (Gemini ids only), `tools` (Gemini tool names) |
-| OpenCode | `opencode.json` (`agent` key) + `.opencode/agents/<name>.md` | JSON merged into `opencode.json`; markdown for per-project agents; `model` only when written as `provider/model` |
+| OpenCode | `.opencode/agents/<name>.md` | Markdown only (OpenCode 2's preferred location); `model` only when written as `provider/model`; the `agent.<name>` keys earlier versions wrote into `opencode.json` are taken out, the user's own keys kept |
 | Codex CLI | `.codex/agents/<name>.toml` | TOML: `name`, `description`, `developer_instructions` (no `model` or tools; loaded only in a trusted project; the built-in `default`, `worker` and `explorer` are skipped) |
 | Mistral Vibe | `.vibe/agents/<name>.toml` | TOML: `agent_type = "subagent"`, `description`, `instructions`, `enabled_tools` (Vibe tool names) |
 | Kilo Code | `.kilo/agents/<name>.md` | OpenCode format (`description`, `mode: subagent`, `provider/model`); Kilo's built-in names (`code`, `ask`, `debug`, `orchestrator`, …) are skipped |
@@ -267,7 +267,7 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | Kiro | `.kiro/settings/mcp.json` (merged) | `mcpServers` | Standard format; `autoApprove`/`disabledTools`/`oauth` preserved |
 | Zoo Code | `.roo/mcp.json` (merged) | `mcpServers` | HTTP uses `type: streamable-http` (not `http`), no `env` on remote servers; Zoo's `alwaysAllow`/`disabledTools` preserved |
 | Gemini CLI | `.gemini/settings.json` (merged) | `mcpServers` | No `type` field, uses `httpUrl` (not `url`) for HTTP |
-| OpenCode | `.opencode/opencode.json`, or an existing root `opencode.json` (merged) | `mcp` | `type: local/remote`; `command` as single array; env key is `environment` (local only); `{env:VAR}` references; a new file goes to `.opencode/`, which Kilo Code does not read |
+| OpenCode | `.opencode/opencode.jsonc` if it exists, else `.opencode/opencode.json` (merged) | `mcp.servers` | OpenCode 2's native shape: `type: local/remote`; `command` as single array; env key is `environment` (local only); `{env:VAR}` references; `disabled` toggle. Never the root `opencode.json`, which Kilo Code also loads and refuses when it holds `{env:VAR}`; OpenCode 1 `mcp.<name>` servers earlier versions wrote there are moved to `mcp.servers` |
 | Kilo Code | `.kilo/kilo.jsonc`, or the existing `kilo.json(c)` (merged) | `mcp` | OpenCode shape with no variable reference: Kilo refuses `{env:VAR}` in a project config, so `NAME=${NAME}` is left out (a local server inherits the environment) and any other `${VAR}` is written as is, with a warning |
 | Zed AI | `.zed/settings.json` (merged) | `context_servers` | No `type` field; remote uses `url` + `headers`; no variable expansion |
 | Codex CLI | `.codex/config.toml` (merged) | `[mcp_servers.<name>]` | TOML, loaded only in a trusted project (`sync` warns when `~/.codex/config.toml` does not trust it); no `${VAR}` expansion: `NAME=${NAME}` → `env_vars`, `Authorization: Bearer ${VAR}` → `bearer_token_env_var`, a `${VAR}` header → `env_http_headers`; atomic merge preserves unrelated settings, comments and Codex-specific options |
@@ -275,7 +275,7 @@ MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) servers are syn
 | Mistral Vibe | `.vibe/config.toml` (merged) | `[[mcp_servers]]` | TOML array; `transport = "stdio"` / `"streamable-http"`; `Authorization: Bearer ${VAR}` (else a header that is exactly `${VAR}`) → static `auth` with `api_key_env`; any other `${VAR}` is written as is, with a warning; OAuth `auth` and other settings preserved; an inline `mcp_servers = []` is accepted |
 | Antigravity CLI | `.agents/mcp_config.json` (merged) | `mcpServers` | No `type` field; local `command`, `args`, `env`; remote `serverUrl` + `headers` (SSE uses the same key, so it reads back as HTTP); `${VAR}` written as is, with a warning (Antigravity documents no expansion); JSONC accepted |
 
-The source decides which servers exist, in every tool: a server only the target lists is dropped, and a synced server is re-enabled (`disabled` / `enabled: false` are reset) so `check` never passes while a tool hides it. In a tool with its own off switch (`disabled: true` for Kiro, Zoo Code, Devin, Antigravity CLI and OpenCode 2's `mcp.servers`, `enabled: false` for Zed and OpenCode, `enabled = false` for Codex, `disabled = true` for Mistral Vibe), a disabled server is not read from the source, and the tool's own disabled server is kept. Claude Code, Cursor, Copilot and Gemini CLI keep that switch outside the file, so such a key there means nothing. Claude Code skips an entry with a `url` but no `type`, and so does conforme when reading it. Entries conforme cannot express (a Zed extension server configured only through `settings`, a Claude Code `type: "sdk"` server, an OpenCode `{ "enabled": false }` toggle) are skipped on read and kept as they are on write; Zed's legacy `command: { path, args, env }` is read like the flat form, as Zed itself still loads it. Codex refuses a server name outside `^[a-zA-Z0-9_:@/.-]+$`, and `sync` warns about one. A source with no MCP server at all leaves every MCP file untouched, so servers kept by hand in a tool survive when conforme only syncs rules. conforme writes environment-variable references in each tool's syntax (Codex, which expands none, through its `env_vars` / `bearer_token_env_var` / `env_http_headers` keys) and reads them back to `${VAR}`. A reference a tool cannot express (a Codex `NAME=${OTHER}`, a `${VAR}` mixed into other text there, any reference for Zed, which expands none) is written literally; for Kilo Code, Mistral Vibe and Antigravity CLI, `sync` and `migrate` print a warning naming the server. They also warn when a target's syntax has no default value (`${VAR:-default}` loses its default in Cursor, Copilot, Devin, Zoo Code, Kiro and OpenCode) and when an editor variable (`${workspaceFolder}`) reaches a tool without them (Kiro, OpenCode, Gemini CLI, Devin); OpenCode gets `${workspaceFolder}` verbatim. An existing JSON settings file is edited in place: its key order, indentation and comments are kept. A legacy SSE server (`type: "sse"`, or `<!-- transport: sse -->` in AGENTS.md) stays SSE in Claude Code, Cursor, Copilot, Zoo Code, Gemini CLI and Devin, is written as a bare `url` for Kiro (which reads it back as streamable HTTP), as `type: "remote"` for OpenCode and Kilo Code (which try SSE themselves), and as streamable HTTP with a warning for Codex, Zed AI and Mistral Vibe. Antigravity CLI takes one `serverUrl` key for both transports, so an SSE server is written like an HTTP one and read back as streamable HTTP.
+The source decides which servers exist, in every tool: a server only the target lists is dropped, and a synced server is re-enabled (`disabled` / `enabled: false` are reset) so `check` never passes while a tool hides it. In a tool with its own off switch (`disabled: true` for Kiro, Zoo Code, Devin, Antigravity CLI and OpenCode's `mcp.servers`, `enabled: false` for Zed and Kilo Code, `enabled = false` for Codex, `disabled = true` for Mistral Vibe), a disabled server is not read from the source, and the tool's own disabled server is kept. Claude Code, Cursor, Copilot and Gemini CLI keep that switch outside the file, so such a key there means nothing. Claude Code skips an entry with a `url` but no `type`, and so does conforme when reading it. Entries conforme cannot express (a Zed extension server configured only through `settings`, a Claude Code `type: "sdk"` server, an OpenCode 1 `{ "enabled": false }` toggle) are skipped on read and kept as they are on write; Zed's legacy `command: { path, args, env }` is read like the flat form, as Zed itself still loads it. Codex refuses a server name outside `^[a-zA-Z0-9_:@/.-]+$`, and `sync` warns about one. A source with no MCP server at all leaves every MCP file untouched, so servers kept by hand in a tool survive when conforme only syncs rules. conforme writes environment-variable references in each tool's syntax (Codex, which expands none, through its `env_vars` / `bearer_token_env_var` / `env_http_headers` keys) and reads them back to `${VAR}`. A reference a tool cannot express (a Codex `NAME=${OTHER}`, a `${VAR}` mixed into other text there, any reference for Zed, which expands none) is written literally; for Kilo Code, Mistral Vibe and Antigravity CLI, `sync` and `migrate` print a warning naming the server. They also warn when a target's syntax has no default value (`${VAR:-default}` loses its default in Cursor, Copilot, Devin, Zoo Code, Kiro and OpenCode) and when an editor variable (`${workspaceFolder}`) reaches a tool without them (Kiro, OpenCode, Gemini CLI, Devin); OpenCode gets `${workspaceFolder}` verbatim. An existing JSON settings file is edited in place: its key order, indentation and comments are kept. A legacy SSE server (`type: "sse"`, or `<!-- transport: sse -->` in AGENTS.md) stays SSE in Claude Code, Cursor, Copilot, Zoo Code, Gemini CLI and Devin, is written as a bare `url` for Kiro (which reads it back as streamable HTTP), as `type: "remote"` for Kilo Code (which tries SSE itself) and OpenCode (with a warning: OpenCode 2 speaks streamable HTTP only), and as streamable HTTP with a warning for Codex, Zed AI and Mistral Vibe. Antigravity CLI takes one `serverUrl` key for both transports, so an SSE server is written like an HTTP one and read back as streamable HTTP.
 
 ## Examples
 
@@ -689,23 +689,19 @@ Or use the pre-commit hook for local enforcement.
 
 ## Manual skill invocation
 
-Manual skills preserve `disable-model-invocation: true`, `metadata.opencode/autoinvoke: "false"`, and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. conforme writes `metadata.opencode/autoinvoke` as a hint that OpenCode is not known to read (no reader exists on its `dev` branch), so OpenCode needs the corresponding `permission.skill` deny entries; skill synchronization does not change user permissions.
+Manual skills preserve `disable-model-invocation: true` and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. OpenCode 2 reads `disable-model-invocation: true` like its own `metadata.opencode/autoinvoke: false` (https://opencode.ai/v2/docs/skills/): the skill is left out of the model's list and still loads when asked for by name. conforme reads `metadata.opencode/autoinvoke: false` as manual too, but writes only `disable-model-invocation`.
 
-These skills run when explicitly invoked: `verify-providers`. Use `$name` in Codex or `/name` in Claude Code and OpenCode (with the plugin namespace when installed as a Claude plugin).
+These skills run when explicitly invoked: `verify-providers`. Use `$name` in Codex, `/name` in Claude Code (with the plugin namespace when installed as a Claude plugin) or `@name` in OpenCode.
 
-The skill bundle disables implicit selection in Codex and Claude Code. Its `metadata.opencode/autoinvoke: "false"` is only a hint OpenCode is not known to read, so for OpenCode merge these entries into `permission.skill` in `~/.config/opencode/opencode.json` or the project configuration; retain unrelated permissions:
+The skill bundle disables implicit selection in Codex, Claude Code and OpenCode 2. To also keep OpenCode from loading it at all, merge a deny rule into `permissions` in `~/.config/opencode/opencode.json` or the project configuration; retain unrelated permissions:
 
 ```json
 {
-  "permission": {
-    "skill": {
-      "verify-providers": "deny"
-    }
-  }
+  "permissions": [
+    { "action": "skill", "resource": "verify-providers", "effect": "deny" }
+  ]
 }
 ```
-
-On OpenCode 1.18.30, these rules hide the skills from the agent and reject skill-tool loading, while explicit `/name` commands remain available. Installation with `skills add` does not apply this OpenCode V1 configuration.
 
 ## License
 

@@ -58,7 +58,7 @@ src/
                        merge_server_entries keeps per-server keys conforme does not own;
                        is_expressible_server: an entry with neither `command` nor `url`/`httpUrl`/`serverUrl`,
                        or a Claude `type: "sdk"` one, is skipped on read and kept untouched on write
-                       (Zed extension servers, Claude SDK servers, OpenCode `{ "enabled": false }` toggles);
+                       (Zed extension servers, Claude SDK servers, OpenCode 1 `{ "enabled": false }` toggles);
                        server_settings_file leaves the file untouched when the source has no server;
                        server_settings_file_or_bare moves a bare-format file's servers under the key (Copilot CLI);
                        a tool's own toggle (ServerShape.toggle, an owned `disabled` / `enabled`) skips a disabled
@@ -106,9 +106,11 @@ src/
                        - per-tool keys and shapes: see "MCP key mapping per tool" below
                        - Claude .mcp.json parsing: `sse` maps to Sse, http/https/streamable-http/ws to Http;
                          `type: "sdk"` entries are skipped
-                       - OpenCode: merge_opencode_agents keeps the user's own `agent` entries (the adapter
-                         drops one an earlier sync wrote for an agent that left the source)
-                       - Kilo: KILO_SHAPE (no variable reference)
+                       - OpenCode: OPENCODE_SHAPE is OpenCode 2's `mcp.servers` (`disabled`); OPENCODE_V1_SHAPE
+                         (`mcp.<name>`, `enabled`) is read only, and opencode_v1_server_to_v2 moves the V1
+                         servers earlier versions wrote; OPENCODE_OWNED_AGENT_KEYS are the `agent.<name>` keys
+                         they wrote, taken back out
+                       - Kilo: KILO_SHAPE (OpenCode 1's shape, no variable reference)
                        - Vibe: merge_vibe_mcp_toml / parse_vibe_mcp_toml; a string `command` is shell-split
                          as Vibe does, one that would not survive it is written as a list; vibe_api_key maps
                          `Bearer ${VAR}`, else an exact `${VAR}` header, to `api_key_env`; an inline
@@ -160,11 +162,14 @@ src/
                        source has MCP servers or agents and $CODEX_HOME/config.toml (default ~/.codex) trusts
                        neither the project nor its main repository root (codex_trusts: untrusted .codex/ layers
                        are ignored)
-    opencode.rs     — OpenCode: reads AGENTS.md natively; agents read from .opencode/agents/, .opencode/agent/
-                       and the opencode.json `agent` key together (markdown wins; built-in overrides skipped);
-                       an agent named like a built-in one (build, plan, …) is never written; config merged into
-                       the existing root or .opencode/ opencode.json(c), else a new .opencode/opencode.json
-                       (Kilo, which refuses `{env:VAR}`, never reads .opencode/)
+    opencode.rs     — OpenCode 2 only: reads AGENTS.md natively (no CLAUDE.md / CONTEXT.md fallback); agents
+                       written to .opencode/agents/<name>.md only, read from .opencode/agents/, .opencode/agent/
+                       and the opencode.json `agents` / V1 `agent` keys together (markdown wins; built-in
+                       overrides skipped); an agent named like a built-in one (build, plan, …) is never written;
+                       MCP merged into `mcp.servers` of .opencode/opencode.jsonc if it exists, else
+                       .opencode/opencode.json — never the root one (Kilo, which refuses `{env:VAR}`, loads it
+                       and never reads .opencode/); config_files moves the V1 `mcp.<name>` servers and takes the
+                       `agent.<name>` keys earlier versions wrote out of every project opencode.json(c)
     zoocode.rs      — Zoo Code (community fork of Roo Code): .roo/rules/**/*.md, read recursively (plain Markdown);
                        2–3 digit `NN-` prefix stripped, `Intended scope` comment read back as globs and
                        `Apply when` as an agent-decision description; .roorules read
@@ -280,10 +285,10 @@ Review for bugs.
 | Zoo Code | `mcpServers` (inside `.roo/mcp.json`) | HTTP uses `type: streamable-http` (not `http`), SSE `type: "sse"`, no `env` on remote servers; merged (keeps Zoo's `alwaysAllow`/`disabledTools`) |
 | Copilot | `servers` (inside `.vscode/mcp.json`) + `mcpServers` (inside `.github/mcp.json`) | VS Code reads the first (`env` on stdio, `headers` on HTTP; keeps `inputs`/`sandbox`), Copilot CLI only the second (Claude Code shape); both merged, SSE as `type: "sse"` in both. The cloud agent reads no file: its servers are in the repository settings |
 | Devin | `mcpServers` (inside `.devin/mcp_config.json`) | No type field; remote `url` + `transport: http` (SSE: `transport: "sse"`); `${env:VAR}`; merged |
-| OpenCode | `mcp` (inside `opencode.json`: an existing root one, else `.opencode/opencode.json`) | `type: local/remote` (SSE is `remote`, read as HTTP); `command` is a single array; env key is `environment` (local only); `{env:VAR}`, editor variables such as `${workspaceFolder}` kept verbatim; merged (preserves user keys and `{ "enabled": false }` toggles) |
+| OpenCode | `mcp.servers` (inside `.opencode/opencode.jsonc` if it exists, else `.opencode/opencode.json`; never the root one) | OpenCode 2's native shape: `type: local/remote` (SSE is `remote` with a warning, read as HTTP); `disabled` toggle; `command` is a single array; env key is `environment` (local only); `{env:VAR}`, editor variables such as `${workspaceFolder}` kept verbatim; merged (preserves user keys, `mcp.timeout` and OpenCode 1 `{ "enabled": false }` toggles); V1 `mcp.<name>` servers earlier versions wrote are moved to `mcp.servers` |
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; SSE becomes streamable HTTP (warned); merged into existing settings (preserves theme/keybindings/etc. and extension servers configured only via `settings`) |
 | Gemini | `mcpServers` (inside `.gemini/settings.json`) | `httpUrl` for HTTP, `url` + `type: "sse"` for SSE; merged into existing settings |
-| Kilo Code | `mcp` (inside `.kilo/kilo.jsonc` or the existing `kilo.json(c)`) | OpenCode shape (SSE is `remote`); no variable reference (Kilo refuses `{env:VAR}` in a project config): `NAME=${NAME}` dropped, other `${VAR}` written as is with a warning; merged |
+| Kilo Code | `mcp` (inside `.kilo/kilo.jsonc` or the existing `kilo.json(c)`) | OpenCode 1 shape (SSE is `remote`); no variable reference (Kilo refuses `{env:VAR}` in a project config): `NAME=${NAME}` dropped, other `${VAR}` written as is with a warning; merged |
 | Mistral Vibe | `[[mcp_servers]]` (inside `.vibe/config.toml`) | TOML; `transport` stdio / streamable-http (SSE becomes streamable-http, warned); `Bearer ${VAR}` → static `auth.api_key_env`; other `${VAR}` written as is with a warning; atomic merge keeps settings and OAuth auth; a server that left the source is dropped, a `disabled` one kept |
 | DeepSeek Harness | _(none)_ | MCP is a user-level `cordis.patch.yml` plugin entry under `$DSH_HOME`; nothing project-scoped is generated |
 | Codex | `[mcp_servers.<name>]` (inside `.codex/config.toml`) | TOML; SSE becomes streamable HTTP (warned); no `${VAR}` expansion (mapping under mcp.rs above); atomic merge preserves unrelated settings, comments and Codex-specific options; a server that left the source is dropped, an `enabled = false` one kept |
@@ -335,7 +340,7 @@ exists that the source does not read. `--dry-run` reports identical files as
 `AiToolAdapter::source_files(project_root)` lists what `read()` loads outside
 the tool's managed directories, only paths that exist and are used: Claude Code
 `CLAUDE.md` (or `AGENTS.md` + `.claude/AGENTS.md` in the fallback), Codex
-`AGENTS.md`, OpenCode the first of `AGENTS.md` / `CLAUDE.md` / `CONTEXT.md`, Kilo the first of
+`AGENTS.md`, OpenCode `AGENTS.md`, Kilo the first of
 `AGENTS.md` / `CLAUDE.md` / `CONTEXT.md` plus its rule directories, Vibe
 `AGENTS.md` plus `.agents/skills` when `.vibe/skills` has none, DeepSeek the first of `AGENTS.md` /
 `CLAUDE.md` plus `.agents/skills` when `.dsh/skills` has none, Gemini CLI its
@@ -355,12 +360,13 @@ gitignored, and `conforme add` refuses to append to an `AGENTS.md` a tool
 source regenerates. Renamed tool ids (`windsurf` → `devin`) are an error
 wherever an id is accepted.
 
-In a tool that has its own off switch (`disabled: true` for Kiro, Zoo, Devin, Antigravity and OpenCode 2
-`mcp.servers`; `enabled: false` for Zed and OpenCode; Codex `enabled = false`; Vibe `disabled = true`), a
+In a tool that has its own off switch (`disabled: true` for Kiro, Zoo, Devin, Antigravity and OpenCode
+`mcp.servers`; `enabled: false` for Zed, Kilo and OpenCode 1 `mcp.<name>`; Codex `enabled = false`; Vibe `disabled = true`), a
 disabled server is not read from a source and the tool's own disabled server is kept; Claude Code, Cursor,
 Copilot and Gemini keep their toggles outside the file. Every other server the source does not define is
-dropped from every target, Codex and Vibe included. OpenCode 2's native `mcp.servers` and `agents` are read
-too (OPENCODE_V2_SHAPE), and a native entry shadowing a V1 one conforme writes is warned about.
+dropped from every target, Codex and Vibe included. conforme writes OpenCode 2's native `mcp.servers`; OpenCode 1's
+`mcp.<name>` and `agent` entries, which OpenCode 2 still loads, are read too (OPENCODE_V1_SHAPE), a native entry
+winning.
 
 Every JSON file conforme merges into (`.mcp.json`, `.cursor/mcp.json`,
 `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`,
@@ -371,7 +377,7 @@ never delete it wholesale and `gitignore install` never ignores it.
 
 `AiToolAdapter::warnings(project_root, config)` names what the tool will not
 load as written (Kilo: `${VAR}` it cannot resolve, a root `opencode.json` it
-refuses; Vibe: reserved names, `${VAR}`; Codex, Zed, Zoo: references kept literal); `sync` and
+refuses; OpenCode: SSE servers; Vibe: reserved names, `${VAR}`; Codex, Zed, Zoo: references kept literal); `sync` and
 `migrate` print them for every target.
 
 ### Sync algorithm

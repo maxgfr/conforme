@@ -40,12 +40,19 @@ folder trust, so the user's own configuration is never touched.
   - `… debug prompt-input`: the model-visible skills list (a manual skill is
     absent from it) and the loaded `AGENTS.md`, which must hold no skill body
     (grep the manual skill's text: it must not appear).
-- **OpenCode** (`opencode`): its output includes every global skill and
-  plugin, megabytes that take a minute: redirect it to a file and grep the
-  file, with no short `timeout` (a cut-off pipe reads as "nothing loaded").
-  - `opencode debug config`: resolved `mcp` (command array, `environment`,
-    `{env:VAR}`) and `agent` entries.
-  - `opencode debug skill`: each skill with its `location`.
+- **OpenCode** (`opencode`, OpenCode 2): the debug commands talk to a
+  background service and reject `--standalone`; under the scratch
+  `HOME`/`XDG_*`, run `opencode service set port <free port>` first (another
+  service may hold the default one) and `opencode service stop` at the end.
+  The first call for a new directory may come back empty while the project
+  loads: run it again.
+  - `opencode debug config`: each config source with its parsed content
+    (`mcp.servers`: command array, `environment`, `{env:VAR}` masked).
+  - `opencode debug agents`: every agent with its `mode` and `system`.
+  - `opencode api skill.list -H "x-opencode-directory:$PWD"`: each skill with
+    its `path`, and `autoinvoke: false` on a manual one (there is no
+    `debug skill` any more).
+  - `opencode mcp list`: each server and its connection status.
 - **Gemini CLI** (`npx -y @google/gemini-cli@<version>`): with
   `HOME=<tmp>` holding `.gemini/trustedFolders.json` (`{"<abs path>":
   "TRUST_FOLDER"}`):

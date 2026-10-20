@@ -362,6 +362,9 @@ pub(crate) fn read_manual_invocation(
     if let Some(serde_yaml_ng::Value::Sequence(triggers)) = fields.get("triggers") {
         return Ok(!triggers.iter().any(|t| t.as_str() == Some("model")));
     }
+    // OpenCode 2's own key (https://opencode.ai/v2/docs/skills/), which
+    // conforme reads but does not write: `disable-model-invocation` has the
+    // same effect there.
     if let Some(value) = fields
         .get("metadata")
         .and_then(|v| v.get("opencode/autoinvoke"))
@@ -406,9 +409,6 @@ fn add_invocation_fields(
         "disable-model-invocation".into(),
         serde_yaml_ng::Value::Bool(true),
     );
-    let mut metadata = serde_yaml_ng::Mapping::new();
-    metadata.insert("opencode/autoinvoke".into(), "false".into());
-    fields.insert("metadata".into(), serde_yaml_ng::Value::Mapping(metadata));
 }
 
 /// The Codex `agents/openai.yaml` policy sidecar of a skill. Codex reads it,
@@ -517,8 +517,8 @@ fn agent_name_from_path(path: &Path) -> String {
 /// How a manual-only skill is marked in its frontmatter.
 #[derive(Clone, Copy)]
 pub enum ManualInvocation {
-    /// `disable-model-invocation: true`, with OpenCode's
-    /// `metadata.opencode/autoinvoke: "false"` (the other tools ignore it).
+    /// `disable-model-invocation: true` (OpenCode 2 reads it like its own
+    /// `metadata.opencode/autoinvoke: false`).
     DisableModelInvocation,
     /// Devin's `triggers: [user]` (the default is `[user, model]`).
     UserTrigger,

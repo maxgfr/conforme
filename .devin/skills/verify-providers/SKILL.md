@@ -235,7 +235,7 @@ files are committed. A value in clear in `.mcp.json` (gitignored) once leaked
 an API key through every target. Check the tracked files:
 
 ```bash
-git ls-files | grep -E '^\.[^/]+/.*(mcp|settings|config\.toml)|^opencode\.jsonc?$|^kilo\.jsonc?$|^\.mcp\.json$' \
+git ls-files | grep -E '^\.[^/]+/.*(mcp|settings|config\.toml)|^(\.opencode/)?opencode\.jsonc?$|^kilo\.jsonc?$|^\.mcp\.json$' \
   | xargs grep -nE '"[^"]*([Kk]ey|[Tt]oken|[Ss]ecret|[Aa]uth)[^"]*"\s*[:=]\s*"[^"$\{][^"]*"' || echo "no literal secret"
 ```
 

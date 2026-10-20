@@ -545,14 +545,10 @@ Review all changes for bugs.
         .assert()
         .success();
 
-    // Agents go into opencode.json under the `agent` key AND per-project markdown.
-    let opencode_json = dir.path().join(".opencode/opencode.json");
-    assert!(opencode_json.exists());
-    let json_content = fs::read_to_string(&opencode_json).unwrap();
-    assert!(json_content.contains("\"agent\""));
-    assert!(json_content.contains("\"reviewer\""));
-    assert!(json_content.contains("\"mode\": \"subagent\""));
-    assert!(json_content.contains("\"model\": \"openai/gpt-4o\""));
+    // Agents go into per-project markdown only: OpenCode 2's preferred
+    // location. No opencode.json is written for them.
+    assert!(!dir.path().join(".opencode/opencode.json").exists());
+    assert!(!dir.path().join("opencode.json").exists());
 
     let md_agent = dir.path().join(".opencode/agents/reviewer.md");
     assert!(md_agent.exists());
