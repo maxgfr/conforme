@@ -99,7 +99,7 @@ fn build_gitignore_block(project_root: &Path, config: &project_config::ProjectCo
     // Collect patterns for the tools sync writes to (`only` / `exclude`
     // respected: an excluded tool's files are the user's). A location the
     // source also uses stays tracked (`.agents/skills/` is Codex's and Zed's),
-    // so does a file the source reads (an OpenCode source reading
+    // so does a file the source reads (a Kilo Code source reading
     // `CLAUDE.md`), and a pattern another adapter already listed is not
     // repeated.
     let mut listed = adapter_gitignore_patterns(project_root, source_id);

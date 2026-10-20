@@ -130,7 +130,7 @@ struct TargetOutput {
     /// cleanup compares against all of them.
     expected: Vec<(std::path::PathBuf, String)>,
     /// The files sync writes: `expected` minus the files the source reads (an
-    /// OpenCode source reading `CLAUDE.md` keeps it out of the Claude Code
+    /// Kilo Code source reading `CLAUDE.md` keeps it out of the Claude Code
     /// target's reach).
     files: Vec<(std::path::PathBuf, String)>,
 }
@@ -470,15 +470,16 @@ fn keeps_instructions_only_in_agents_md(
 }
 
 /// Sources that load only the first existing file of an ordered list that
-/// starts with AGENTS.md (Antigravity: AGENTS.md, else GEMINI.md; OpenCode and
-/// Kilo: AGENTS.md, else CLAUDE.md, else CONTEXT.md; DeepSeek: AGENTS.md, else
-/// CLAUDE.md). Gemini CLI loads every file `context.fileName` names and Claude
-/// Code has its own fallback handling, so neither is listed.
-const AGENTS_MD_FIRST_SOURCES: &[&str] = &["antigravity", "opencode", "kilo", "deepseek"];
+/// starts with AGENTS.md (Antigravity: AGENTS.md, else GEMINI.md; Kilo:
+/// AGENTS.md, else CLAUDE.md, else CONTEXT.md; DeepSeek: AGENTS.md, else
+/// CLAUDE.md). Gemini CLI loads every file `context.fileName` names, Claude
+/// Code has its own fallback handling and OpenCode 2 reads AGENTS.md only, so
+/// none of them is listed.
+const AGENTS_MD_FIRST_SOURCES: &[&str] = &["antigravity", "kilo", "deepseek"];
 
 /// The instruction file a source that reads AGENTS.md natively falls back to
-/// while the project has no AGENTS.md (Antigravity `GEMINI.md`; OpenCode and
-/// Kilo `CLAUDE.md`, else `CONTEXT.md`; DeepSeek `CLAUDE.md`). An AGENTS.md
+/// while the project has no AGENTS.md (Antigravity `GEMINI.md`; Kilo
+/// `CLAUDE.md`, else `CONTEXT.md`; DeepSeek `CLAUDE.md`). An AGENTS.md
 /// created then would shadow that file, and the next sync would rewrite it
 /// from AGENTS.md.
 fn agents_md_fallback_file(project_root: &Path, source_id: &str) -> Option<std::path::PathBuf> {
@@ -1110,7 +1111,7 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
 
     // A file the source or another tool that stays also generates is never
     // removed: `.agents/skills/` belongs to Codex and Zed at once. Nor is
-    // a file the source reads (an OpenCode source reading `CLAUDE.md`).
+    // a file the source reads (a Kilo Code source reading `CLAUDE.md`).
     let source_files = source_files(project_root, &source_id);
     let mut kept = std::collections::HashSet::new();
     for adapter in &adapters {
@@ -1929,7 +1930,7 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
             );
         }
         // A source that reads AGENTS.md but, without one, reads a fallback
-        // file (Antigravity GEMINI.md, OpenCode CLAUDE.md): an AGENTS.md
+        // file (Antigravity GEMINI.md, Kilo CLAUDE.md): an AGENTS.md
         // created here would shadow that file, and the next sync would
         // rewrite it from AGENTS.md.
         if let Some(fallback) = agents_md_fallback_file(project_root, &source) {

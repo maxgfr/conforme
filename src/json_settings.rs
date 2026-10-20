@@ -161,10 +161,21 @@ pub fn render(
     set: &[(&str, Value)],
     defaults: &[(&str, Value)],
 ) -> Result<String> {
+    render_removing(existing, set, defaults, &[])
+}
+
+/// [`render`], with the top-level keys in `remove` also taken out of an
+/// existing file.
+pub fn render_removing(
+    existing: Option<&SettingsFile>,
+    set: &[(&str, Value)],
+    defaults: &[(&str, Value)],
+    remove: &[&str],
+) -> Result<String> {
     // A new (or empty) file is pretty-printed with serde. An existing one is
     // edited in place, which keeps its key order, indentation and comments.
     match existing {
-        Some(f) if !f.text.trim().is_empty() => render_edit(f, set, defaults, &[]),
+        Some(f) if !f.text.trim().is_empty() => render_edit(f, set, defaults, remove),
         _ => render_plain(Map::new(), set, defaults),
     }
 }

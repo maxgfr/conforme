@@ -570,18 +570,24 @@ fn test_kilo_reads_rules_legacy_locations_and_keeps_its_settings() {
 }
 
 #[test]
-fn test_opencode_falls_back_to_context_md() {
-    // OpenCode reads AGENTS.md, else CLAUDE.md, else the deprecated CONTEXT.md.
+fn test_opencode_reads_agents_md_only() {
+    // OpenCode 2 "currently only discovers AGENTS.md": OpenCode 1's
+    // CLAUDE.md and CONTEXT.md fallbacks are gone.
     let adapter = conforme::adapters::opencode::OpenCodeAdapter;
     let dir = TempDir::new().unwrap();
     fs::create_dir_all(dir.path().join(".opencode")).unwrap();
+    fs::write(dir.path().join("CLAUDE.md"), "Claude.\n").unwrap();
     fs::write(dir.path().join("CONTEXT.md"), "Legacy context.\n").unwrap();
 
     let config = adapter.read(dir.path()).unwrap();
-    assert_eq!(config.instructions, "Legacy context.");
+    assert_eq!(config.instructions, "");
+    assert!(adapter.source_files(dir.path()).is_empty());
+
+    fs::write(dir.path().join("AGENTS.md"), "Agents.\n").unwrap();
+    assert_eq!(adapter.read(dir.path()).unwrap().instructions, "Agents.");
     assert_eq!(
         adapter.source_files(dir.path()),
-        vec![dir.path().join("CONTEXT.md")]
+        vec![dir.path().join("AGENTS.md")]
     );
 }
 
@@ -2147,7 +2153,23 @@ fn test_opencode_v2_native_config_is_read() {
     assert_eq!(read.agents.len(), 1);
     assert_eq!(read.agents[0].content, "Review it.");
 
-    // Writing `both` as a V1 entry would be shadowed by the native one: said.
-    let warnings = adapter.warnings(root, &read);
-    assert!(warnings.iter().any(|w| w.contains("both")), "{warnings:?}");
+    // Written back, everything is native: the V1 `both` is gone, the native
+    // one kept, the disabled server and the user's `agents` left alone.
+    let files = adapter.generate(root, &read).unwrap();
+    let (_, text) = files
+        .iter()
+        .find(|(p, _)| *p == root.join(".opencode/opencode.json"))
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(
+        json["mcp"].as_object().unwrap().keys().collect::<Vec<_>>(),
+        vec!["servers"]
+    );
+    assert_eq!(
+        json["mcp"]["servers"]["both"]["command"],
+        serde_json::json!(["v2"])
+    );
+    assert_eq!(json["mcp"]["servers"]["off"]["disabled"], true);
+    assert_eq!(json["agents"]["gone"]["disabled"], true);
+    assert!(json.get("agent").is_none());
 }

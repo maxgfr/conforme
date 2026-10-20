@@ -900,7 +900,7 @@ Be helpful.
         ),
         (
             "opencode",
-            "opencode.json",
+            ".opencode/opencode.json",
             r#"{"theme":"opencode"}"#,
             "theme",
         ),
@@ -989,7 +989,7 @@ Be helpful.
         ("zed", ".zed/settings.json"),
         ("gemini", ".gemini/settings.json"),
         ("kilo", ".kilo/kilo.jsonc"),
-        ("opencode", "opencode.json"),
+        ("opencode", ".opencode/opencode.jsonc"),
         ("copilot", ".vscode/mcp.json"),
         ("zoocode", ".roo/mcp.json"),
     ];
@@ -2252,9 +2252,21 @@ Review.
 
     let value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+    // The agent is written as `.opencode/agents/reviewer.md`; the entry an
+    // earlier version wrote loses conforme's keys and keeps the user's, which
+    // OpenCode 2 still applies to it.
     assert_eq!(value["agent"]["build"]["permission"]["bash"], "ask");
-    assert_eq!(value["agent"]["reviewer"]["description"], "Review");
-    assert_eq!(value["agent"]["reviewer"]["temperature"], 0.2);
+    assert_eq!(
+        value["agent"]["reviewer"],
+        serde_json::json!({"temperature": 0.2})
+    );
+    assert!(value.get("agents").is_none());
+    assert!(dir.path().join(".opencode/agents/reviewer.md").is_file());
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "check"])
+        .assert()
+        .success();
 }
 
 #[test]
@@ -2571,17 +2583,17 @@ const CLAUDE_MD_SOURCE: &str =
 
 #[test]
 fn test_source_reading_claude_md_keeps_it_through_sync_remove_and_gitignore() {
-    // OpenCode reads CLAUDE.md when there is no AGENTS.md: that file is the
+    // Kilo Code reads CLAUDE.md when there is no AGENTS.md: that file is the
     // source. The Claude Code target must not rewrite it (which moved the rule
     // out, and the next sync then cleaned it everywhere), `remove claude`
     // must not delete it and `gitignore install` must not ignore it.
     let dir = TempDir::new().unwrap();
     let root = dir.path();
-    fs::create_dir_all(root.join(".opencode")).unwrap();
+    fs::create_dir_all(root.join(".kilo")).unwrap();
     fs::create_dir_all(root.join(".claude")).unwrap();
     fs::create_dir_all(root.join(".cursor")).unwrap();
     fs::write(root.join("CLAUDE.md"), CLAUDE_MD_SOURCE).unwrap();
-    fs::write(root.join(".conformerc.toml"), "source = \"opencode\"\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"kilo\"\n").unwrap();
 
     run(root, &["sync"]).success();
     run(root, &["sync"]).success();

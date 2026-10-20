@@ -2,30 +2,31 @@
 
 > Open-source AI CLI tool. Source: `--from opencode`
 
-**Last verified online:** 2026-10-14, against OpenCode v1.19.0 and OpenCode 2 2.0.29 (https://github.com/anomalyco/opencode/releases, https://opencode.ai/v2/docs/migrate-v1/)
+**Last verified online:** 2026-10-20, against OpenCode 2 2.1.0 (https://opencode.ai/v2/docs/migrate-v1/, Homebrew `opencode-v2` 2.1.0). conforme targets OpenCode 2 only; OpenCode 1 (v1.19.x) is no longer a target.
 
 ## Official docs
 
-- Rules: https://opencode.ai/docs/rules/
-- Skills: https://opencode.ai/docs/skills/
-- Agents: https://opencode.ai/docs/agents/
-- MCP servers: https://opencode.ai/docs/mcp-servers/
-- Config: https://opencode.ai/docs/config/
-- CLI: https://opencode.ai/docs/cli/
-- Commands: https://opencode.ai/docs/commands/
-- Tools: https://opencode.ai/docs/tools/
-- Permissions: https://opencode.ai/docs/permissions/
+- Instructions: https://opencode.ai/v2/docs/instructions/
+- Skills: https://opencode.ai/v2/docs/skills/
+- Agents: https://opencode.ai/v2/docs/agents/
+- MCP servers: https://opencode.ai/v2/docs/mcp-servers/
+- Config: https://opencode.ai/v2/docs/config/
+- Migrating from V1: https://opencode.ai/v2/docs/migrate-v1/
+- CLI: https://opencode.ai/v2/docs/cli/
+- Commands: https://opencode.ai/v2/docs/commands/
+- Tools: https://opencode.ai/v2/docs/tools/
+- Permissions: https://opencode.ai/v2/docs/permissions/
+- Models (`provider/model#variant`): https://opencode.ai/v2/docs/models/
 - Repository: https://github.com/anomalyco/opencode (formerly `sst/opencode`, which redirects)
-- Models (`provider_id/model_id`): https://opencode.ai/docs/models
 
 ## Config files
 
 | Feature | Path | Format |
 |---------|------|--------|
 | Instructions | `AGENTS.md` (native) | Markdown |
-| Skills | `.opencode/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` |
-| Agents | `opencode.json` (`agent` key) + `.opencode/agents/<name>.md` (also `.opencode/agent/`) | JSON + Markdown frontmatter |
-| MCP | `opencode.json` (`mcp` key): root `opencode.json(c)` and `.opencode/opencode.json(c)` | JSON: `{ "mcp": { "<name>": { "type": "local", "command": ["cmd", "...args"], "environment": {...} } } }` |
+| Skills | `.opencode/skills/<name>/SKILL.md` (also `.opencode/skill/`, `.claude/skills/`, `.agents/skills/`) | YAML frontmatter: `name`, `description`, `disable-model-invocation`, `metadata.opencode/autoinvoke` |
+| Agents | `.opencode/agents/<name>.md` (also `agent/`, `mode/`, `modes/`), or the `agents` key of `opencode.json` | Markdown frontmatter: `description`, `mode`, `model`; the body is the system prompt |
+| MCP | `mcp.servers` in `opencode.json(c)`: root and `.opencode/` | JSON: `{ "mcp": { "servers": { "<name>": { "type": "local", "command": ["cmd", "...args"], "environment": {...} } } } }` |
 
 ## Activation modes
 
@@ -37,41 +38,49 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - ID: `opencode`
 - Capabilities: skills, agents, MCP
 - No activation modes
-- Reads AGENTS.md natively, falls back to CLAUDE.md, then the deprecated CONTEXT.md (first match wins; `packages/opencode/src/session/instruction.ts`)
-- Writes MCP and agent definitions into the project's `opencode.json`, preserving any existing keys: the first that exists of `opencode.json`, `opencode.jsonc`, `.opencode/opencode.json`, `.opencode/opencode.jsonc`, else a new `.opencode/opencode.json`. OpenCode loads the `.opencode/` copy as project config (checked with `opencode debug config`); Kilo Code, which also loads the root `opencode.json` and refuses a project file holding `{env:VAR}`, never reads it, so both tools work side by side
-- The `agent` key is shared with the user (overrides of the built-in `build`/`plan` agents, per-agent `permission`, agents written by hand): every entry the source does not define is kept. For a synced agent, `description`, `mode` and `prompt` are replaced, `model` only when the source has a `provider/model` value, and the user's own keys (`permission`, `temperature`, `steps`, a `model` the source cannot express, …) are kept. conforme writes every agent twice, as `.opencode/agents/<name>.md` and as `agent.<name>`, so when an agent leaves the source the entry goes with its file in the same sync, provided it still has that file and holds only the keys conforme writes (`description`, `mode`, `prompt`, `model`). An entry without the file, or one the user extended (`permission`, …), is kept. `.opencode/agents/<name>.md` named like a built-in agent (`build.md`) is the user's override: never read, written nor swept
-- `read()` round-trips AGENTS.md plus skills (`.opencode/skills/`), agents (`.opencode/agents/`, `.opencode/agent/` and the `agent` key in `opencode.json`, read together as OpenCode loads them; the markdown files win on a name clash), and MCP (the `mcp` key of every project `opencode.json(c)`, the `.opencode/` one winning on a name clash); the file is parsed with conforme's AGENTS.md convention (instructions plus `## Rule:` sections), and its `## Skill:`/`## Agent:`/`## MCP:` sections are added to what this tool's own files hold (which win on a name clash). With this tool as the source, AGENTS.md *is* the source: sync never regenerates it (`generate_agents_md` does not apply) and `gitignore install` keeps it tracked. The file it reads (`AGENTS.md`, else `CLAUDE.md`, else `CONTEXT.md`) is its `source_files()`: no target writes it (the Claude Code target leaves an OpenCode source's `CLAUDE.md` alone), and `remove`/`migrate` never delete it
+- Reads `AGENTS.md` only: OpenCode 2 "currently only discovers AGENTS.md" and dropped OpenCode 1's `CLAUDE.md` / `CONTEXT.md` fallbacks (https://opencode.ai/v2/docs/migrate-v1/#instruction-files). With OpenCode as the source, `AGENTS.md` is its `source_files()`
+- Writes MCP servers in OpenCode 2's native shape, under `mcp.servers`, into `.opencode/opencode.jsonc` when it exists, else `.opencode/opencode.json` (`.jsonc` wins over `.json` in the same directory, and `.opencode/` over the root), preserving every other key, JSONC comments included. `$schema` stays `https://opencode.ai/config.json`, the URL the V2 docs use
+- Never writes the root `opencode.json(c)`: Kilo Code also loads it and refuses a project config holding `{env:VAR}` ("environment references are not allowed in project config", checked with Kilo 7.8.15 `kilo config check`), which conforme writes for OpenCode; it never reads `.opencode/`. Kilo 7.8.15 does normalize `mcp.servers` and `agents` there (`kilo debug config`), so the shape itself is not the problem
+- Agents are written as `.opencode/agents/<name>.md` only (`description`, `mode: subagent`, `model` as `provider/model`, the body as system prompt), OpenCode 2's preferred location, whose frontmatter is already its native shape. Nothing goes into the `agents` / `agent` keys
+- Upgrading from an earlier conforme, which wrote OpenCode 1's shape into the first existing of the root `opencode.json(c)` and `.opencode/opencode.json(c)`: a sync with servers in the source moves every expressible `mcp.<name>` server of every project config file to `mcp.servers` of the target, converted (`enabled: false` → `disabled: true`, a numeric `timeout` → `timeout.catalog` and `timeout.execution`, OAuth `clientId`/`clientSecret`/`callbackPort`/`redirectUri` → snake_case; https://opencode.ai/v2/docs/migrate-v1/#mcp-servers), a native entry of the same name winning; the usual merge then drops a server the source lacks unless it is disabled, and keeps the per-server keys conforme does not own. In `agent.<name>` entries of an agent the source defines, the keys conforme wrote (`description`, `mode`, `prompt`, and `model` when the source has a `provider/model` one) are removed and the user's own (`steps`, `permission`, `temperature`, …) kept: OpenCode 2 still applies them to the markdown agent (seen with 2.1.0: `opencode debug agents` shows the markdown `system` with the root `agent.reviewer.steps`). An entry left empty goes, then an empty `agent` or `mcp` key. An entry for an agent that has left the source goes with its file, provided it still has that file and holds only conforme's keys. A `{ "enabled": false }` toggle and every other key are left alone
+- `.opencode/agents/<name>.md` named like a built-in agent (`build`, `plan`, `general`, `explore`, `compaction`, `title`, `summary`) is the user's override: never read, written nor swept
+- `read()` round-trips AGENTS.md plus skills (`.opencode/skills/`, `.opencode/skill/`), agents (`.opencode/agents/`, `.opencode/agent/`, then the `agents` key, prompt in `system`, and OpenCode 1's `agent` key, prompt in `prompt`, which OpenCode 2 still loads; the markdown files win on a name clash; a `disabled` / `disable` entry is skipped) and MCP (`mcp.servers` and OpenCode 1 `mcp.<name>` entries of every project `opencode.json(c)`, later files winning, a native entry winning over an OpenCode 1 one in the same file). AGENTS.md is parsed with conforme's convention (instructions plus `## Rule:` sections), and its `## Skill:`/`## Agent:`/`## MCP:` sections are added to what this tool's own files hold (which win on a name clash). With this tool as the source, AGENTS.md *is* the source: sync never regenerates it and `gitignore install` keeps it tracked
 - Editor variables (`${workspaceFolder}`) are written verbatim, not as `{env:workspaceFolder}`; `sync` warns that OpenCode does not resolve them, and that `${VAR:-default}` loses its default in `{env:VAR}`
-- A server with `enabled: false` is not read when OpenCode is the source, and is kept in the file when it is a target
-- OpenCode 2 (2.0.29, npm `@opencode/cli`) ships beside v1 (1.19.0, which offers `opencode upgrade --major`). It "reads existing global and project configuration from the same locations as V1" and "normalizes supported V1 and native V2 fields in memory", so the V1 shape conforme writes loads in both (https://opencode.ai/v2/docs/migrate-v1/, seen with `opencode debug config` 2.0.26: `agent`/`prompt` shown as `agents`/`system`, `mcp.<name>` as `mcp.servers.<name>`). Seen again 2026-10-14 with 2.0.29 under a scratch `HOME`/`XDG_*`: `debug config` shows the synced `agents.reviewer` and both `mcp.servers`. `opencode debug agents` listed only the built-in agents there; it queries a shared background service (`ServerConnection.resolve()`, `packages/cli/src/commands/handlers/debug/agents.ts`) and two open issues report that project `.opencode/agents/` is ignored by it and that the debug commands reject `--standalone` (https://github.com/anomalyco/opencode/issues/50134, https://github.com/anomalyco/opencode/issues/53878), so it proves nothing either way (unconfirmed). The same issue reports the config `agents` key working, and conforme writes each agent both as `.opencode/agents/<name>.md` and under that key. OpenCode 2 has no `debug skill` command any more
-- Native V2 keys are read too: servers under `mcp.servers` (turned off with `disabled`, https://opencode.ai/v2/docs/mcp-servers/) and agents under `agents` with `system` (https://opencode.ai/v2/docs/agents/). "A valid native V2 value takes precedence" over a V1 one of the same name, so `sync` warns when a native entry shadows one conforme writes
-- OpenCode 2 "recognizes AGENTS.md only. It does not use CLAUDE.md as a fallback" (https://opencode.ai/v2/docs/instructions/), ignores an enabled-only V1 MCP entry without a `type`, and reads `disable-model-invocation` and `metadata.opencode/autoinvoke` for manual skills (both written by conforme). conforme keeps v1's `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md` fallback when OpenCode is the source
-- Project config precedence (both versions): root `opencode.json(c)` loads first, then `.opencode/opencode.json(c)`, merged, `.opencode/` winning; `.jsonc` wins over `.json` in the same directory (v1.19.0 `config/paths.ts:10-21`, `config.ts:420-443`; https://opencode.ai/v2/docs/config). conforme's merge target order matches
+- A server with `disabled: true` (or OpenCode 1's `enabled: false`) is not read when OpenCode is the source, and is kept in the file when it is a target
 
 ## Notes
 
-- **MCP format is unique:** uses `"mcp"` key (not `"mcpServers"`), `type: local/remote` (not `stdio/http`)
+- **MCP format is unique:** servers under `mcp.servers` (not `mcpServers`; "V2 does not place server names directly under `mcp`"), `type: local/remote` (not `stdio/http`), `disabled: true` instead of OpenCode 1's `enabled: false`
 - **Command is a single array:** `"command": ["npx", "-y", "server-name"]` (no separate `args` field)
 - **Env var key is `"environment"`** (not `"env"`), and only local servers have it; conforme writes no `environment` on a remote server
-- Variable references are `{env:VAR}` (unset → empty string); conforme writes `{env:VAR}` for a normalized `${VAR}` and reads it back
-- A legacy SSE server is written as `type: "remote"`, like streamable HTTP: OpenCode tries streamable HTTP and then SSE on a `remote` URL (opencode v1.18.35 `packages/opencode/src/mcp/index.ts:269-289`), and OpenCode has no SSE marker, so the server reads back as streamable HTTP (documented, not modelled)
-- MCP and `agent` blocks live inside `opencode.json` (or `opencode.jsonc`), at the project root or in `.opencode/`. OpenCode parses both as JSONC. conforme merges into the existing file so user-authored keys are preserved, and `remove opencode` / `migrate --source opencode` leave the file in place rather than deleting the user's settings with it
-- The merge is JSONC-aware: comments outside the managed `mcp`/`agent` keys survive, and a file conforme cannot parse is left untouched (sync fails instead of rewriting it). Per-server keys conforme never emits (`cwd`, `timeout`, `oauth`, …) are kept; `enabled` is reset so a synced server is not left hidden
-- An `mcp.<name>` entry that is only `{ "enabled": false }` toggles a server defined elsewhere (the global config): conforme skips it on read and keeps it untouched on write
-- Overrides of the built-in agents (`build`, `plan`, `general`, `explore`, `compaction`, `title`, `summary`) and `agent` entries with neither a `prompt` nor a `description` only tune an agent defined elsewhere, so they are not read as agents, from `opencode.json` nor from `.opencode/agents/`. An agent named like a built-in one is not written to OpenCode either: it would override the built-in (a synced `build` agent demoted OpenCode's own Build agent to a subagent)
-- A root `opencode.json` that holds `{env:VAR}` references makes Kilo Code refuse the project config; with Kilo detected, `sync` and `migrate` print a warning suggesting `.opencode/opencode.json`
-- Agent `model` must be `provider/model`; OpenCode splits on `/`, so a bare id such as `gpt-4o` would resolve to provider `gpt-4o` with no model. conforme only writes `provider/model` values and otherwise leaves `model` out (OpenCode then uses its default)
-- Agents and skills are always written with a `description` (a skill without one is not listed), falling back to the name
-- `.opencode/agents/` and `.opencode/agent/` are scanned recursively upstream; conforme reads nested agents too (written back flat). OpenCode names a nested agent by its path (`agents/team/reviewer.md` is `team/reviewer`); conforme names it by the file (`reviewer`), so a nested agent is renamed on a round trip (known gap)
-- Agents are written without `tools`/`permission`: OpenCode's permission model has no portable equivalent, so a synced agent can use every tool (deliberate; set `agent.<name>.permission` in `opencode.json`, which a sync keeps). The reverse is a known gap: with OpenCode as the source, an agent's `tools` map (`write: false`, …) and `permission` are not translated, so the other tools get the agent unrestricted
-- A markdown agent's frontmatter `name` overrides its file name upstream; conforme names it by the file (known gap)
-- `metadata.opencode/autoinvoke` has no reader on OpenCode's `dev` branch: conforme writes it as a hint that OpenCode is not known to read (a harmless string key), so a manual skill still needs a `permission.skill` deny entry
-- Only `.opencode/agents/` is swept for orphans, plus the stale bundled files inside a skill folder conforme writes in `.opencode/skills/` (skill folders themselves are never swept). The top-level `.opencode/` also holds user-owned files (`package.json` for plugins, `commands/`, `tools/`, …) and is never cleaned
-- Markdown agents additionally emitted to `.opencode/agents/<name>.md` (OpenCode discovers per-project agents from that directory)
-- Skill frontmatter recognizes only `name`, `description`, `license`, `compatibility`, `metadata` — no `allowed-tools`
-- OpenCode also discovers skills in `.claude/skills/` and `.agents/skills/`; conforme reads only `.opencode/skills/` and `.opencode/skill/`. When Claude Code or Codex is synced too, the same skill exists in several roots: OpenCode keys skills by name, logs "duplicate skill name" and keeps one copy (`packages/opencode/src/skill/index.ts`; `opencode debug skill` lists each once, checked with v1.18.35). The copies are identical, so which one wins does not matter. OpenCode ships a built-in `customize-opencode` skill that a synced skill of that name would override
-- Skill discovery is recursive (`{skill,skills}/**/SKILL.md`); conforme reads nested folders under `.opencode/skills/` and the singular `.opencode/skill/` too (written back flat)
+- Variable references are `{env:VAR}`; conforme writes `{env:VAR}` for a normalized `${VAR}` and reads it back
+- A remote server "uses the MCP Streamable HTTP transport" (https://opencode.ai/v2/docs/mcp-servers/#remote); the 2.1.0 binary holds `StreamableHTTPClientTransport` and no `SSEClientTransport`. A legacy SSE server is written as `type: "remote"` and `sync` warns that it connects only if the server also speaks streamable HTTP; it reads back as streamable HTTP (no SSE marker)
+- Per-server keys conforme never emits (`cwd`, `timeout`, `oauth`, `codemode`, `protocol`, …) are kept, and so are `mcp.timeout` and any other member of `mcp`; `disabled` is reset so a synced server is not left hidden. A file conforme cannot parse is left untouched (sync fails instead of rewriting it), and `remove opencode` / `migrate --source opencode` leave `opencode.json(c)` in place
+- An OpenCode 1 `mcp.<name>` entry that is only `{ "enabled": false }` toggles a server defined elsewhere: conforme skips it on read and keeps it on write (OpenCode 2 ignores it with a warning: "An enabled-only V1 MCP entry without a type")
+- Overrides of the built-in agents and `agents` / `agent` entries with neither a prompt nor a `description` only tune an agent defined elsewhere, so they are not read as agents. An agent named like a built-in one is not written either: it would override the built-in. V2 has no built-in `scout` agent
+- Agent `model` must be `provider/model` (optionally `#variant`); conforme only writes `provider/model` values and otherwise leaves `model` out (OpenCode then uses the parent session's model)
+- Agents and skills are always written with a `description` (a skill without one is not advertised), falling back to the name
+- `.opencode/agents/` and `.opencode/agent/` are scanned recursively upstream; OpenCode names a nested agent by its path (`agents/team/reviewer.md` is `team/reviewer`); conforme names it by the file (`reviewer`), so a nested agent is renamed on a round trip (known gap). Agents in `mode/` / `modes/` (primary agents) are not read (known gap)
+- Agents are written without `permissions`: OpenCode's permission model has no portable equivalent, so a synced agent can use every tool (deliberate; set `agents.<name>.permissions`, or OpenCode 1's `agent.<name>.permission`, in `opencode.json`, which a sync keeps). The reverse is a known gap: with OpenCode as the source, an agent's permissions are not translated
+- Only `.opencode/agents/` is swept for orphans, plus the stale bundled files inside a skill folder conforme writes in `.opencode/skills/` (skill folders themselves are never swept). The top-level `.opencode/` also holds user-owned files (`package.json`, `commands/`, `plugins/`, …) and is never cleaned
+- Skill frontmatter V2 reads: `name` (a display label; the folder name is the ID), `description`, `metadata.opencode/autoinvoke` and `disable-model-invocation`; `license` and `compatibility` are accepted and ignored. No `allowed-tools`
+- OpenCode also discovers skills in `.claude/skills/` and `.agents/skills/`; conforme reads only `.opencode/skills/` and `.opencode/skill/`. When Claude Code or Codex is synced too, the same skill exists in several roots; "the source registered later supplies the skill", and project `.opencode/skills` is registered after both (seen with 2.1.0: `opencode api skill.list` lists each synced skill once, from `.opencode/skills/`). OpenCode ships built-in `opencode` and `report` skills that a synced skill of that name would override
+- Skill discovery is recursive (`SKILL.md` at any depth); conforme reads nested folders under `.opencode/skills/` and the singular `.opencode/skill/` too (written back flat). Flat `skills/<name>.md` files are not read (known gap)
 
 ## Manual skill invocation
 
-Manual skills preserve `disable-model-invocation: true`, `metadata.opencode/autoinvoke: "false"`, and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. conforme writes `metadata.opencode/autoinvoke` as a hint that OpenCode is not known to read (no reader exists on its `dev` branch), so OpenCode needs the corresponding `permission.skill` deny entries; skill synchronization does not change user permissions.
+A manual skill is written with `disable-model-invocation: true`, which OpenCode 2 reads "for the same effect as `opencode/autoinvoke: false`": the skill is left out of the model's list and can still be loaded by ID (`@name` in a prompt). conforme no longer writes `metadata.opencode/autoinvoke`; it still reads `metadata.opencode/autoinvoke: false` as manual. To stop OpenCode from loading a skill at all, add a `permissions` rule `{ "action": "skill", "resource": "<name>", "effect": "deny" }`; skill synchronization does not change user permissions.
+
+## Live check
+
+OpenCode 2's debug commands talk to a background service and reject `--standalone`. With an isolated `HOME`/`XDG_*` (and `opencode service set port <free port>` there, since another service may hold the default port), in the project:
+
+```bash
+opencode debug config                      # the config sources and their parsed content
+opencode debug agents                      # every agent: `reviewer` with `mode: subagent` and its `system`
+opencode mcp list                          # each server and its connection status
+opencode api skill.list -H "x-opencode-directory:$PWD"   # every skill, `autoinvoke: false` on a manual one
+opencode service stop                      # stop the isolated service afterwards
+```
+
+The first call for a new directory may return an empty agent list while the project loads; run it again. OpenCode 2 has no `debug skill` command.

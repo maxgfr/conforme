@@ -244,8 +244,6 @@ fn source_locations(id: &str) -> &'static [&'static str] {
         "codex" => &["AGENTS.md", ".agents/skills", ".codex"],
         "opencode" => &[
             "AGENTS.md",
-            "CLAUDE.md",
-            "CONTEXT.md",
             "opencode.json",
             "opencode.jsonc",
             ".opencode/opencode.json",
@@ -391,7 +389,7 @@ mod tests {
             ("devin", ".devin/global_rules.md"),
             ("devin", ".windsurfrules"),
             ("opencode", ".opencode/agent"),
-            ("opencode", "CLAUDE.md"),
+            ("kilo", "CLAUDE.md"),
             ("zoocode", ".roorules"),
             ("deepseek", ".agents/skills"),
             ("opencode", ".opencode/opencode.json"),
