@@ -2,7 +2,7 @@
 
 > Anthropic's CLI agent. Source: `--from claude`
 
-**Last verified online:** 2026-10-14, against Claude Code 2.1.300 (https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
+**Last verified online:** 2026-11-04, against Claude Code 2.1.318 (https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
 
 ## Official docs
 
@@ -11,6 +11,7 @@
 - Skills: https://code.claude.com/docs/en/skills
 - Subagents: https://code.claude.com/docs/en/sub-agents
 - MCP servers: https://code.claude.com/docs/en/mcp
+- MCP quickstart: https://code.claude.com/docs/en/mcp-quickstart
 - Hooks: https://code.claude.com/docs/en/hooks
 - Hooks guide: https://code.claude.com/docs/en/hooks-guide
 - Settings: https://code.claude.com/docs/en/settings
@@ -64,6 +65,8 @@
 - `allowed-tools` accepts a space- or comma-separated string (or a YAML list); conforme writes the space-separated form `"Read Bash Write"` and parses both on read
 - Rules without `paths` frontmatter are always-active (no agent-decision/manual distinction)
 - `paths` accepts a YAML list or a comma-separated string; conforme reads both and writes a list
+- A rule whose frontmatter is not YAML (`paths: **/*.ts`, where `*` starts a YAML alias) always loads: "If the YAML between the markers doesn't parse, Claude Code ignores the frontmatter and loads the rule as if it had no `paths`" (https://code.claude.com/docs/en/memory). conforme reads such a rule as always-on too; quote the value (`paths: "**/*.ts"`) to scope it
+- A skill's `description` (with `when_to_use`) "is truncated at 1,536 characters in the skill listing" (https://code.claude.com/docs/en/skills); `validate` already warns past 1,024, the limit of Zoo Code and Vibe
 - `.claude/rules/` is discovered **recursively**, so rules may be organised under `frontend/`, `backend/`, … conforme reads nested rules too (they are written back flat, one file per rule name)
 - `.claude/agents/` is scanned **recursively** as well; conforme reads nested agents and writes them back flat
 - An agent file without `name` is documentation kept beside the agents ("Claude Code treats the file as documentation"), and one without `description` is skipped: conforme reads neither as an agent, and orphan cleanup never deletes a `.md` there that has no `name` (a README survives a sync). Claude Code also skips, without a word in the session, a file whose "YAML that doesn't parse" and one with "A `name` that starts with `-`, contains `:`, or is longer than 256 characters" (https://code.claude.com/docs/en/sub-agents); conforme reads none of them as an agent (its entry-by-entry reading of a broken block is not used for Claude agents) and never sweeps them

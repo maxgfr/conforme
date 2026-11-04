@@ -2,7 +2,7 @@
 
 > High-performance editor with AI agent. Source: `--from zed`
 
-**Last verified online:** 2026-10-14, against Zed 1.24.2 (https://zed.dev/releases/stable)
+**Last verified online:** 2026-11-04, against Zed 1.26.2 (https://zed.dev/releases/stable)
 
 ## Official docs
 
@@ -64,3 +64,5 @@ Fallback chain: `.rules` -> `.cursorrules` -> `.windsurfrules` -> `.clinerules` 
 - Zed **skills** are a documented feature: `SKILL.md` folders under `<worktree>/.agents/skills/` (project) and `~/.agents/skills/` (global), only one level deep. conforme syncs skills to the shared project `.agents/skills/` path (the same location Codex uses) with `name` + `description` frontmatter; names are kebab-case ASCII of at most 64 characters, as Zed requires. Zed also honours `disable-model-invocation: true` (the skill is then only run by slash command or @-mention), which conforme writes for a manual skill, and expects descriptions of at most 1024 characters (https://zed.dev/docs/ai/skills); a longer one still loads, with a warning (`crates/agent_skills/agent_skills.rs`, `MAX_SKILL_DESCRIPTION_LEN`)
 - Zed plans to deprecate MCP server extensions in favour of the official MCP registry; `context_servers` entries in settings are unaffected
 - An empty config generates no `.rules` file at all (no blank file is dropped into the repository)
+- A `SKILL.md` over 100 KB fails to load (`crates/agent_skills/agent_skills.rs`), which the skills page does not mention; a project skill named `create-skill` shadows Zed's built-in one ("`ProjectLocal` > `Global` > `BuiltIn`", same file)
+- New page https://zed.dev/docs/ai/agents compares the Zed Agent, external agents and terminal threads; it holds no config

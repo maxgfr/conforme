@@ -156,8 +156,8 @@ impl AiToolAdapter for AntigravityAdapter {
                     server.name
                 ));
             }
-            // The web docs take SSE on `serverUrl`; the reference built into
-            // `agy` says "The legacy HTTP+SSE transport … is not supported".
+            // "The legacy HTTP+SSE transport and the `httpUrl` field aren't
+            // supported" (https://antigravity.google/docs/mcp).
             if matches!(server.transport, crate::config::McpTransport::Sse { .. }) {
                 warnings.push(format!(
                     "MCP server {}: Antigravity CLI's own reference does not support the legacy \
@@ -299,7 +299,7 @@ const ANTIGRAVITY_TRIGGERS: &[&str] = &["always_on", "glob", "model_decision", "
 fn is_antigravity_rule_file(path: &Path) -> bool {
     crate::config::read_text(path)
         .ok()
-        .filter(|content| frontmatter::is_strict_yaml(content))
+        .filter(|content| antigravity_parses(content))
         .and_then(|content| frontmatter::parse(&content).ok())
         .is_some_and(|(fields, _)| {
             fields
@@ -307,6 +307,36 @@ fn is_antigravity_rule_file(path: &Path) -> bool {
                 .and_then(|t| t.as_str())
                 .is_some_and(|t| ANTIGRAVITY_TRIGGERS.contains(&t))
         })
+}
+
+/// Whether Antigravity parses the frontmatter of `content`: strict YAML, or
+/// YAML once an unquoted `description:` holding a colon is read as one string
+/// (since 1.3.6, "Fixed skills, rules, workflows, and Markdown agents failing
+/// to load with `mapping values are not allowed in this context` when an
+/// unquoted `description:` contains a colon",
+/// https://github.com/google-antigravity/antigravity-cli/blob/main/CHANGELOG.md).
+/// Any other broken block still makes it skip the file.
+fn antigravity_parses(content: &str) -> bool {
+    if frontmatter::is_strict_yaml(content) {
+        return true;
+    }
+    let mut quoted = false;
+    let lines: Vec<String> = content
+        .lines()
+        .map(|line| match line.strip_prefix("description:") {
+            Some(value)
+                if value.starts_with([' ', '\t'])
+                    && !value.trim().starts_with(['"', '\'', '|', '>'])
+                    && value.contains(':') =>
+            {
+                quoted = true;
+                let value = serde_json::Value::String(value.trim().to_string());
+                format!("description: {value}")
+            }
+            _ => line.to_string(),
+        })
+        .collect();
+    quoted && frontmatter::is_strict_yaml(&lines.join("\n"))
 }
 
 /// Whether `path` sits directly in a `.agents/rules/` directory, the only
@@ -478,6 +508,41 @@ mod tests {
         let unparsable = dir.join("broken.md");
         std::fs::write(&unparsable, "---\ntrigger: [always_on\n---\n\nBroken.\n").unwrap();
 
+        let managed = AntigravityAdapter.managed_directories(project.path());
+        let orphans = crate::adapters::find_orphans(&managed, &[]).unwrap();
+        assert_eq!(orphans, vec![rule]);
+    }
+
+    #[test]
+    fn test_antigravity_reads_a_rule_whose_description_holds_a_colon() {
+        // Antigravity 1.3.6 loads a rule whose unquoted `description:` holds a
+        // colon (not strict YAML): conforme reads it and manages it, while a
+        // block broken any other way is still the user's.
+        let project = tempfile::TempDir::new().unwrap();
+        let dir = project.path().join(".agents").join("rules");
+        std::fs::create_dir_all(&dir).unwrap();
+        let rule = dir.join("checks.md");
+        std::fs::write(
+            &rule,
+            "---\ntrigger: model_decision\ndescription: Runs checks: formatters and linters.\n---\n\nRun the checks.\n",
+        )
+        .unwrap();
+        let broken = dir.join("broken.md");
+        std::fs::write(
+            &broken,
+            "---\ntrigger: [always_on\ndescription: Runs checks: twice\n---\n\nBroken.\n",
+        )
+        .unwrap();
+
+        let config = AntigravityAdapter.read(project.path()).unwrap();
+        assert_eq!(config.rules.len(), 1, "rules: {:?}", config.rules);
+        assert_eq!(config.rules[0].content.trim(), "Run the checks.");
+        assert_eq!(
+            config.rules[0].activation,
+            ActivationMode::AgentDecision {
+                description: "Runs checks: formatters and linters.".to_string()
+            }
+        );
         let managed = AntigravityAdapter.managed_directories(project.path());
         let orphans = crate::adapters::find_orphans(&managed, &[]).unwrap();
         assert_eq!(orphans, vec![rule]);

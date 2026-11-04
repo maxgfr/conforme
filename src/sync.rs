@@ -1908,6 +1908,11 @@ pub fn run_migrate(
             println!("  {} .conformerc.toml: source = \"{output}\"", "+".green());
         }
         warn_still_detected(project_root, source_adapter.as_ref());
+        // What migrate kept because the output cannot hold it (agents for
+        // Zed, Zoo Code or Devin) is an orphan to the next sync, which reads
+        // the output: name it before that sync deletes it. A source that
+        // cannot be read now is the next sync's error to report.
+        let _ = report_pending_orphans(project_root);
         if output == "codex" {
             warn_codex_instruction_budget(project_root);
         }

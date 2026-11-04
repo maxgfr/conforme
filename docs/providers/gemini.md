@@ -2,7 +2,7 @@
 
 > Google's AI CLI tool. Source: `--from gemini`
 
-**Last verified online:** 2026-10-14, against Gemini CLI v0.64.0 (https://github.com/google-gemini/gemini-cli/releases)
+**Last verified online:** 2026-11-04, against Gemini CLI v0.66.0 (https://github.com/google-gemini/gemini-cli/releases)
 
 Since 2026-06-18 Gemini CLI serves only paid Gemini API keys and Gemini Code Assist Standard or Enterprise licences; Google AI Pro, Ultra and free users moved to **Antigravity CLI** (https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli). Antigravity reads the same `GEMINI.md` and `AGENTS.md`, but its project skills live in `.agents/skills/` and its MCP servers in `.agents/mcp_config.json` (remote key `serverUrl`, not `url`/`httpUrl`) (https://antigravity.google/docs/cli/gcli-migration). conforme has an Antigravity target, see [antigravity.md](antigravity.md): it writes `.agents/rules/`, `.agents/skills/`, `.agents/agents/` and `.agents/mcp_config.json`
 
@@ -84,3 +84,5 @@ No activation modes. Single GEMINI.md file, all content always-on.
 - `GEMINI.md` is only the *default* context file name: `context.fileName` in `settings.json` accepts a name or a list (e.g. `["AGENTS.md", "GEMINI.md"]`). Gemini CLI does **not** read `AGENTS.md` unless configured to. conforme's `read()` honours the project `context.fileName`; when it names `AGENTS.md`, that file is read with the AGENTS.md convention and, with Gemini as the source, is never regenerated nor gitignored (`reads_agents_md`). With Gemini as the source, the context files it reads (`source_files`) are never written by another target, deleted by `remove`/`migrate`, nor gitignored
 - As a target conforme writes the instructions to the first `context.fileName` entry other than `AGENTS.md` (`GEMINI.md` by default), and writes none when it names only `AGENTS.md` (Gemini then reads `AGENTS.md`, which is what `migrate --output gemini` writes). `gitignore install` ignores the context file conforme writes, not a fixed `GEMINI.md`
 - The former Google Cloud page (`docs.cloud.google.com/gemini/docs/codeassist/gemini-cli`) now 404s; the `google-gemini/gemini-cli` repository docs are the canonical reference
+- Since v0.66.0 settings placeholders are resolved after `.env` files load ("You can reference variables from your shell environment as well as variables loaded from `.env` files", `docs/reference/configuration.md`, #29750), so a `${VAR}` in `.gemini/settings.json` can come from `.gemini/.env` or `.env`
+- Verified 2026-11-04 with Gemini CLI 0.66.0 (`gemini mcp list`, `gemini skills list`, trusted folder): both servers with their transport, every skill (the "Skill conflict detected" lines for the `.agents/skills` copies, as noted above), and a witness agent with an unknown tool rejected

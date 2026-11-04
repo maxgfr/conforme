@@ -18,16 +18,13 @@ pub struct VibeAdapter;
 /// Vibe reads `AGENTS.md` and no other instruction file.
 const INSTRUCTION_FILES: &[&str] = &["AGENTS.md"];
 
-/// Skill names Vibe's built-in skills occupy: a project skill of that name is
-/// skipped.
-const RESERVED_SKILLS: &[&str] = &["vibe", "skill-creator"];
-
 /// Vibe's built-in agents (`BuiltinAgentName`): a custom file of that name
 /// replaces the built-in one, so a synced subagent there would remove a mode
 /// (and `accept-edits`, the default start agent, would stop Vibe starting).
+/// Vibe 3 has no built-in `plan` agent any more ("Vibe has no built-in `plan`
+/// agent", https://docs.mistral.ai/vibe/code/cli/agents).
 const BUILTIN_AGENTS: &[&str] = &[
     "ask",
-    "plan",
     "accept-edits",
     "smart-approve",
     "auto-approve",
@@ -35,8 +32,16 @@ const BUILTIN_AGENTS: &[&str] = &[
     "lean",
 ];
 
+/// An agent file Vibe refuses to load: "The name `main` is reserved, so don't
+/// name an agent file `main.toml`" (https://docs.mistral.ai/vibe/code/cli/agents;
+/// `RESERVED_AGENT_NAME`, matched case-insensitively, since Vibe 3.0.3).
+const RESERVED_AGENT: &str = "main";
+
+/// Whether conforme leaves an agent of that name out of `.vibe/agents/`: a
+/// built-in agent's name or the reserved `main`.
 fn is_builtin_agent(name: &str) -> bool {
-    BUILTIN_AGENTS.contains(&crate::config::sanitize_name(name).as_str())
+    let name = crate::config::sanitize_name(name);
+    name == RESERVED_AGENT || BUILTIN_AGENTS.contains(&name.as_str())
 }
 
 fn config_path(project_root: &Path) -> PathBuf {
@@ -93,19 +98,15 @@ impl AiToolAdapter for VibeAdapter {
 
     fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
         let mut warnings = Vec::new();
-        for skill in &config.skills {
-            let name = crate::config::sanitize_name(&skill.name);
-            if RESERVED_SKILLS.contains(&name.as_str()) {
-                warnings.push(format!(
-                    "skill {name} is skipped: Vibe reserves that name for a built-in skill"
-                ));
-            }
-        }
         for agent in &config.agents {
-            if is_builtin_agent(&agent.name) {
+            let name = crate::config::sanitize_name(&agent.name);
+            if name == RESERVED_AGENT {
                 warnings.push(format!(
-                    "agent {} is not written: a file of that name would replace Vibe's built-in agent",
-                    crate::config::sanitize_name(&agent.name)
+                    "agent {name} is not written: Vibe reserves that name and refuses an agent file `{name}.toml`"
+                ));
+            } else if is_builtin_agent(&name) {
+                warnings.push(format!(
+                    "agent {name} is not written: a file of that name would replace Vibe's built-in agent"
                 ));
             }
         }
@@ -240,10 +241,23 @@ mod tests {
         use crate::config::{McpTransport, NormalizedMcpServer};
         use std::collections::BTreeMap;
         let config = NormalizedConfig {
+            // Since Vibe 3.0.4 a project skill of a built-in skill's name wins
+            // ("a local skill wins"): nothing to warn about.
             skills: vec![NormalizedSkill {
                 name: "skill-creator".to_string(),
                 ..Default::default()
             }],
+            agents: vec![
+                NormalizedAgent {
+                    name: "main".to_string(),
+                    ..Default::default()
+                },
+                // Vibe 3 has no built-in `plan` agent: one is written.
+                NormalizedAgent {
+                    name: "plan".to_string(),
+                    ..Default::default()
+                },
+            ],
             mcp_servers: vec![
                 NormalizedMcpServer {
                     name: "files".to_string(),
@@ -269,8 +283,17 @@ mod tests {
         };
         let warnings = VibeAdapter.warnings(Path::new("/tmp/test"), &config);
         assert_eq!(warnings.len(), 2, "{warnings:?}");
-        assert!(warnings[0].starts_with("skill skill-creator is skipped"));
+        assert!(warnings[0].starts_with("agent main is not written: Vibe reserves"));
         assert!(warnings[1].starts_with("MCP server files:"));
+        let files = VibeAdapter
+            .generate(Path::new("/tmp/test"), &config)
+            .unwrap();
+        let agents: Vec<_> = files
+            .iter()
+            .filter(|(path, _)| path.starts_with("/tmp/test/.vibe/agents"))
+            .map(|(path, _)| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(agents, vec!["plan.toml"]);
     }
 
     #[test]

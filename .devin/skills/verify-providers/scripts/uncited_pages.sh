@@ -10,7 +10,11 @@ root=${1:?project root}
 out=${2:?output directory}
 mkdir -p "$out"
 
-grep -oh 'https://[^ )>,`"]*' "$root"/docs/providers/*.md | sed 's/[.,]$//; s:/$::' | sort -u > "$out/cited.txt"
+# One spelling per page: an llms.txt lists `<page>.md`, often with an `#anchor`,
+# where the provider docs cite `<page>`.
+normalize() { sed -E 's/[#?].*$//; s/[.,]$//; s/\.md$//; s:/$::' | sort -u; }
+
+grep -oh 'https://[^ )>,`"]*' "$root"/docs/providers/*.md | normalize > "$out/cited.txt"
 
 topics='rule|skill|agent|mcp|config|setting|instruction|memory|steering|context|custom|mode|hook|command|prompt|trust|permission|plugin|extension|cli'
 skip='/(zh|ja|ko|fr|de|es|pt|ru|it|tr|id|pl|vi|uk|zh-cn|zh-tw|pt-br)(/|$)|blog|pricing'
@@ -18,7 +22,8 @@ skip='/(zh|ja|ko|fr|de|es|pt|ru|it|tr|id|pl|vi|uk|zh-cn|zh-tw|pt-br)(/|$)|blog|p
 # One docs index per vendor; add a line when an adapter is added.
 while read -r site url; do
   curl -sS -A 'Mozilla/5.0' --max-time 60 -L "$url" 2>/dev/null \
-    | grep -oE 'https://[^ <>"()]*' | sed 's/[.,]$//; s:/$::' | sort -u > "$out/$site.all"
+    | grep -oE 'https://[^ <>"()]*' | normalize > "$out/$site.all"
+  [ -s "$out/$site.all" ] || echo "$site: no page read from $url (find its current docs index)" >&2
   grep -iE "$topics" "$out/$site.all" | grep -viE "$skip" | grep -vxFf "$out/cited.txt" > "$out/$site.new"
   printf '%-10s %5s pages, %4s uncited on topic\n' "$site" "$(wc -l < "$out/$site.all")" "$(wc -l < "$out/$site.new")"
 done <<'SITES'
@@ -34,6 +39,6 @@ zed https://zed.dev/docs/llms.txt
 kiro https://kiro.dev/llms.txt
 devin https://docs.devin.ai/llms.txt
 zoocode https://docs.zoocode.dev/sitemap.xml
-vibe https://docs.mistral.ai/sitemap.xml
+vibe https://docs.mistral.ai/llms.txt
 SITES
 echo "DeepSeek Harness has no docs index: browse its developer docs and the repository's docs/ tree."

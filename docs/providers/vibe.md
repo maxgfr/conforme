@@ -2,7 +2,7 @@
 
 > Mistral's open-source coding agent CLI (`vibe`). Source: `--from vibe`
 
-**Last verified online:** 2026-10-14, against Mistral Vibe 2.26.1 (https://github.com/mistralai/mistral-vibe/releases)
+**Last verified online:** 2026-11-04, against Mistral Vibe 3.1.0 (https://github.com/mistralai/mistral-vibe/releases)
 
 ## Official docs
 
@@ -19,6 +19,9 @@
 - VS Code extension agents (same `.vibe/agents`): https://docs.mistral.ai/vibe/code/vs-code-extension/agents
 - CLI, VS Code and web share agents, skills and MCP: https://docs.mistral.ai/vibe/code/choose-cli-vscode-web-sessions
 - Changelog: https://github.com/mistralai/mistral-vibe/blob/main/CHANGELOG.md
+- Plugins (`.vibe/plugins/<plugin>/`, not written): https://docs.mistral.ai/vibe/code/cli/plugins
+- Hooks (`hooks.toml`, not written): https://docs.mistral.ai/vibe/code/cli/hooks
+- Docs index (the sitemap times out): https://docs.mistral.ai/llms.txt
 
 ## Config files
 
@@ -43,19 +46,20 @@ None: `AGENTS.md` is always loaded.
 - Detected by a `.vibe/` directory
 - Reads `AGENTS.md` natively: with Vibe as the source that file is the source, never regenerated
 - Skills are written to `.vibe/skills/<name>/SKILL.md` with bundled files and the `.conforme` marker; on read, the shared `.agents/skills/` is used only when `.vibe/skills/` has no skill, so a Codex or Zed copy is not taken for Vibe's own
-- Subagents are written to `.vibe/agents/<name>.toml` (`agent_type = "subagent"`, `description`, `instructions`, `enabled_tools` translated to Vibe tool names: `read_file`, `grep`, `write_file`, `edit`, `bash`, `web_fetch`, `web_search`, `todo`, `task`, `skill`, `ask_user_question`). `model` is not written: Vibe resolves it against the user's own model list. An agent file that is not a subagent is a mode the user defined and is never cleaned. An agent named like a built-in one (`ask`, `plan`, `accept-edits`, `smart-approve`, `auto-approve`, `explore`, `lean`) is neither written nor read, and such a file is never cleaned: Vibe lets a custom file replace the built-in agent ("Custom agent '%s' overrides builtin agent", `vibe/core/agents/registry.py`), so a synced `plan` would remove the Plan mode and an `accept-edits` subagent, the default start agent, would stop Vibe starting (`sync` warns)
+- Subagents are written to `.vibe/agents/<name>.toml` (`agent_type = "subagent"`, `description`, `instructions`, `enabled_tools` translated to Vibe tool names: `read_file`, `grep`, `write_file`, `edit`, `bash`, `web_fetch`, `web_search`, `todo`, `task`, `skill`, `ask_user_question`). `model` is not written: Vibe resolves it against the user's own model list. An agent file that is not a subagent is a mode the user defined and is never cleaned. An agent named like a built-in one (`ask`, `accept-edits`, `smart-approve`, `auto-approve`, `explore`, `lean`, `BuiltinAgentName` in `vibe/core/agents/models.py`) is neither written nor read, and such a file is never cleaned: Vibe lets a custom file replace the built-in agent ("Custom agent '%s' overrides builtin agent", `vibe/core/agents/registry.py`), so an `accept-edits` subagent, the default start agent, would stop Vibe starting (`sync` warns). `main` is not written either: "The name `main` is reserved, so don't name an agent file `main.toml`" (https://docs.mistral.ai/vibe/code/cli/agents), and Vibe 3.0.3+ refuses the file ("'main' is reserved for hook matching; rename the agent file", seen with 3.1.0). Vibe 3 has no built-in `plan` agent ("Vibe has no built-in `plan` agent", same page; `REMOVED_BUILTIN_AGENTS`), so a synced `plan` subagent is written and loads
 - MCP is merged into `.vibe/config.toml` (atomic write, comments and every other setting kept): a server is matched by `name`; stdio is `transport = "stdio"` with `command`, `args`, `env`; Vibe shell-splits a string `command` (`shlex.split`, `vibe/core/config/models.py`), so one that would not come back whole (a path with a space) is written as a one-item list, and a string `command` is split the same way on read; HTTP is `transport = "streamable-http"` with `url`; an `Authorization: Bearer ${VAR}` header becomes `auth = { type = "static", api_key_env = "VAR", api_key_header = "Authorization", api_key_format = "Bearer {token}" }`, other headers go to `auth.headers`; an OAuth `auth`, servers only the target lists and keys conforme does not write are kept, and `disabled` is reset
 - `read()` round-trips skills, subagents (`instructions`, or the prompt file `system_prompt_id` names), MCP (static `auth` read back as `Bearer ${VAR}`, a command given as a list, disabled servers skipped) and `AGENTS.md`
 - The source decides which `[[mcp_servers]]` exist: one that left the source is dropped, one with `disabled = true` is kept; an inline `mcp_servers = []` is turned into `[[mcp_servers]]` tables
 - A header that is exactly `${VAR}` (when there is no `Authorization: Bearer ${VAR}`) becomes a static `auth` with `api_key_env`, `api_key_header` and `api_key_format = "{token}"`
 - An explicit `auth.headers` entry wins over the header `api_key_env` would build (`http_headers`, `vibe/core/config/models.py:338-348` at v2.26.1); conforme reads it the same way
-- Verified 2026-10-12 with Vibe 2.26.1's own loader (`build_default_orchestrator().config`): the stdio server's `argv()` and the remote server's `http_headers()` with the token read from `API_TOKEN`
+- Verified 2026-11-04 with Vibe 3.1.0's own loaders (`build_default_orchestrator`, `SkillManager`, `AgentRegistry`, `load_project_docs`): the stdio server's `argv()` and `env`, the remote server's static `auth` with `api_key_env = "API_TOKEN"`, every skill (the manual one with `model_invocable` false), the synced subagents and `AGENTS.md`
 
 ## Notes
 
 - **No `${VAR}` expansion.** A stdio server gets its `env`, verbatim, on top of `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM` and `USER` only (Vibe passes `env` to the MCP SDK's `StdioServerParameters`, whose `get_default_environment()` keeps just those, `mcp/client/stdio/__init__.py`), so `TOKEN = "${TOKEN}"` passes the literal text; only a bearer token is read from a variable (`api_key_env`). `sync` and `migrate` warn for each server with such a reference. A project `[[mcp_servers]]` entry replaces a user entry of the same name as a whole, so declare the server with its real value in `~/.vibe/config.toml` under another name
 - A legacy SSE server is written as `transport = "streamable-http"` with a warning: Vibe's `http` and `streamable-http` are the same transport (Mistral Vibe 2.26.1 `vibe/core/tools/mcp/registry.py:309-312`), and conforme writes no SSE one, so it connects only if the server also speaks streamable HTTP
-- `vibe` and `skill-creator` are the names of Vibe's built-in skills: a project skill with either name is skipped by Vibe (`sync` warns)
+- `vibe` and `skill-creator` are the names of Vibe's built-in skills; since 3.0.4 a project skill of either name loads and wins ("A user skill named vibe or skill-creator is no longer silently skipped", CHANGELOG 3.0.4; `vibe/core/skills/manager.py`: "a local skill wins"; a project `skill-creator` seen loaded with 3.1.0), so conforme no longer warns
+- Tool names (unconfirmed): Vibe 3 runs every session on its Unified Harness, which has no `grep` tool ("there is no grep tool, and the agent searches through the shell") and starts subagents with `agents.spawn` rather than `task` (`TOOLS_WITHOUT_EFFECT`, `vibe/core/config/_setting_keys.py`, which names the `[tools.*]` settings without effect). Whether `grep` and `task` in a subagent's `enabled_tools` still select anything is decided by the Rust harness and not documented; Vibe's own built-in `explore` subagent still lists `grep`, so conforme keeps writing both
 - Skill `description` is 1 to 1024 characters (`vibe/core/skills/models.py`, `max_length=1024`): a longer one makes Vibe skip the skill, and `validate` warns
 - Vibe honours the Codex sidecar `agents/openai.yaml` beside a skill (`allow_implicit_invocation`, `vibe/core/skills/manager.py`): an existing one in `.vibe/skills/<name>/` is kept in step with the source, never created
 - Project `.vibe/` directories load only at the trusted working directory, while `.vibe/config.toml` is found by walking up; Vibe also reads `.vibe/plugins/`, `.vibe/hooks.toml` and `.vibe/prompts/`, which conforme does not write
