@@ -2,7 +2,7 @@
 
 > Open-source coding agent, a fork of OpenCode: the `kilo` CLI and the VS Code extension built on it read the same project files. Source: `--from kilo`
 
-**Last verified online:** 2026-10-14, against Kilo Code 7.8.8 (https://github.com/Kilo-Org/kilocode/releases)
+**Last verified online:** 2026-11-04, against Kilo Code 7.8.18 (https://github.com/Kilo-Org/kilocode/releases)
 
 ## Official docs
 
@@ -60,6 +60,8 @@ None: every rule file and the instruction file are always loaded.
 - Kilo loads the legacy `.kilocoderules`, `.kilocoderules-<mode>` and the mode rule directories `.kilo/rules-<mode>/` and `.kilocode/rules-<mode>/` (`packages/opencode/src/kilocode/rules-migrator.ts`); conforme reads none of them (known gap)
 - A local MCP server accepts `env` as an alias of `environment` but has no `cwd` (`packages/core/src/v1/config/mcp.ts`); conforme writes `environment` and no `cwd`
 - A legacy SSE server is written as `type: "remote"`: Kilo Code, like OpenCode 1, tries streamable HTTP and then SSE on a `remote` URL (opencode v1.18.35 `packages/opencode/src/mcp/index.ts:269-289`; OpenCode 2 speaks streamable HTTP only, see [opencode.md](opencode.md)), and the server reads back as streamable HTTP, since there is no SSE marker (documented, not modelled)
+- Kilo also loads Claude-style `mcpServers` from project `.kilocode/mcp.json` then `.kilo/mcp.json` ("Check .kilo/mcp.json and .kilocode/mcp.json for project-level settings", `packages/opencode/src/kilocode/mcp-migrator.ts` at v7.8.18). conforme neither reads nor writes them, so with Kilo as the source a server kept only there is not synced (known gap)
+- https://kilo.ai/docs/customize/agents-md names an `AGENT.md` fallback that Kilo's source does not read (its fallbacks are `CLAUDE.md` and `CONTEXT.md`, `session/instruction.ts`); conforme follows the source
 
 ## Live check
 
@@ -73,3 +75,5 @@ kilo agent list      # agents, `reviewer (subagent)` for a synced one
 ```
 
 `kilo mcp list` connects to every server; avoid it in checks.
+
+- Verified 2026-11-04 with Kilo 7.8.18 (`kilo config check`, `kilo debug config`, `kilo debug skill`, `kilo agent list`): the merged `mcp`, every skill, the synced subagent, and a `{env:VAR}` witness in `.kilo/kilo.jsonc` refused ("variable references are not allowed in project MCP headers")

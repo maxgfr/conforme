@@ -1054,12 +1054,16 @@ const TOOL_EQUIVALENTS: &[(&str, &str, &str, &str)] = &[
     ("read_file", "read_file", "read", "Read"),
     ("read_many_files", "read_many_files", "read", "Read"),
     ("fs_read", "read_file", "read", "Read"),
-    ("glob", "glob", "glob", "Glob"),
-    ("grep", "grep_search", "grep", "Grep"),
-    ("grep_search", "grep_search", "grep", "Grep"),
-    ("search_file_content", "grep_search", "grep", "Grep"),
-    ("search", "grep_search", "grep", "Grep"),
-    ("codebase", "grep_search", "grep", "Grep"),
+    // Kiro: the `read` tag, which CLI 2.x and V3 both accept; their tool IDs
+    // differ (2.x `glob` / `grep`, V3 `file_search` / `grep_search`,
+    // https://kiro.dev/docs/tools/).
+    ("glob", "glob", "read", "Glob"),
+    ("file_search", "glob", "read", "Glob"),
+    ("grep", "grep_search", "read", "Grep"),
+    ("grep_search", "grep_search", "read", "Grep"),
+    ("search_file_content", "grep_search", "read", "Grep"),
+    ("search", "grep_search", "read", "Grep"),
+    ("codebase", "grep_search", "read", "Grep"),
     ("ls", "list_directory", "read", "Glob"),
     ("list_directory", "list_directory", "read", "Glob"),
     ("write", "write_file", "write", "Write"),
@@ -1067,6 +1071,8 @@ const TOOL_EQUIVALENTS: &[(&str, &str, &str, &str)] = &[
     ("fs_write", "write_file", "write", "Write"),
     ("edit", "replace", "write", "Edit"),
     ("replace", "replace", "write", "Edit"),
+    ("str_replace", "replace", "write", "Edit"),
+    ("fs_append", "write_file", "write", "Write"),
     ("multiedit", "replace", "write", "Edit"),
     ("editfiles", "replace", "write", "Edit"),
     ("notebookedit", "replace", "write", "NotebookEdit"),
@@ -1075,6 +1081,7 @@ const TOOL_EQUIVALENTS: &[(&str, &str, &str, &str)] = &[
     ("execute", "run_shell_command", "shell", "Bash"),
     ("execute_bash", "run_shell_command", "shell", "Bash"),
     ("execute_cmd", "run_shell_command", "shell", "Bash"),
+    ("execute_pwsh", "run_shell_command", "shell", "PowerShell"),
     ("exec", "run_shell_command", "shell", "Bash"),
     ("shell", "run_shell_command", "shell", "Bash"),
     ("terminal", "run_shell_command", "shell", "Bash"),
@@ -1083,17 +1090,15 @@ const TOOL_EQUIVALENTS: &[(&str, &str, &str, &str)] = &[
     ("webfetch", "web_fetch", "web_fetch", "WebFetch"),
     ("web_fetch", "web_fetch", "web_fetch", "WebFetch"),
     ("fetch", "web_fetch", "web_fetch", "WebFetch"),
-    ("websearch", "google_web_search", "web_search", "WebSearch"),
-    ("web_search", "google_web_search", "web_search", "WebSearch"),
-    (
-        "google_web_search",
-        "google_web_search",
-        "web_search",
-        "WebSearch",
-    ),
+    // Kiro: the `web` tag (2.x `web_search`, V3 `remote_web_search`).
+    ("websearch", "google_web_search", "web", "WebSearch"),
+    ("web_search", "google_web_search", "web", "WebSearch"),
+    ("remote_web_search", "google_web_search", "web", "WebSearch"),
+    ("google_web_search", "google_web_search", "web", "WebSearch"),
     ("web", "web_fetch", "web", "WebFetch"),
-    // Kiro's `todo_list` tag only applies to engines that provide it; V3's
-    // task-tracking tool is `todo`.
+    // Kiro's task-list tool is CLI 2.x's `task` (aliases `todo`, `todo_list`);
+    // "CLI V3 has no task-list tool" (https://kiro.dev/docs/tools/), where
+    // `todo` selects nothing.
     ("todowrite", "write_todos", "todo", "TodoWrite"),
     ("write_todos", "write_todos", "todo", "TodoWrite"),
     ("todo", "write_todos", "todo", "TodoWrite"),
@@ -1103,6 +1108,7 @@ const TOOL_EQUIVALENTS: &[(&str, &str, &str, &str)] = &[
     ("invoke_agent", "invoke_agent", "subagent", "Agent"),
     ("subagent", "invoke_agent", "subagent", "Agent"),
     ("use_subagent", "invoke_agent", "subagent", "Agent"),
+    ("invoke_sub_agent", "invoke_agent", "subagent", "Agent"),
     ("askuserquestion", "ask_user", "", "AskUserQuestion"),
     ("ask_user", "ask_user", "", "AskUserQuestion"),
     ("skill", "activate_skill", "", "Skill"),
@@ -1163,11 +1169,9 @@ const KIRO_TOOLS: &[&str] = &[
     "@builtin",
     "@mcp",
     "*",
-    // built-in tools
-    "glob",
-    "grep",
+    // built-in tools (`glob`, `grep` and `web_search`, CLI 2.x IDs V3 renamed,
+    // are written as their `read` / `web` tag through TOOL_EQUIVALENTS)
     "aws",
-    "web_search",
     "web_fetch",
     "introspect",
     "code",

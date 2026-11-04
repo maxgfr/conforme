@@ -2,7 +2,7 @@
 
 > Open-source AI CLI tool. Source: `--from opencode`
 
-**Last verified online:** 2026-10-20, against OpenCode 2 2.1.0 (https://opencode.ai/v2/docs/migrate-v1/, Homebrew `opencode-v2` 2.1.0). conforme targets OpenCode 2 only; OpenCode 1 (v1.19.x) is no longer a target.
+**Last verified online:** 2026-11-04, against OpenCode 2 2.2.5 (https://github.com/anomalyco/opencode/blob/dev/CHANGELOG.md, Homebrew `opencode-v2` 2.2.5). conforme targets OpenCode 2 only; OpenCode 1 (v1.19.x) is no longer a target.
 
 ## Official docs
 
@@ -84,3 +84,6 @@ opencode service stop                      # stop the isolated service afterward
 ```
 
 The first call for a new directory may return an empty agent list while the project loads; run it again. OpenCode 2 has no `debug skill` command.
+
+- The V2 docs pages are listed in https://opencode.ai/v2/sitemap.xml, not in https://opencode.ai/sitemap.xml
+- Verified 2026-11-04 with OpenCode 2.2.5 (`opencode debug config`, `opencode debug agents`, `opencode api skill.list`): `mcp.servers` with the command array and `environment`, the synced subagent, every skill with `autoinvoke: false` on the manual one

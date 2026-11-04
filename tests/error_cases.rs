@@ -595,12 +595,41 @@ Review all changes for bugs.
     // Gemini would send `sonnet` to its own API.
     assert!(!gemini.contains("model:"), "{gemini}");
 
+    // Kiro: `Grep` and `codebase` become the `read` tag, which CLI 2.x and V3
+    // both accept (their search tool IDs differ: `grep` / `grep_search`).
     let kiro = fs::read_to_string(dir.path().join(".kiro/agents/reviewer.md")).unwrap();
     assert!(
-        kiro.contains("tools:\n- read\n- grep\n- shell\n- '@github/list_issues'\n"),
+        kiro.contains("tools:\n- read\n- shell\n- '@github/list_issues'\n"),
         "{kiro}"
     );
     assert!(!kiro.contains("Bash"));
+    assert!(!kiro.contains("grep"), "{kiro}");
+}
+
+#[test]
+fn test_kiro_v3_tool_ids_reach_other_hosts() {
+    // A Kiro CLI V3 agent names its tools by V3 ID (https://kiro.dev/docs/tools/):
+    // each translates to the other host's tool instead of being dropped.
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".kiro/agents")).unwrap();
+    fs::create_dir_all(dir.path().join(".claude")).unwrap();
+    fs::write(dir.path().join(".conformerc.toml"), "source = \"kiro\"\n").unwrap();
+    fs::write(
+        dir.path().join(".kiro/agents/scout.md"),
+        "---\nname: scout\ndescription: Scouts the code\ntools:\n- file_search\n- grep_search\n- remote_web_search\n- invoke_sub_agent\n- str_replace\n---\nScout.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let claude = fs::read_to_string(dir.path().join(".claude/agents/scout.md")).unwrap();
+    assert!(
+        claude.contains("tools: Glob, Grep, WebSearch, Agent, Edit\n"),
+        "{claude}"
+    );
 }
 
 #[test]

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Check that every tool's copy of every skill matches the source after a sync.
 
-Usage: skills_conformity.py <project_root> [--source <skills dir>]
+Usage: skills_conformity.py <project_root> [--source <skills dir>] [--nested]
 
-The source skills directory defaults to `.claude/skills`. Every other directory
+The source skills directory defaults to `.claude/skills`. `--nested` also reads
+the source's skills nested in folders without a `SKILL.md`
+(`group/<name>/SKILL.md`), for a source tool that loads them (Codex, Cursor,
+OpenCode, Kilo); every copy holds them flat. Every other directory
 holding `<name>/SKILL.md` folders (`.cursor/skills`, `.agents/skills`,
 `.gemini/skills`, ...) is a copy. For each source skill and each copy root:
 
@@ -93,6 +96,29 @@ def skills_in(root):
     return found
 
 
+def source_skills_in(root):
+    """Like `skills_in`, also reading the skills nested in folders that hold no
+    `SKILL.md` (`group/<name>/SKILL.md`), as Codex, Cursor, OpenCode and Kilo do:
+    breadth first, the shallower skill winning a name, as conforme reads them.
+    Each copy holds them flat (`<name>/SKILL.md`)."""
+    found = skills_in(root)
+    frontier = [root] if os.path.isdir(root) else []
+    while frontier:
+        deeper = []
+        for directory in frontier:
+            for entry in sorted(os.listdir(directory)):
+                path = os.path.join(directory, entry)
+                if not os.path.isdir(path) or os.path.islink(path):
+                    continue
+                if os.path.isfile(os.path.join(path, "SKILL.md")):
+                    continue
+                for name, skill in skills_in(path).items():
+                    found.setdefault(name, skill)
+                deeper.append(path)
+        frontier = deeper
+    return found
+
+
 def copy_roots(project, source):
     roots = set()
     for dirpath, dirnames, filenames in os.walk(project):
@@ -107,8 +133,10 @@ def copy_roots(project, source):
 
 
 def parse_args(argv):
-    """`(project, source_rel)`, or None when the arguments are not usable."""
+    """`(project, source_rel, nested)`, or None when the arguments are not usable."""
     args = argv[1:]
+    nested = "--nested" in args
+    args = [arg for arg in args if arg != "--nested"]
     source_rel = ".claude/skills"
     if "--source" in args:
         at = args.index("--source")
@@ -118,7 +146,7 @@ def parse_args(argv):
         del args[at : at + 2]
     if len(args) != 1:
         return None
-    return os.path.abspath(args[0]), source_rel
+    return os.path.abspath(args[0]), source_rel, nested
 
 
 def main(argv):
@@ -126,12 +154,12 @@ def main(argv):
     if parsed is None:
         print(__doc__)
         return 2
-    project, source_rel = parsed
+    project, source_rel, nested = parsed
     if not os.path.isdir(project):
         print(f"not a directory: {project}")
         return 2
     source = os.path.join(project, source_rel)
-    source_skills = skills_in(source)
+    source_skills = source_skills_in(source) if nested else skills_in(source)
     if not source_skills:
         print(f"no skill in {source_rel}")
         return 2

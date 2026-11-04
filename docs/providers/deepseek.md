@@ -2,7 +2,7 @@
 
 > DeepSeek's open-source agent harness (`dsh`), in preview. Source: `--from deepseek`
 
-**Last verified online:** 2026-10-14, against DeepSeek Harness v0.2.1-alpha.3 (https://github.com/deepseek-ai/deepseek-harness/releases)
+**Last verified online:** 2026-11-04, against DeepSeek Harness v0.2.2-rc.1 (https://github.com/deepseek-ai/deepseek-harness/releases)
 
 ## Official docs
 
@@ -145,3 +145,4 @@ Because this configuration is user-level and not project-scoped, conforme does
 - The project `.dsh/` directory is used for skills only; settings and
   credentials live in the harness home (`settings.yaml`, `.credentials.yaml`)
 - The skill catalog shown to the model bounds each description by `catalogDescriptionMaxLength` ("default `500`", skills reference above); a longer one is cut, not dropped: whitespace is collapsed, then the text is cut to `maxLength-3` characters plus `...` (`packages/skill/tool-skill/src/index.ts:28,393-396` at v0.2.1-alpha.3, https://github.com/deepseek-ai/deepseek-harness)
+- Since v0.2.2-alpha.2 the `maxBytes` budget applies to each instruction chain, global and project ("Budget global and project AGENTS.md chains separately"; `packages/context/agent-instructions/README.md`: "Cap on each instruction chain")

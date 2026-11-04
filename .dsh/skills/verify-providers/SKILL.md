@@ -184,7 +184,9 @@ skill left the source. Then build a fixture whose source skills cover a
 bundled script, a manual skill, a nested skill and a long description, sync
 it to every tool, run the script with `--source <its skills dir>`, and repeat
 after editing a skill body, deleting a bundled file and deleting a whole
-skill.
+skill. A nested skill (`group/<name>/SKILL.md`) needs a source that loads
+one (Codex's `.agents/skills`, Cursor, OpenCode, Kilo) and `--nested`; Claude
+Code documents only top-level skill folders, and conforme reads only those.
 
 Done when: the script exits 0 on the repository and on the fixture after
 each edit and sync, and every UNMANAGED line (a skill written by hand in one

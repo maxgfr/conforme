@@ -2,7 +2,7 @@
 
 > VS Code AI extension, the community fork of Roo Code. Source: `--from zoocode`
 
-**Last verified online:** 2026-10-14, against Zoo Code 3.88.0 (https://github.com/Zoo-Code-Org/Zoo-Code/releases)
+**Last verified online:** 2026-11-04, against Zoo Code 3.94.0 (https://github.com/Zoo-Code-Org/Zoo-Code/releases)
 
 Roo Code was shut down on 2026-05-15 (its repository, `RooCodeInc/Roo-Code`, is
 archived; the docs homepage points users to Zoo Code). Zoo Code continues the
@@ -72,3 +72,5 @@ Mode-specific rules go in `.roo/rules-{modeSlug}/` directories (e.g., `.roo/rule
 - Skill manual-invocation keys conforme writes (`disable-model-invocation`, `metadata`, `agents/openai.yaml`) are ignored by Zoo, which has no manual-only mechanism
 - Reads AGENTS.md natively, else `AGENT.md`, plus a personal `AGENTS.local.md` (`src/core/prompts/sections/custom-instructions.ts`); `enableSubfolderRules` (off by default) also loads `.roo/rules` and `AGENTS.md` from subfolders
 - Detection: `.roo/` or a root `.roorules`. `.clinerules` is Cline's file, which Zoo reads only as a legacy fallback, so it does not make conforme detect Zoo Code (the legacy `.roorules-{modeSlug}` mode-specific files are not read either)
+- Zoo Code 3.94.0 adds a static `oauth` object to MCP servers, allowed only on `streamable-http` (`oauth: z.undefined()` on stdio and SSE, `src/services/mcp/McpHub.ts`). conforme does not own `oauth` and keeps it on merge, so a server whose transport the source changes from HTTP to stdio or SSE keeps an `oauth` that Zoo then rejects (known gap)
+- 3.90.0: a `.roo/skills/<dir>` that is a symlink to a folder of several skills is discovered (#1842); conforme never follows a linked directory (`is_real_dir`)

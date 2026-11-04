@@ -190,10 +190,20 @@ impl AiToolAdapter for ClaudeAdapter {
                 .to_string();
 
             // `paths` is a YAML list or a comma-separated string; a rule
-            // without it always loads.
+            // without it always loads, and so does one whose frontmatter is
+            // not YAML (`paths: **/*.ts`): "If the YAML between the markers
+            // doesn't parse, Claude Code ignores the frontmatter and loads
+            // the rule as if it had no `paths`"
+            // (https://code.claude.com/docs/en/memory).
             // Brace groups (`src/**/*.{ts,tsx}`, the form Claude Code
             // recommends) keep their inner commas.
-            let globs = crate::config::yaml_globs(fields.get("paths"));
+            let strict = crate::config::read_text(&path)
+                .is_ok_and(|content| frontmatter::is_strict_yaml(&content));
+            let globs = if strict {
+                crate::config::yaml_globs(fields.get("paths"))
+            } else {
+                Vec::new()
+            };
             let activation = if globs.is_empty() {
                 ActivationMode::Always
             } else {
@@ -744,6 +754,22 @@ mod tests {
             config.rules[0].activation,
             ActivationMode::GlobMatch(vec!["src/**/*.{ts,tsx}".into(), "lib/**".into()])
         );
+    }
+
+    #[test]
+    fn test_read_rule_whose_frontmatter_is_not_yaml_always_loads() {
+        // `paths: **/*.ts` is not YAML (`*` starts an alias): Claude Code
+        // ignores the block and loads the rule as if it had no `paths`.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".claude/rules")).unwrap();
+        std::fs::write(
+            tmp.path().join(".claude/rules/ts.md"),
+            "---\npaths: **/*.ts\n---\nTS.\n",
+        )
+        .unwrap();
+        let config = ClaudeAdapter.read(tmp.path()).unwrap();
+        assert_eq!(config.rules[0].activation, ActivationMode::Always);
+        assert_eq!(config.rules[0].content, "TS.");
     }
 
     #[test]

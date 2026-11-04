@@ -28,7 +28,8 @@ src/
                        back (comma, line break, `-->`, edge spaces) is written in JSON form, both forms read
   frontmatter.rs    — `---` block split by hand (BOM, CRLF, files of 3 bytes or fewer), parsed as YAML, else
                        entry by entry (`globs: **/*.ts`); `read` names the file in errors; is_strict_yaml for
-                       tools that skip a broken block (Antigravity); serialization
+                       tools that ignore a broken block (Antigravity rules, which accept an unquoted
+                       `description:` holding a colon; Claude agents; Claude rules, read as always-on); serialization
   lib.rs            — Library crate re-exports (adapters, config, etc.)
   sync.rs           — Core sync engine: init, sync, check, status, remove, diff, migrate commands
                        (target_config, renamed-id check, AGENTS.md output unless the source reads it, holding only
@@ -45,7 +46,8 @@ src/
                        migrate keeps what staying tools generate or manage — see Orphan cleanup below;
                        each target is generated once per command (TargetOutput: files written, expected list for
                        orphan cleanup); one target that fails does not stop the others, the command fails at the end;
-                       init never cleans and lists what the next sync would remove; sync refuses to replace a
+                       init never cleans and lists what the next sync would remove (so does migrate, naming what it
+                       kept that the output cannot hold); sync refuses to replace a
                        hand-written AGENTS.md whose text the source lacks; sync -n lists orphans and AGENTS.md;
                        check and diff refuse what sync refuses (checked_source); status shows read errors;
                        migrate prunes emptied directories and points `.conformerc.toml` `source` at its output;
@@ -141,7 +143,7 @@ src/
                        clean_orphans + source_files() (what read() loads outside the
                        managed dirs; see Orphan cleanup below)
     claude.rs       — Claude Code: CLAUDE.md (or .claude/CLAUDE.md when only that exists)
-                       + .claude/rules/**/*.md, read recursively (paths: frontmatter); with no CLAUDE.md
+                       + .claude/rules/**/*.md, read recursively (paths: frontmatter, ignored when not YAML); with no CLAUDE.md
                        nor .claude/CLAUDE.md, reads AGENTS.md and .claude/AGENTS.md (root first) as Claude
                        Code does (CLAUDE.local.md deliberately ignored); a skill and a command of the same
                        name read as the skill; skips what Claude Code refuses: a skill or command name with
@@ -181,7 +183,7 @@ src/
     deepseek.rs     — DeepSeek Harness (dsh): reads AGENTS.md natively; skills at .dsh/skills/<name>/SKILL.md
     vibe.rs         — Mistral Vibe: reads AGENTS.md natively; .vibe/skills/, .vibe/agents/<name>.toml subagents
                        (other agent files are the user's modes; built-in agent names never written), MCP merged
-                       into .vibe/config.toml; warns about reserved names and `${VAR}` Vibe does not expand
+                       into .vibe/config.toml; warns about built-in and reserved (`main`) agent names and `${VAR}` Vibe does not expand
     kilo.rs         — Kilo Code (OpenCode fork): reads AGENTS.md (else CLAUDE.md, CONTEXT.md) and .kilo/rules/*.md
                        natively; .kilo/skills/, .kilo/agents/*.md (built-in names skipped), MCP merged into
                        .kilo/kilo.jsonc or the existing kilo.json(c) (read: every kilo/opencode.json(c) Kilo
@@ -375,7 +377,7 @@ never delete it wholesale and `gitignore install` never ignores it.
 
 `AiToolAdapter::warnings(project_root, config)` names what the tool will not
 load as written (Kilo: `${VAR}` it cannot resolve, a root `opencode.json` it
-refuses; OpenCode: SSE servers; Vibe: reserved names, `${VAR}`; Codex, Zed, Zoo: references kept literal); `sync` and
+refuses; OpenCode: SSE servers; Vibe: built-in and reserved agent names, `${VAR}`; Codex, Zed, Zoo: references kept literal); `sync` and
 `migrate` print them for every target.
 
 ### Sync algorithm

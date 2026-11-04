@@ -2,7 +2,7 @@
 
 > AI code editor with .mdc rule files. Source: `--from cursor`
 
-**Last verified online:** 2026-10-14, against Cursor 3.24.18 and Cursor CLI 2026.10.08 (https://cursor.com/changelog, https://cursor.com/docs/cli/changelog)
+**Last verified online:** 2026-11-04, against Cursor 3.28.7 and Cursor CLI 2026.10.22 (https://cursor.com/changelog, https://cursor.com/docs/cli/changelog)
 
 ## Official docs
 
@@ -51,7 +51,7 @@
 - Only the top-level `general.mdc` holds the instructions; a `general.mdc` in a sub-directory is an ordinary rule
 - `${VAR:-default}` loses its default in `${env:VAR}`: `sync` warns
 - `globs`: conforme writes one comma-and-space string, quoted by the YAML writer, as Cursor's own exporter does (`globs: ${ho(e.globs.join(", "))}`); Cursor's frontmatter parser strips surrounding quotes, accepts a `- item` list, and splits on commas outside braces, trimming each part (Cursor CLI 2026.10.01 `index.js`). A July 2025 forum report that `**/*.cpp, **/*.h` matches nothing (https://forum.cursor.com/t/cursor-rules-globs-inconsistencies/116958, Cursor 1.2.4) is not reproduced by the current parser (unconfirmed in the IDE)
-- `.cursor/mcp.json` has no per-server disable key: the toggle is stored in a separate `mcp-disabled.json` ("Toggle servers on/off without removing them", https://cursor.com/docs/mcp)
+- `.cursor/mcp.json` has no per-server disable key: the toggle is stored in a separate `mcp-disabled.json`. https://cursor.com/docs/mcp now only says "Use the toggle"; the file name comes from the CLI bundle (`src/mcp/project-paths.ts` in `dist-package/index.js`, CLI 2026.10.22: `join(t,"mcp-disabled.json")`)
 - The Cursor CLI also loads `CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` as rules (`isRuleMarkdownFile`); conforme's Claude Code adapter ignores `CLAUDE.local.md` on purpose
 
 ## Notes
@@ -77,3 +77,5 @@
 - A legacy SSE server is written as `type: "sse"` with `url` and `headers`, and read back as SSE: the Cursor CLI parser accepts "sse", while the IDE ignores `type` (Cursor forum, reply from Cursor staff)
 - `.cursor/mcp.json` is merged, not owned: per-server keys conforme never writes (`auth`, `envFile`) survive, and `remove`/`migrate` keep the file
 - Cursor's interpolation is `${env:NAME}` (plus `${workspaceFolder}`, `${userHome}`, …). conforme writes `${env:VAR}` for a normalized `${VAR}` (a `:-default` is dropped) and reads `${env:VAR}` back as `${VAR}`; Cursor's predefined variables are left as they are
+- Cursor CLI 2026.10.22 also loads `.grok/skills` and `.grok/agents` (bundle `computeAgentsDirs`), which no doc mentions, and loads agents only from `.cursor/agents`, `.claude/agents` and `.grok/agents`, although https://cursor.com/docs/subagents lists `.codex/agents/` too (docs versus the CLI; the IDE's loader is not public, unconfirmed there). conforme writes `.cursor/agents/`, which both load
+- Help pages: https://cursor.com/help/customization/skills, https://cursor.com/help/customization/mcp; release notes: https://cursor.com/docs/release-notes

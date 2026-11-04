@@ -2,7 +2,7 @@
 
 > OpenAI's AI CLI agent. Source: `--from codex`
 
-**Last verified online:** 2026-10-14, against Codex CLI 0.162.1 (https://github.com/openai/codex/releases)
+**Last verified online:** 2026-11-04, against Codex CLI 0.166.0 (https://github.com/openai/codex/releases)
 
 ## Official docs
 
@@ -60,7 +60,7 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - `env` on an HTTP server is dropped, as in every JSON shape without `env` on remote servers
 - A legacy SSE server (`type: "sse"` in another tool's file, or `<!-- transport: sse -->` in AGENTS.md) is written as streamable HTTP with a warning: Codex has only stdio and streamable HTTP servers (`codex-rs/config/src/mcp_types.rs:614-645`), so it connects only if the server also speaks streamable HTTP
 - Disabled servers (`enabled = false`) are omitted when migrating from Codex
-- Codex tuning keys are accepted on read and ignored (the merge keeps them): `enabled`, `required`, `startup_timeout_sec`, `startup_timeout_ms`, `tool_timeout_sec`, `enabled_tools`, `disabled_tools`, `default_tools_approval_mode`, `tools`, `scopes`, the `[oauth]` client table (`client_id`, `client_secret`, `callback_port`, …), `oauth_resource`, `startup_readiness`, `supports_parallel_tool_calls`, `tool_input_schema_max_bytes`, `omit_tools_from`, the legacy `name`, and `environment_id = "local"` (a server bound to another environment is a remote executor no other tool has, so `--from codex` still fails on it; Codex's docs call that key `experimental_environment`, its source only `environment_id`, which conforme follows)
+- Codex tuning keys are accepted on read and ignored (the merge keeps them): `enabled`, `required`, `startup_timeout_sec`, `startup_timeout_ms`, `tool_timeout_sec`, `enabled_tools`, `disabled_tools`, `default_tools_approval_mode`, `tools`, `scopes`, the `[oauth]` client table (`client_id`, `client_secret`, `callback_port`, …), `oauth_resource`, `startup_readiness`, `supports_parallel_tool_calls`, `tool_input_schema_max_bytes`, `omit_tools_from`, the legacy `name`, and `environment_id = "local"` (a server bound to another environment is a remote executor no other tool has, so `--from codex` still fails on it; the config reference and the source both call it `environment_id`, "Defaults to `local`", https://learn.chatgpt.com/docs/config-file/config-reference)
 - Fields outside conforme's normalized transport model (for example `auth`, `cwd`, `http_headers_helper`, or `env_vars` entries with `source = "remote"`) fail migration explicitly rather than silently losing behavior
 - When a server switches from HTTP to stdio, the merge drops every key Codex rejects on a stdio server ("X is not supported for stdio"): `url`, `http_headers`, `env_http_headers`, `http_headers_helper`, `bearer_token_env_var`, `bearer_token`, `auth`, `oauth`, `oauth_resource`. Switching to HTTP drops `command`, `args`, `env`, `cwd`, `env_vars`, and the legacy `bearer_token` Codex rejects on HTTP too (`throw_if_set("streamable_http", "bearer_token", ..)`, `codex-rs/config/src/mcp_types.rs`)
 - Skills are always written with a `description`; the Codex skill parser rejects a skill without one, so an empty description falls back to the name. It caps only the name (64 characters), not the description (`codex-rs/skills/src/parser.rs`)
@@ -78,3 +78,6 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 ## Manual skill invocation
 
 Manual skills preserve `disable-model-invocation: true` and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. OpenCode 2 reads `disable-model-invocation: true` like its own `metadata.opencode/autoinvoke: false` (https://opencode.ai/v2/docs/skills/); conforme reads both and writes only `disable-model-invocation`.
+
+- Source line numbers cited above are from earlier releases and shift between versions (`config_toml.rs:75` is `:77` at 0.166.0); search the file for the quoted text
+- Verified 2026-11-04 with Codex CLI 0.166.0 (`codex mcp get --json`, `codex debug prompt-input`, project trusted inline): `env_vars = ["TOKEN"]`, `bearer_token_env_var = "API_TOKEN"`, the synced skills listed and the manual one absent with its body, the synced agent role listed

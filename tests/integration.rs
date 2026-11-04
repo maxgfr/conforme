@@ -2950,6 +2950,42 @@ fn test_migrate_keeps_what_the_output_cannot_hold() {
     assert!(!root.join("GEMINI.md").exists());
 }
 
+#[test]
+fn test_migrate_names_the_kept_agent_the_next_sync_would_remove() {
+    // Zed has no agents, so migrate keeps Claude's; the next sync reads Zed
+    // and would delete it as an orphan. migrate names it, and excluding
+    // Claude Code, as advised, keeps it.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/agents")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Instr.\n").unwrap();
+    let agent = "---\nname: rev\ndescription: Review\n---\nReview.\n";
+    fs::write(root.join(".claude/agents/rev.md"), agent).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+
+    let output = run(root, &["migrate", "--source", "claude", "--output", "zed"]).success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout).to_string();
+    assert!(
+        stdout.contains("the next `conforme sync` would remove them:\n    .claude/agents/rev.md\n"),
+        "{stdout}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".claude/agents/rev.md")).unwrap(),
+        agent
+    );
+
+    fs::write(
+        root.join(".conformerc.toml"),
+        "source = \"zed\"\nexclude = [\"claude\"]\n",
+    )
+    .unwrap();
+    run(root, &["sync"]).success();
+    assert_eq!(
+        fs::read_to_string(root.join(".claude/agents/rev.md")).unwrap(),
+        agent
+    );
+}
+
 /// Every skills directory each tool reads, relative to the project root.
 const SKILL_ROOTS: &[&str] = &[
     ".cursor/skills",

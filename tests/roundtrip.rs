@@ -848,9 +848,10 @@ fn test_hand_written_builtin_agent_overrides_are_never_swept() {
 #[test]
 fn test_vibe_builtin_agent_names_are_left_to_vibe() {
     // Vibe lets a custom agent file replace a built-in one ("Custom agent '%s'
-    // overrides builtin agent", agents/registry.py): a synced `plan` subagent
-    // would remove the Plan mode, and `accept-edits`, the default start
-    // agent, would make Vibe refuse to start.
+    // overrides builtin agent", agents/registry.py): a synced `ask` subagent
+    // would remove the Ask mode, and `accept-edits`, the default start
+    // agent, would make Vibe refuse to start. `main` is reserved: Vibe 3.0.3+
+    // refuses `main.toml`. Vibe 3 has no built-in `plan`, so one is written.
     let adapter = conforme::adapters::vibe::VibeAdapter;
     let dir = TempDir::new().unwrap();
     let agent = |name: &str| conforme::config::NormalizedAgent {
@@ -862,7 +863,7 @@ fn test_vibe_builtin_agent_names_are_left_to_vibe() {
     let config = NormalizedConfig {
         agents: [
             "ask",
-            "plan",
+            "main",
             "accept-edits",
             "smart-approve",
             "auto-approve",
@@ -876,12 +877,19 @@ fn test_vibe_builtin_agent_names_are_left_to_vibe() {
     };
     assert!(adapter.generate(dir.path(), &config).unwrap().is_empty());
     assert!(!adapter.warnings(dir.path(), &config).is_empty());
+    let plan = NormalizedConfig {
+        agents: vec![agent("plan")],
+        ..Default::default()
+    };
+    let written = adapter.generate(dir.path(), &plan).unwrap();
+    assert_eq!(written.len(), 1);
+    assert!(written[0].0.ends_with(".vibe/agents/plan.toml"));
 
     // A built-in override written by hand is not read as a portable agent.
     fs::create_dir_all(dir.path().join(".vibe/agents")).unwrap();
     fs::write(
-        dir.path().join(".vibe/agents/plan.toml"),
-        "agent_type = \"subagent\"\ndescription = \"Mine\"\ninstructions = \"Plan.\"\n",
+        dir.path().join(".vibe/agents/ask.toml"),
+        "agent_type = \"subagent\"\ndescription = \"Mine\"\ninstructions = \"Ask.\"\n",
     )
     .unwrap();
     assert!(adapter.read(dir.path()).unwrap().agents.is_empty());
