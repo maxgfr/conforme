@@ -2964,7 +2964,8 @@ fn test_migrate_names_the_kept_agent_the_next_sync_would_remove() {
     fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
 
     let output = run(root, &["migrate", "--source", "claude", "--output", "zed"]).success();
-    let stdout = String::from_utf8_lossy(&output.get_output().stdout).to_string();
+    // Paths print with the platform's separator.
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout).replace('\\', "/");
     assert!(
         stdout.contains("the next `conforme sync` would remove them:\n    .claude/agents/rev.md\n"),
         "{stdout}"
