@@ -2,7 +2,7 @@
 
 > DeepSeek's open-source agent harness (`dsh`), in preview. Source: `--from deepseek`
 
-**Last verified online:** 2026-11-04, against DeepSeek Harness v0.2.2-rc.1 (https://github.com/deepseek-ai/deepseek-harness/releases)
+**Last verified online:** 2026-11-09, against DeepSeek Harness v0.2.2-rc.1 (https://github.com/deepseek-ai/deepseek-harness/releases)
 
 ## Official docs
 

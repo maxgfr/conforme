@@ -13,7 +13,7 @@ use crate::config::NormalizedConfig;
 pub struct OpenCodeAdapter;
 
 /// OpenCode 2 "currently only discovers AGENTS.md"
-/// (https://opencode.ai/v2/docs/migrate-v1/#instruction-files).
+/// (https://opencode.ai/docs/migrate-v1/#instruction-files).
 const INSTRUCTION_FILES: &[&str] = &["AGENTS.md"];
 
 /// The project config files OpenCode merges, lowest precedence first.

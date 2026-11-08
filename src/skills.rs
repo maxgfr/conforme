@@ -362,7 +362,7 @@ pub(crate) fn read_manual_invocation(
     if let Some(serde_yaml_ng::Value::Sequence(triggers)) = fields.get("triggers") {
         return Ok(!triggers.iter().any(|t| t.as_str() == Some("model")));
     }
-    // OpenCode 2's own key (https://opencode.ai/v2/docs/skills/), which
+    // OpenCode 2's own key (https://opencode.ai/docs/skills/), which
     // conforme reads but does not write: `disable-model-invocation` has the
     // same effect there.
     if let Some(value) = fields
@@ -1530,9 +1530,10 @@ fn is_foreign_model_alias(model: &str) -> bool {
     ) || model.contains('/')
 }
 
-/// The `model` to write for a Kiro agent. Kiro CLI V3 keeps an unknown model
-/// selected and fails every request, so another host's alias and `inherit`
-/// (not a Kiro value) are left out and the agent uses Kiro's default.
+/// The `model` to write for a Kiro agent. With a model Kiro cannot use, "the
+/// first prompt can fail instead of falling back automatically", so another
+/// host's alias and `inherit` (not a Kiro value) are left out and the agent
+/// uses Kiro's default.
 pub(crate) fn kiro_model(model: Option<&str>) -> Option<&str> {
     model.filter(|m| *m != "inherit" && !is_foreign_model_alias(m))
 }

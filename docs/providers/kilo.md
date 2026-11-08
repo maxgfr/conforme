@@ -2,7 +2,7 @@
 
 > Open-source coding agent, a fork of OpenCode: the `kilo` CLI and the VS Code extension built on it read the same project files. Source: `--from kilo`
 
-**Last verified online:** 2026-11-04, against Kilo Code 7.8.18 (https://github.com/Kilo-Org/kilocode/releases)
+**Last verified online:** 2026-11-09, against Kilo Code 7.8.27 (https://github.com/Kilo-Org/kilocode/releases)
 
 ## Official docs
 
@@ -48,7 +48,7 @@ None: every rule file and the instruction file are always loaded.
 - Reads `AGENTS.md` natively (else `CLAUDE.md`, else `CONTEXT.md`): with Kilo as the source that file is the source, never regenerated, and the rule directories it reads are its `source_files()` too
 - Writes skills to `.kilo/skills/<name>/SKILL.md` (with bundled files and the `.conforme` marker) and subagents to `.kilo/agents/<name>.md` (`mode: subagent`, `model` only as `provider/model`)
 - An agent named like a Kilo built-in (`code`, `build`, which Kilo maps to Code, `plan`, `ask`, `debug`, `orchestrator`, `general`, `explore`, `compaction`, `title`, `summary`, and `scout` behind Kilo's `experimentalScout` flag) is neither written nor read: `.kilo/agents/code.md` tunes Kilo's own Code agent and is the user's (kept by orphan cleanup)
-- MCP is merged into the highest-precedence existing file of `.kilo/kilo.jsonc`, `.kilo/kilo.json`, `.kilocode/kilo.jsonc`, `.kilocode/kilo.json`, `kilo.jsonc`, `kilo.json`, else a new `.kilo/kilo.jsonc`, through `json_settings` (JSONC comments and the user's settings kept); `read()` merges the servers of every file Kilo loads, `opencode.json(c)` at the root and in `.kilo/`/`.kilocode/` included, later ones winning
+- MCP is merged into the first existing file of `.kilo/kilo.jsonc`, `.kilo/kilo.json`, `.kilocode/kilo.jsonc`, `.kilocode/kilo.json`, `kilo.jsonc`, `kilo.json`, else a new `.kilo/kilo.jsonc`, through `json_settings` (JSONC comments and the user's settings kept). That is the pick of Kilo's own config update (`existsSync` on the first candidate, else `.kilo/kilo.jsonc`, `packages/opencode/src/kilocode/config/config.ts:76` at v7.8.27), not the file that wins: within a directory Kilo loads `kilo.jsonc`, `kilo.json`, `opencode.jsonc`, `opencode.json` in that order, later files overriding (`ALL_CONFIG_FILES`, `config.ts:41`), so a server of the same name in `.kilo/kilo.json` or `.kilo/opencode.json(c)` overrides what conforme wrote (known gap); `read()` merges the servers of every file Kilo loads, `opencode.json(c)` at the root and in `.kilo/`/`.kilocode/` included, later ones winning
 - `read()` round-trips skills, agents (markdown and `agent` key), MCP, the instruction file and the rule files (as always-on rules named after the file)
 
 ## Notes
@@ -76,4 +76,5 @@ kilo agent list      # agents, `reviewer (subagent)` for a synced one
 
 `kilo mcp list` connects to every server; avoid it in checks.
 
+- Re-checked 2026-11-09 with Kilo 7.8.27 (`kilo config check`: no warning, `kilo debug skill`, `kilo agent list`): every skill and the synced subagent
 - Verified 2026-11-04 with Kilo 7.8.18 (`kilo config check`, `kilo debug config`, `kilo debug skill`, `kilo agent list`): the merged `mcp`, every skill, the synced subagent, and a `{env:VAR}` witness in `.kilo/kilo.jsonc` refused ("variable references are not allowed in project MCP headers")

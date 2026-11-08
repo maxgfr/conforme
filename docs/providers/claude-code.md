@@ -2,7 +2,7 @@
 
 > Anthropic's CLI agent. Source: `--from claude`
 
-**Last verified online:** 2026-11-04, against Claude Code 2.1.318 (https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
+**Last verified online:** 2026-11-09, against Claude Code 2.1.319 (https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
 
 ## Official docs
 
@@ -80,7 +80,9 @@
 - A Claude source with only `.claude/AGENTS.md` (no root `AGENTS.md`) gives the tools that read `AGENTS.md` natively (Codex, OpenCode, DeepSeek, Mistral Vibe, Kilo Code) no instructions: `AGENTS.md` is not generated, since the source reads `AGENTS.md` itself (known gap)
 - A skill or agent is always written with a `description`, falling back to its name when the source has none (other tools skip entries without one)
 - Agent `name` may be up to 256 characters upstream; conforme's `sanitize_name` keeps every tool's names at 64 or fewer
-- Claude Code skips skills named `synced` or `anthropic-skills` (and, outside a plugin, any name starting with `anthropic-skills:`); conforme's validation warns about such a skill. `claude-ai`, reserved in 2.1.282 only, loads again since 2.1.283
+- Claude Code skips skills named `synced` or `anthropic-skills` (and, outside a plugin, any name starting with `anthropic-skills:`); conforme's validation warns about the first two. A name with the `anthropic-skills:` prefix needs no warning: `sanitize_name` writes `anthropic-skills:pdf` as `anthropic-skills-pdf`, which loads. `claude-ai`, reserved in 2.1.282 only, loads again since 2.1.283
+- "Claude Code reserves the names of its built-in servers, including `workspace`, `claude-in-chrome`, `computer-use`, `Claude Preview`, and `Claude Browser`": it "skips it at load time and shows a warning" (https://code.claude.com/docs/en/mcp). `sync` warns about those five names; the server is still written, since the source may be meant for other tools
+- In a remote server's `url` and `headers`, Claude Code "reads credential variables from your environment as empty rather than expanding them", "whether or not you have set the variable", and "a `:-default` fallback on it is ignored"; the page names `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `AWS_BEARER_TOKEN_BEDROCK`, `HTTPS_PROXY` and `NPM_TOKEN` as examples (https://code.claude.com/docs/en/mcp). `sync` warns about those five
 - Since 2.1.299 Claude Code refuses a skill folder or command file or folder whose name holds "a zero-width space or a control character", "a private-use or unassigned character", "a character that changes the direction of the text around it", "a blank other than one plain space between words" or "`<` or `>`": it "doesn't load" (https://code.claude.com/docs/en/skills, CHANGELOG 2.1.299). conforme's `read()` skips those too, so they do not reach the other tools; unassigned code points are not detected (that needs Unicode tables)
 - A project `CLAUDE.md` may live at `./CLAUDE.md` **or** `./.claude/CLAUDE.md`. conforme prefers the root file, and falls back to `./.claude/CLAUDE.md` when only that one exists — for both reading and writing, so a project using the nested location is neither read as empty nor given a competing second instruction file
 - MCP: `.mcp.json` is merged, not owned (`is_shared_file`): per-server keys conforme never writes (`oauth`, `headersHelper`, `timeout`, `alwaysLoad`) survive a sync, and `remove claude` / `migrate --source claude` keep the file (Copilot CLI reads it too). Environment references are `${VAR}` / `${VAR:-default}`, conforme's normalized spelling; `env` is written on stdio servers only
@@ -91,4 +93,4 @@
 
 ## Manual skill invocation
 
-Manual skills preserve `disable-model-invocation: true` and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. OpenCode 2 reads `disable-model-invocation: true` like its own `metadata.opencode/autoinvoke: false` (https://opencode.ai/v2/docs/skills/); conforme reads both and writes only `disable-model-invocation`.
+Manual skills preserve `disable-model-invocation: true` and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. OpenCode 2 reads `disable-model-invocation: true` like its own `metadata.opencode/autoinvoke: false` (https://opencode.ai/docs/skills/); conforme reads both and writes only `disable-model-invocation`.

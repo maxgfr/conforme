@@ -2,21 +2,21 @@
 
 > Open-source AI CLI tool. Source: `--from opencode`
 
-**Last verified online:** 2026-11-04, against OpenCode 2 2.2.5 (https://github.com/anomalyco/opencode/blob/dev/CHANGELOG.md, Homebrew `opencode-v2` 2.2.5). conforme targets OpenCode 2 only; OpenCode 1 (v1.19.x) is no longer a target.
+**Last verified online:** 2026-11-09, against OpenCode 2 2.2.6 (https://github.com/anomalyco/opencode/releases/tag/v2.2.6, Homebrew `opencode-v2` 2.2.6). conforme targets OpenCode 2 only; OpenCode 1 (v1.19.x) is no longer a target.
 
 ## Official docs
 
-- Instructions: https://opencode.ai/v2/docs/instructions/
-- Skills: https://opencode.ai/v2/docs/skills/
-- Agents: https://opencode.ai/v2/docs/agents/
-- MCP servers: https://opencode.ai/v2/docs/mcp-servers/
-- Config: https://opencode.ai/v2/docs/config/
-- Migrating from V1: https://opencode.ai/v2/docs/migrate-v1/
-- CLI: https://opencode.ai/v2/docs/cli/
-- Commands: https://opencode.ai/v2/docs/commands/
-- Tools: https://opencode.ai/v2/docs/tools/
-- Permissions: https://opencode.ai/v2/docs/permissions/
-- Models (`provider/model#variant`): https://opencode.ai/v2/docs/models/
+- Instructions: https://opencode.ai/docs/instructions/
+- Skills: https://opencode.ai/docs/skills/
+- Agents: https://opencode.ai/docs/agents/
+- MCP servers: https://opencode.ai/docs/mcp-servers/
+- Config: https://opencode.ai/docs/config/
+- Migrating from V1: https://opencode.ai/docs/migrate-v1/
+- CLI: https://opencode.ai/docs/cli/
+- Commands: https://opencode.ai/docs/commands/
+- Tools: https://opencode.ai/docs/tools/
+- Permissions: https://opencode.ai/docs/permissions/
+- Models (`provider/model#variant`): https://opencode.ai/docs/models/
 - Repository: https://github.com/anomalyco/opencode (formerly `sst/opencode`, which redirects)
 
 ## Config files
@@ -38,11 +38,11 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - ID: `opencode`
 - Capabilities: skills, agents, MCP
 - No activation modes
-- Reads `AGENTS.md` only: OpenCode 2 "currently only discovers AGENTS.md" and dropped OpenCode 1's `CLAUDE.md` / `CONTEXT.md` fallbacks (https://opencode.ai/v2/docs/migrate-v1/#instruction-files). With OpenCode as the source, `AGENTS.md` is its `source_files()`
+- Reads `AGENTS.md` only: OpenCode 2 "currently only discovers AGENTS.md" and dropped OpenCode 1's `CLAUDE.md` / `CONTEXT.md` fallbacks (https://opencode.ai/docs/migrate-v1/#instruction-files). With OpenCode as the source, `AGENTS.md` is its `source_files()`
 - Writes MCP servers in OpenCode 2's native shape, under `mcp.servers`, into `.opencode/opencode.jsonc` when it exists, else `.opencode/opencode.json` (`.jsonc` wins over `.json` in the same directory, and `.opencode/` over the root), preserving every other key, JSONC comments included. `$schema` stays `https://opencode.ai/config.json`, the URL the V2 docs use
 - Never writes the root `opencode.json(c)`: Kilo Code also loads it and refuses a project config holding `{env:VAR}` ("environment references are not allowed in project config", checked with Kilo 7.8.15 `kilo config check`), which conforme writes for OpenCode; it never reads `.opencode/`. Kilo 7.8.15 does normalize `mcp.servers` and `agents` there (`kilo debug config`), so the shape itself is not the problem
 - Agents are written as `.opencode/agents/<name>.md` only (`description`, `mode: subagent`, `model` as `provider/model`, the body as system prompt), OpenCode 2's preferred location, whose frontmatter is already its native shape. Nothing goes into the `agents` / `agent` keys
-- Upgrading from an earlier conforme, which wrote OpenCode 1's shape into the first existing of the root `opencode.json(c)` and `.opencode/opencode.json(c)`: a sync with servers in the source moves every expressible `mcp.<name>` server of every project config file to `mcp.servers` of the target, converted (`enabled: false` → `disabled: true`, a numeric `timeout` → `timeout.catalog` and `timeout.execution`, OAuth `clientId`/`clientSecret`/`callbackPort`/`redirectUri` → snake_case; https://opencode.ai/v2/docs/migrate-v1/#mcp-servers), a native entry of the same name winning; the usual merge then drops a server the source lacks unless it is disabled, and keeps the per-server keys conforme does not own. In `agent.<name>` entries of an agent the source defines, the keys conforme wrote (`description`, `mode`, `prompt`, and `model` when the source has a `provider/model` one) are removed and the user's own (`steps`, `permission`, `temperature`, …) kept: OpenCode 2 still applies them to the markdown agent (seen with 2.1.0: `opencode debug agents` shows the markdown `system` with the root `agent.reviewer.steps`). An entry left empty goes, then an empty `agent` or `mcp` key. An entry for an agent that has left the source goes with its file, provided it still has that file and holds only conforme's keys. A `{ "enabled": false }` toggle and every other key are left alone
+- Upgrading from an earlier conforme, which wrote OpenCode 1's shape into the first existing of the root `opencode.json(c)` and `.opencode/opencode.json(c)`: a sync with servers in the source moves every expressible `mcp.<name>` server of every project config file to `mcp.servers` of the target, converted (`enabled: false` → `disabled: true`, a numeric `timeout` → `timeout.catalog` and `timeout.execution`, OAuth `clientId`/`clientSecret`/`callbackPort`/`redirectUri` → snake_case; https://opencode.ai/docs/migrate-v1/#mcp-servers), a native entry of the same name winning; the usual merge then drops a server the source lacks unless it is disabled, and keeps the per-server keys conforme does not own. In `agent.<name>` entries of an agent the source defines, the keys conforme wrote (`description`, `mode`, `prompt`, and `model` when the source has a `provider/model` one) are removed and the user's own (`steps`, `permission`, `temperature`, …) kept: OpenCode 2 still applies them to the markdown agent (seen with 2.1.0: `opencode debug agents` shows the markdown `system` with the root `agent.reviewer.steps`). An entry left empty goes, then an empty `agent` or `mcp` key. An entry for an agent that has left the source goes with its file, provided it still has that file and holds only conforme's keys. A `{ "enabled": false }` toggle and every other key are left alone
 - `.opencode/agents/<name>.md` named like a built-in agent (`build`, `plan`, `general`, `explore`, `compaction`, `title`, `summary`) is the user's override: never read, written nor swept
 - `read()` round-trips AGENTS.md plus skills (`.opencode/skills/`, `.opencode/skill/`), agents (`.opencode/agents/`, `.opencode/agent/`, then the `agents` key, prompt in `system`, and OpenCode 1's `agent` key, prompt in `prompt`, which OpenCode 2 still loads; the markdown files win on a name clash; a `disabled` / `disable` entry is skipped) and MCP (`mcp.servers` and OpenCode 1 `mcp.<name>` entries of every project `opencode.json(c)`, later files winning, a native entry winning over an OpenCode 1 one in the same file). AGENTS.md is parsed with conforme's convention (instructions plus `## Rule:` sections), and its `## Skill:`/`## Agent:`/`## MCP:` sections are added to what this tool's own files hold (which win on a name clash). With this tool as the source, AGENTS.md *is* the source: sync never regenerates it and `gitignore install` keeps it tracked
 - Editor variables (`${workspaceFolder}`) are written verbatim, not as `{env:workspaceFolder}`; `sync` warns that OpenCode does not resolve them, and that `${VAR:-default}` loses its default in `{env:VAR}`
@@ -54,8 +54,8 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - **Command is a single array:** `"command": ["npx", "-y", "server-name"]` (no separate `args` field)
 - **Env var key is `"environment"`** (not `"env"`), and only local servers have it; conforme writes no `environment` on a remote server
 - Variable references are `{env:VAR}`; conforme writes `{env:VAR}` for a normalized `${VAR}` and reads it back
-- A remote server "uses the MCP Streamable HTTP transport" (https://opencode.ai/v2/docs/mcp-servers/#remote); the 2.1.0 binary holds `StreamableHTTPClientTransport` and no `SSEClientTransport`. A legacy SSE server is written as `type: "remote"` and `sync` warns that it connects only if the server also speaks streamable HTTP; it reads back as streamable HTTP (no SSE marker)
-- Per-server keys conforme never emits (`cwd`, `timeout`, `oauth`, `codemode`, `protocol`, …) are kept, and so are `mcp.timeout` and any other member of `mcp`; `disabled` is reset so a synced server is not left hidden. A file conforme cannot parse is left untouched (sync fails instead of rewriting it), and `remove opencode` / `migrate --source opencode` leave `opencode.json(c)` in place
+- A remote server "uses the MCP Streamable HTTP transport" (https://opencode.ai/docs/mcp-servers/#remote); the 2.1.0 binary holds `StreamableHTTPClientTransport` and no `SSEClientTransport`. A legacy SSE server is written as `type: "remote"` and `sync` warns that it connects only if the server also speaks streamable HTTP; it reads back as streamable HTTP (no SSE marker)
+- Per-server keys conforme never emits (`cwd`, `timeout`, `oauth`, `codemode`, `protocol`, `pool` added in 2.2.6, …) are kept, and so are `mcp.timeout` and any other member of `mcp`; `disabled` is reset so a synced server is not left hidden. A file conforme cannot parse is left untouched (sync fails instead of rewriting it), and `remove opencode` / `migrate --source opencode` leave `opencode.json(c)` in place
 - An OpenCode 1 `mcp.<name>` entry that is only `{ "enabled": false }` toggles a server defined elsewhere: conforme skips it on read and keeps it on write (OpenCode 2 ignores it with a warning: "An enabled-only V1 MCP entry without a type")
 - Overrides of the built-in agents and `agents` / `agent` entries with neither a prompt nor a `description` only tune an agent defined elsewhere, so they are not read as agents. An agent named like a built-in one is not written either: it would override the built-in. V2 has no built-in `scout` agent
 - Agent `model` must be `provider/model` (optionally `#variant`); conforme only writes `provider/model` values and otherwise leaves `model` out (OpenCode then uses the parent session's model)
@@ -85,5 +85,5 @@ opencode service stop                      # stop the isolated service afterward
 
 The first call for a new directory may return an empty agent list while the project loads; run it again. OpenCode 2 has no `debug skill` command.
 
-- The V2 docs pages are listed in https://opencode.ai/v2/sitemap.xml, not in https://opencode.ai/sitemap.xml
+- The docs pages moved from `opencode.ai/v2/docs/` to `opencode.ai/docs/` (the old paths answer 301) and are listed in https://opencode.ai/docs/sitemap.xml, which https://opencode.ai/sitemap.xml indexes
 - Verified 2026-11-04 with OpenCode 2.2.5 (`opencode debug config`, `opencode debug agents`, `opencode api skill.list`): `mcp.servers` with the command array and `environment`, the synced subagent, every skill with `autoinvoke: false` on the manual one

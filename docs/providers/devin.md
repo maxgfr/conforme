@@ -2,7 +2,7 @@
 
 > Cognition's AI IDE, formerly Windsurf. Source: `--from devin`
 
-**Last verified online:** 2026-11-04, against Devin Desktop 3.11.238 and Devin CLI 3000.11.228 (https://docs.devin.ai/desktop/changelog, https://docs.devin.ai/cli/changelog/stable)
+**Last verified online:** 2026-11-09, against Devin Desktop 3.12.28 and Devin CLI 3000.12.17 (https://docs.devin.ai/desktop/changelog, https://docs.devin.ai/cli/changelog/stable)
 
 Windsurf was renamed Devin Desktop in v3.0.12 (2026-06-02). Since v3.6.21
 (2026-07-29) new tabs defaulted to the **Devin Local** agent, and v3.9.19

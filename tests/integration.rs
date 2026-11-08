@@ -4541,3 +4541,58 @@ fn test_migrate_leaves_no_empty_directory_behind() {
     run(root, &["sync", "--from", "cursor"]).success();
     assert!(!root.join(".claude").exists());
 }
+
+#[test]
+fn test_sync_warns_about_mcp_servers_claude_code_will_not_use_as_written() {
+    // "Claude Code skips it at load time" for a reserved name, and reads a
+    // credential variable "as empty" in a remote server's url and headers
+    // (https://code.claude.com/docs/en/mcp).
+    let dir = create_project_with_tools(
+        "# Instructions\nHi.\n\n\
+         ## MCP: workspace\n<!-- url: https://example.com/a -->\n\n\
+         ## MCP: registry\n<!-- url: https://example.com/b -->\n\
+         <!-- headers: Authorization=Bearer ${NPM_TOKEN} -->\n\n\
+         ## MCP: fallback\n<!-- url: https://example.com/c -->\n\
+         <!-- headers: Authorization=Bearer ${ANTHROPIC_API_KEY:-none} -->\n\n\
+         ## MCP: own-token\n<!-- url: https://example.com/d -->\n\
+         <!-- headers: Authorization=Bearer ${MY_TOKEN} -->\n\n\
+         ## MCP: local\n<!-- command: npx -->\n<!-- env: NPM_TOKEN=${NPM_TOKEN} -->\n",
+        &["claude"],
+    );
+    run(dir.path(), &["sync"])
+        .success()
+        .stderr(predicate::str::contains(
+            "MCP server workspace: Claude Code reserves that name",
+        ))
+        .stderr(predicate::str::contains(
+            "MCP server registry: Claude Code reads ${NPM_TOKEN} as empty",
+        ))
+        .stderr(predicate::str::contains(
+            "MCP server fallback: Claude Code reads ${ANTHROPIC_API_KEY} as empty",
+        ))
+        .stderr(predicate::str::contains("MCP server own-token").not())
+        .stderr(predicate::str::contains("MCP server local").not());
+    // The servers are still written: the warning only names the loss.
+    let mcp = fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
+    assert!(mcp.contains("\"workspace\""), "{mcp}");
+    assert!(mcp.contains("Bearer ${NPM_TOKEN}"), "{mcp}");
+}
+
+#[test]
+fn test_sync_warns_about_an_agent_named_like_a_copilot_built_in() {
+    // Copilot CLI 1.0.107: "delegating to that name always runs the built-in
+    // agent" (https://github.com/github/copilot-cli/blob/main/changelog.md).
+    let dir = create_project_with_tools(
+        "# Instructions\nHi.\n\n\
+         ## Agent: explore\n<!-- description: Explore the code -->\nLook around.\n\n\
+         ## Agent: my-reviewer\n<!-- description: Review -->\nReview it.\n",
+        &["copilot"],
+    );
+    run(dir.path(), &["sync"])
+        .success()
+        .stderr(predicate::str::contains(
+            "agent explore: Copilot CLI always runs its built-in agent of that name",
+        ))
+        .stderr(predicate::str::contains("agent my-reviewer").not());
+    assert!(dir.path().join(".github/agents/explore.agent.md").is_file());
+}

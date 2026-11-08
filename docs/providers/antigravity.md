@@ -2,7 +2,7 @@
 
 > Google's Antigravity command-line agent (`agy`). Source: `--from antigravity`
 
-**Last verified online:** 2026-11-04, against Antigravity CLI 1.5.0 (https://github.com/google-antigravity/antigravity-cli/releases)
+**Last verified online:** 2026-11-09, against Antigravity CLI 1.5.3 (https://github.com/google-antigravity/antigravity-cli/releases)
 
 ## Official docs
 
@@ -24,7 +24,7 @@ The CLI is closed source, so these pages and the release changelog are the upstr
 | Instructions | `AGENTS.md`, else `GEMINI.md` | Markdown; "do not use frontmatter … (always_on)" (https://antigravity.google/docs/rules) |
 | Rules | `.agents/rules/<name>.md` | Frontmatter `trigger` (`always_on`, `model_decision`, `glob` or `manual`), `description`, `globs` (comma-separated). "Antigravity scans only immediate .md children"; a file without frontmatter or with a wrong trigger is silently discarded; 24,000 bytes per file (https://antigravity.google/docs/rules) |
 | Skills | `.agents/skills/<folder>/SKILL.md` | Frontmatter `name` (optional, defaults to the folder) and `description` (required); no manual-invocation flag. `.gemini/skills/` is not read (https://antigravity.google/docs/skills, https://antigravity.google/docs/cli/gcli-migration) |
-| Subagents | `.agents/agents/<name>.md` (or `<name>/agent.md`) | Frontmatter `name` and `description` (both required), `tools`, `model` ("inherit, flash, or pro"). Built-in subagents: `research`, `browser`, `self`, `image-generator` (https://antigravity.google/docs/subagents, changelog 1.2.16) |
+| Subagents | `.agents/agents/<name>.md` (or `<name>/agent.md`) | Frontmatter `name` and `description` (both required), `tools` (default `[]`), `model` ("inherit, flash, or pro"), and Antigravity's own `mainAgent`, `subagent`, `commandExecutionPolicy`, `mcpServers`, `skills` / `plugins`, which conforme neither reads nor writes (a sync rewrites the file, keeping only `tools`). Built-in subagents: `research`, `browser`, `self`, `image-generator` (https://antigravity.google/docs/subagents, changelog 1.2.16) |
 | MCP | `.agents/mcp_config.json` | One `mcpServers` object. Local: `command`, `args`, `env`, `cwd`. Remote: `serverUrl` ("Endpoint URL of a remote MCP server that uses the Streamable HTTP transport. You can also use `url`.") and `headers`, no `type`; "The legacy HTTP+SSE transport and the `httpUrl` field aren't supported". Antigravity's own per-server keys: `authProviderType`, `oauth`, `disabled`, `enabledTools`, `disabledTools`, `timeoutSeconds`. JSONC accepted (changelog 1.1.24). `${VAR}` expansion undocumented (https://antigravity.google/docs/mcp) |
 
 Detection signals (changelog 1.1.16): `.agents/mcp_config.json`, `.agents/rules/`, `.agents/agents/`, `.antigravityignore`.
@@ -49,7 +49,7 @@ Detection signals (changelog 1.1.16): `.agents/mcp_config.json`, `.agents/rules/
 - Skills: written to the shared `.agents/skills/` and read back from it. A manual skill is written with a warning, since Antigravity has no manual-only skill.
 - Subagents: `.agents/agents/<name>.md` with `name`, `description` and `model`; `model` is kept only as `inherit`, `flash` or `pro`. No `tools` field is written. A built-in name is never written, and a user file with one of those names is neither read nor cleaned.
 - MCP: merged under `mcpServers` through `json_settings`, so comments and keys conforme does not own survive, and an unparsable file is refused rather than overwritten. Local servers keep `env`; remote servers get `serverUrl` and `headers`, with no `env` and no `type`. HTTP and SSE share that key, so an SSE server is written the same way and reads back as streamable HTTP.
-- Warnings: a manual skill, a built-in subagent name, any `${` in a server ("Antigravity documents no ${VAR} expansion"; the value may be sent as written; changelog 1.4.0 expands `${TOKEN}` in plugin MCP headers only), and an SSE server, which connects only if it also speaks streamable HTTP at that URL.
+- Warnings: a manual skill, a built-in subagent name, any `${` in a server ("Antigravity documents no ${VAR} expansion"; the value may be sent as written; changelog 1.4.0 concerns plugin MCP servers only: their headers now get the value "like the server's command, arguments, and environment already did"), and an SSE server, which connects only if it also speaks streamable HTTP at that URL.
 - The web page and the MCP reference built into `agy` now agree (they disagreed up to 1.3.5): `serverUrl` or `url`, streamable HTTP only, "The legacy HTTP+SSE transport and the `httpUrl` field aren't supported", workspace file `<workspace>/.agents/mcp_config.json` (https://antigravity.google/docs/mcp). conforme keeps writing `serverUrl`. The Gemini CLI migration page still calls `url` a legacy key (https://antigravity.google/docs/cli/gcli-migration)
 - Rules, skills and Markdown agents whose unquoted `description:` holds a colon load since 1.3.6 ("Fixed skills, rules, workflows, and Markdown agents failing to load with `mapping values are not allowed in this context` when an unquoted `description:` contains a colon", changelog 1.3.6): conforme reads such a rule and manages it like any other; a frontmatter broken any other way still makes Antigravity discard the file, and conforme leaves it alone
 - Migrating to Antigravity writes `AGENTS.md`, since that is where its instructions live.
@@ -63,6 +63,8 @@ Detection signals (changelog 1.1.16): `.agents/mcp_config.json`, `.agents/rules/
 ## Unconfirmed points
 
 - **`${VAR}` in `.agents/mcp_config.json`.** The docs do not document expansion. conforme writes `${VAR}` as written and warns. The live check below could not prove expansion, so the warning stays.
+- **A subagent without `tools`.** The page gives a default of `[]` and does not say what an empty list allows, so the warning's "it can use every tool" is unconfirmed. It also warns that "an unmapped or misspelled tool name in the `tools` list may cause the subagent process to hang", which is why conforme copies no tool name from another host (https://antigravity.google/docs/subagents).
+- **Order of `AGENTS.md` and `GEMINI.md`.** The pages say "`<dir>/AGENTS.md` or `<dir>/GEMINI.md`" and "GEMINI.md and AGENTS.md files", with no order (https://antigravity.google/docs/rules, https://antigravity.google/docs/cli/gcli-migration); conforme reads `AGENTS.md` first.
 - **Trust.** Not confirmed whether Antigravity loads a project's `.agents/` rules, skills, subagents and MCP servers only in a trusted folder, as Gemini CLI and Mistral Vibe do. The live check below did not settle it.
 
 ## Live check

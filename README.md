@@ -689,7 +689,7 @@ Or use the pre-commit hook for local enforcement.
 
 ## Manual skill invocation
 
-Manual skills preserve `disable-model-invocation: true` and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. OpenCode 2 reads `disable-model-invocation: true` like its own `metadata.opencode/autoinvoke: false` (https://opencode.ai/v2/docs/skills/): the skill is left out of the model's list and still loads when asked for by name. conforme reads `metadata.opencode/autoinvoke: false` as manual too, but writes only `disable-model-invocation`.
+Manual skills preserve `disable-model-invocation: true` and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. OpenCode 2 reads `disable-model-invocation: true` like its own `metadata.opencode/autoinvoke: false` (https://opencode.ai/docs/skills/): the skill is left out of the model's list and still loads when asked for by name. conforme reads `metadata.opencode/autoinvoke: false` as manual too, but writes only `disable-model-invocation`.
 
 These skills run when explicitly invoked: `verify-providers`. Use `$name` in Codex, `/name` in Claude Code or `@name` in OpenCode.
 

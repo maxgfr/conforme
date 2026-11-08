@@ -2,7 +2,7 @@
 
 > AI code editor with .mdc rule files. Source: `--from cursor`
 
-**Last verified online:** 2026-11-04, against Cursor 3.28.7 and Cursor CLI 2026.10.22 (https://cursor.com/changelog, https://cursor.com/docs/cli/changelog)
+**Last verified online:** 2026-11-09, against Cursor 3.29.9 and Cursor CLI 2026.11.05 (https://cursor.com/changelog, https://cursor.com/docs/cli/changelog)
 
 ## Official docs
 
@@ -78,4 +78,4 @@
 - `.cursor/mcp.json` is merged, not owned: per-server keys conforme never writes (`auth`, `envFile`) survive, and `remove`/`migrate` keep the file
 - Cursor's interpolation is `${env:NAME}` (plus `${workspaceFolder}`, `${userHome}`, …). conforme writes `${env:VAR}` for a normalized `${VAR}` (a `:-default` is dropped) and reads `${env:VAR}` back as `${VAR}`; Cursor's predefined variables are left as they are
 - Cursor CLI 2026.10.22 also loads `.grok/skills` and `.grok/agents` (bundle `computeAgentsDirs`), which no doc mentions, and loads agents only from `.cursor/agents`, `.claude/agents` and `.grok/agents`, although https://cursor.com/docs/subagents lists `.codex/agents/` too (docs versus the CLI; the IDE's loader is not public, unconfirmed there). conforme writes `.cursor/agents/`, which both load
-- Help pages: https://cursor.com/help/customization/skills, https://cursor.com/help/customization/mcp; release notes: https://cursor.com/docs/release-notes
+- Help pages: https://cursor.com/help/customization/skills, https://cursor.com/help/customization/mcp, release notes: https://cursor.com/docs/release-notes

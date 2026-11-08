@@ -2,7 +2,7 @@
 
 > OpenAI's AI CLI agent. Source: `--from codex`
 
-**Last verified online:** 2026-11-04, against Codex CLI 0.166.0 (https://github.com/openai/codex/releases)
+**Last verified online:** 2026-11-09, against Codex CLI 0.167.0 (https://github.com/openai/codex/releases)
 
 ## Official docs
 
@@ -77,7 +77,8 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 
 ## Manual skill invocation
 
-Manual skills preserve `disable-model-invocation: true` and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. OpenCode 2 reads `disable-model-invocation: true` like its own `metadata.opencode/autoinvoke: false` (https://opencode.ai/v2/docs/skills/); conforme reads both and writes only `disable-model-invocation`.
+Manual skills preserve `disable-model-invocation: true` and Codex `agents/openai.yaml` with `policy.allow_implicit_invocation: false` through synchronization. In AGENTS.md, use `<!-- invocation: manual -->` in the skill section. OpenCode 2 reads `disable-model-invocation: true` like its own `metadata.opencode/autoinvoke: false` (https://opencode.ai/docs/skills/); conforme reads both and writes only `disable-model-invocation`.
 
 - Source line numbers cited above are from earlier releases and shift between versions (`config_toml.rs:75` is `:77` at 0.166.0); search the file for the quoted text
+- Re-checked 2026-11-09 with Codex CLI 0.167.0 (`codex mcp get --json`, `codex debug prompt-input`, project trusted inline, scratch `CODEX_HOME`): `env_vars = ["TOKEN"]`, `bearer_token_env_var = "API_TOKEN"`, the instructions and the automatic skill in the prompt, the manual skill absent from it
 - Verified 2026-11-04 with Codex CLI 0.166.0 (`codex mcp get --json`, `codex debug prompt-input`, project trusted inline): `env_vars = ["TOKEN"]`, `bearer_token_env_var = "API_TOKEN"`, the synced skills listed and the manual one absent with its body, the synced agent role listed
