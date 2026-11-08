@@ -2,7 +2,7 @@
 
 > Mistral's open-source coding agent CLI (`vibe`). Source: `--from vibe`
 
-**Last verified online:** 2026-11-04, against Mistral Vibe 3.1.0 (https://github.com/mistralai/mistral-vibe/releases)
+**Last verified online:** 2026-11-09, against Mistral Vibe 3.1.0 (https://github.com/mistralai/mistral-vibe/releases)
 
 ## Official docs
 
@@ -52,6 +52,7 @@ None: `AGENTS.md` is always loaded.
 - The source decides which `[[mcp_servers]]` exist: one that left the source is dropped, one with `disabled = true` is kept; an inline `mcp_servers = []` is turned into `[[mcp_servers]]` tables
 - A header that is exactly `${VAR}` (when there is no `Authorization: Bearer ${VAR}`) becomes a static `auth` with `api_key_env`, `api_key_header` and `api_key_format = "{token}"`
 - An explicit `auth.headers` entry wins over the header `api_key_env` would build (`http_headers`, `vibe/core/config/models.py:338-348` at v2.26.1); conforme reads it the same way
+- Re-checked 2026-11-09 with Vibe 3.1.0's own loaders (`build_default_orchestrator`, `SkillManager`): both servers, every skill, and `model_invocable = False` on a manual skill
 - Verified 2026-11-04 with Vibe 3.1.0's own loaders (`build_default_orchestrator`, `SkillManager`, `AgentRegistry`, `load_project_docs`): the stdio server's `argv()` and `env`, the remote server's static `auth` with `api_key_env = "API_TOKEN"`, every skill (the manual one with `model_invocable` false), the synced subagents and `AGENTS.md`
 
 ## Notes
@@ -62,11 +63,11 @@ None: `AGENTS.md` is always loaded.
 - Tool names (unconfirmed): Vibe 3 runs every session on its Unified Harness, which has no `grep` tool ("there is no grep tool, and the agent searches through the shell") and starts subagents with `agents.spawn` rather than `task` (`TOOLS_WITHOUT_EFFECT`, `vibe/core/config/_setting_keys.py`, which names the `[tools.*]` settings without effect). Whether `grep` and `task` in a subagent's `enabled_tools` still select anything is decided by the Rust harness and not documented; Vibe's own built-in `explore` subagent still lists `grep`, so conforme keeps writing both
 - Skill `description` is 1 to 1024 characters (`vibe/core/skills/models.py`, `max_length=1024`): a longer one makes Vibe skip the skill, and `validate` warns
 - Vibe honours the Codex sidecar `agents/openai.yaml` beside a skill (`allow_implicit_invocation`, `vibe/core/skills/manager.py`): an existing one in `.vibe/skills/<name>/` is kept in step with the source, never created
-- Project `.vibe/` directories load only at the trusted working directory, while `.vibe/config.toml` is found by walking up; Vibe also reads `.vibe/plugins/`, `.vibe/hooks.toml` and `.vibe/prompts/`, which conforme does not write
+- Project `.vibe/` directories load only at the trusted working directory, while `.vibe/config.toml` is found by walking up; Vibe also reads `.vibe/plugins/`, `.vibe/tools/`, `.vibe/hooks.toml` and `.vibe/prompts/`, which conforme does not write
 - An untrusted folder loads none of the project files: trust it once before checking the result
 - Project subagents in `.vibe/agents` can be spawned since Vibe 2.25.8
 - Vibe replaces characters outside `[a-zA-Z0-9_-]` in a server name with `_`, strips leading and trailing `_` / `-` and truncates it to 256 characters (`vibe/core/config/models.py:198-199` at v2.26.1); conforme matches servers by the name as written (known gap for names with other characters)
-- Vibe's published docs lag its source: they still show `api_key_env` on the server entry rather than in `auth`, the tool name `search_replace` (now `edit`) and no `disable-model-invocation`. conforme follows the source (`vibe/core/config/models.py`, `vibe/core/tools/builtins/edit.py`, `vibe/core/skills/models.py`), and Vibe 2.26.0 loads what conforme writes
+- Vibe's published docs now match its source on what conforme writes: `api_key_env` in `[mcp_servers.auth]` (the same keys directly in `[[mcp_servers]]` are accepted, "Don't combine them with an `[mcp_servers.auth]` table", https://docs.mistral.ai/vibe/code/cli/mcp-servers), `disable-model-invocation` ("set to `true` to stop the agent from loading the skill on its own", https://docs.mistral.ai/vibe/code/cli/skills) and "`search_replace` is now `edit`" (https://docs.mistral.ai/vibe/code/safety-approvals-permissions)
 
 ## Live check
 

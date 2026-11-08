@@ -105,7 +105,63 @@ fn reads_agents_md_fallback(project_root: &Path) -> bool {
             .any(|name| project_root.join(name).is_file())
 }
 
+/// Names of Claude Code's built-in MCP servers: "If your configuration defines
+/// a server with a reserved name, Claude Code skips it at load time"
+/// (https://code.claude.com/docs/en/mcp, which says "including": the list may
+/// be longer).
+const RESERVED_MCP_SERVER_NAMES: &[&str] = &[
+    "workspace",
+    "claude-in-chrome",
+    "computer-use",
+    "Claude Preview",
+    "Claude Browser",
+];
+
+/// Variables Claude Code "reads ... as empty rather than expanding them" in a
+/// remote server's `url` and `headers`, a `:-default` included
+/// (https://code.claude.com/docs/en/mcp, which gives these as examples).
+const EMPTIED_CREDENTIAL_VARS: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "HTTPS_PROXY",
+    "NPM_TOKEN",
+];
+
 impl AiToolAdapter for ClaudeAdapter {
+    /// MCP servers Claude Code will not use as written.
+    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for server in &config.mcp_servers {
+            if RESERVED_MCP_SERVER_NAMES.contains(&server.name.as_str()) {
+                warnings.push(format!(
+                    "MCP server {}: Claude Code reserves that name and skips the server; rename it \
+                     in the source",
+                    server.name
+                ));
+            }
+            if matches!(server.transport, crate::config::McpTransport::Stdio { .. }) {
+                continue;
+            }
+            let strings = crate::mcp::server_strings(server);
+            for var in EMPTIED_CREDENTIAL_VARS {
+                let (plain, with_default) = (format!("${{{var}}}"), format!("${{{var}:-"));
+                if strings
+                    .iter()
+                    .any(|(_, s)| s.contains(&plain) || s.contains(&with_default))
+                {
+                    warnings.push(format!(
+                        "MCP server {}: Claude Code reads ${{{var}}} as empty in a remote server's \
+                         url and headers; copy it into a variable with a name of your own and \
+                         reference that",
+                        server.name
+                    ));
+                }
+            }
+        }
+        warnings
+    }
+
     fn name(&self) -> &str {
         "Claude Code"
     }

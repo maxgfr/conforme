@@ -1290,7 +1290,7 @@ pub const ANTIGRAVITY_SHAPE: ServerShape = ServerShape {
     env_refs: EnvRefStyle::Dollar,
 };
 
-/// OpenCode 2 `mcp.servers` (https://opencode.ai/v2/docs/mcp-servers/):
+/// OpenCode 2 `mcp.servers` (https://opencode.ai/docs/mcp-servers/):
 /// `type` is `local` / `remote` (remote is streamable HTTP only, so SSE is
 /// written as `remote` and read back as HTTP), `command` is one
 /// `[cmd, ...args]` array, the environment is `environment` (local servers
@@ -1321,7 +1321,7 @@ pub const OPENCODE_V1_SHAPE: ServerShape = ServerShape {
 };
 
 /// An OpenCode 1 `mcp.<name>` entry in OpenCode 2's `mcp.servers` shape
-/// (https://opencode.ai/v2/docs/migrate-v1/#mcp-servers): `enabled: false`
+/// (https://opencode.ai/docs/migrate-v1/#mcp-servers): `enabled: false`
 /// becomes `disabled: true`, a numeric `timeout` both `timeout.catalog` and
 /// `timeout.execution`, and the OAuth keys are snake_case. Every other key is
 /// kept as is.

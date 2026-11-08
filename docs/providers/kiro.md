@@ -2,7 +2,7 @@
 
 > AWS's AI IDE, successor to Amazon Q CLI. Source: `--from kiro`
 
-**Last verified online:** 2026-11-04, against Kiro CLI 3.0.0 and IDE 1.4.62 (https://kiro.dev/changelog/)
+**Last verified online:** 2026-11-09, against Kiro CLI 3.1.0 and IDE 1.4.121 (https://kiro.dev/changelog/)
 
 ## Official docs
 
@@ -20,7 +20,8 @@
 - Agent configuration reference (IDE 1.0 and CLI V3; the former https://kiro.dev/docs/cli/v3/agent-config/ "has moved" here): https://kiro.dev/docs/custom-agents/configuration-reference/
 - CLI 3.0 release (V3 by default): https://kiro.dev/changelog/cli/3-0/
 - Kiro Crew (reads the same `.kiro/steering/`, no new project path): https://kiro.dev/docs/crew/capabilities/steering
-- Built-in tools: https://kiro.dev/docs/reference/built-in-tools/
+- Tools (CLI V3 catalog and tags): https://kiro.dev/docs/tools/
+- Built-in tools (CLI 2.x only: "This page documents the CLI 2.x tool identifiers"): https://kiro.dev/docs/reference/built-in-tools/
 - Workflows: https://kiro.dev/docs/workflows/
 - Configuration scopes (every `.kiro/` path): https://kiro.dev/docs/configuration/
 - CLI commands (`agent list|validate`, `mcp list workspace`, `KIRO_HOME`): https://kiro.dev/docs/reference/cli-commands/
@@ -36,7 +37,7 @@
 | Feature | Path | Format |
 |---------|------|--------|
 | Rules (steering) | `.kiro/steering/*.md` | YAML frontmatter: `inclusion`, `fileMatchPattern`, `name`, `description` |
-| Skills | `.kiro/skills/<name>/SKILL.md` | YAML frontmatter: `name`, `description` (required); `license`, `compatibility`, `metadata` (optional) |
+| Skills | `.kiro/skills/<name>/SKILL.md` | YAML frontmatter: `name` ("Lowercase letters, numbers, and hyphens only (max 64 chars)"), `description` ("max 1024 chars") (required, https://kiro.dev/docs/skills/); `license`, `compatibility`, `metadata` (optional) |
 | Agents | `.kiro/agents/<name>.md` | YAML frontmatter: `description`, `model`, `tools` (no `name` — Kiro derives it from the file path) |
 | MCP | `.kiro/settings/mcp.json` (merged) | JSON: `{ "mcpServers": { ... } }`; per-server `disabled`, `autoApprove`, `disabledTools`, `oauth` are Kiro's and survive a sync |
 
@@ -69,7 +70,7 @@
 - "Powers" now follow the Agent Plugins spec: a `plugin.json` plus `skills/` and `mcp.json` (steering under `dev.kiro/`)
 - `.kiro/agents/` accepts a Markdown **or** a JSON file, and the filename becomes the agent name. conforme writes Markdown. `name` is a recognized frontmatter key, but since the filename already supplies it conforme omits it to avoid two competing sources of truth
 - JSON agents (`.kiro/agents/<name>.json`) are neither read nor written by conforme, and orphan cleanup and `migrate --source kiro` only remove `.md` files there, so they are never deleted
-- Agent `tools` accepts Kiro tags (`read`, `write`, `shell`, `web`, `subagent`, `knowledge`, `todo_list` — only on engines that provide it, `@builtin`, `@mcp`, `@server[/tool]`, `*`), individual built-in tools (`web_fetch`, `aws`, `code`, `delegate`, `thinking`, `todo`, …) and their legacy aliases (`fs_read`, `fs_write`, `execute_bash`, `use_aws`, …). conforme keeps all of those, translates common names from other hosts (`Read` → `read`, `Grep`/`Glob` and Kiro's `grep`/`glob`/`grep_search`/`file_search` → `read`, `WebSearch`/`web_search` → `web`, `Edit`/`Write` → `write`, `Bash` → `shell`, `WebFetch` → `web_fetch`, `TodoWrite`/`write_todos` → `todo`, `mcp__github__list_issues` → `@github/list_issues`, Gemini `mcp_*` → `@mcp`, …), and drops anything else; a restricted list in which nothing translates becomes `read` rather than every tool. The task-list tool is `task`, with the aliases `todo` and `todo_list` ("`task` (aliases `todo`, `todo_list`) | — | 2.x | … | CLI 2.x only", https://kiro.dev/docs/tools/); conforme writes `todo` and reads all three as the task list, so a Kiro `task` never becomes another host's subagent tool (OpenCode's `task`, Claude's `Agent`)
+- Agent `tools` accepts Kiro tags (`read`, `write`, `shell`, `web`, `subagent`, `todo_list` — only on engines that provide it, `@builtin`, `@mcp`, `@server[/tool]`, `*`), individual built-in tools (`knowledge` — "Some built-ins have no category tag, including `knowledge` and `invoke_sub_agent`. Select them by tool ID", https://kiro.dev/docs/tools/ — `web_fetch`, `aws`, `code`, `delegate`, `thinking`, `todo`, …) and their legacy aliases (`fs_read`, `fs_write`, `execute_bash`, `use_aws`, …). conforme keeps all of those, translates common names from other hosts (`Read` → `read`, `Grep`/`Glob` and Kiro's `grep`/`glob`/`grep_search`/`file_search` → `read`, `WebSearch`/`web_search` → `web`, `Edit`/`Write` → `write`, `Bash` → `shell`, `WebFetch` → `web_fetch`, `TodoWrite`/`write_todos` → `todo`, `mcp__github__list_issues` → `@github/list_issues`, Gemini `mcp_*` → `@mcp`, …), and drops anything else; a restricted list in which nothing translates becomes `read` rather than every tool. The task-list tool is `task`, with the aliases `todo` and `todo_list` ("`task` (aliases `todo`, `todo_list`) | — | 2.x | … | CLI 2.x only", https://kiro.dev/docs/tools/); conforme writes `todo` and reads all three as the task list, so a Kiro `task` never becomes another host's subagent tool (OpenCode's `task`, Claude's `Agent`)
 - Agent `model`: both the V3 agent-config page and the configuration reference now say an unknown model fails ("If the specified model is unavailable, the first prompt can fail instead of falling back automatically", https://kiro.dev/docs/custom-agents/configuration-reference/); conforme leaves out another host's alias (`sonnet`, `opus`, `haiku`, `fable`, `pro`, `flash`, `flash-lite`), any `provider/model` id and `inherit`, and the agent uses Kiro's default model; other values are copied as they are
 - Agents and skills are always written with a `description`, falling back to the name
 - Kiro CLI 3.0 also allows MCP servers inline inside an agent config, and adds `oauth` and `disabledTools` per server; conforme keeps to the shared `.kiro/settings/mcp.json`
@@ -86,7 +87,8 @@
 - Remote MCP servers additionally accept `headers`, `oauth` and `oauthScopes`; conforme emits only `url` + `headers`
 - A legacy SSE server is written as a bare `url` with `headers` and no `type`: Kiro supports SSE with no documented key (https://kiro.dev/blog/introducing-remote-mcp/), so it reads back as streamable HTTP and the SSE marker is lost (documented, not modelled)
 - conforme writes `type: stdio` / `type: http` in `.kiro/settings/mcp.json`. The mcp.json docs do not list `type`, but Kiro accepts it: it appears in Kiro's agent-config MCP examples, and Kiro's own `kirodotdev/powers` repository uses `"type": "http"` / `"stdio"` in its `mcp.json` files
-- Kiro's docs disagree on what a custom agent loads by default. The steering page says "When using custom agents, steering files are not automatically included" (https://kiro.dev/docs/steering), while the configuration reference says custom agents inherit "default resources (steering files, skills, and `AGENTS.md`)" unless `chat.disableInheritingDefaultResources` is `true` (default `false`, https://kiro.dev/docs/custom-agents/configuration-reference). Kiro is closed source; conforme writes no `resources` (unconfirmed which page is current)
+- Kiro's docs disagree on what a custom agent loads by default. The steering page says "When using custom agents, steering files are not automatically included" (https://kiro.dev/docs/steering), while the configuration reference says custom agents inherit "default resources (steering files, skills, and `AGENTS.md`)" unless `chat.disableInheritingDefaultResources` is `true` (default `false`, https://kiro.dev/docs/custom-agents/configuration-reference). Skills disagree the same way: custom agents "don't load skills by default - you need to explicitly add them to the agent's `resources` field" (https://kiro.dev/docs/skills/). Kiro is closed source; conforme writes no `resources` (unconfirmed which page is current)
+- Workspace trust: an untrusted workspace "Does not load the workspace's custom agents, Steering files, MCP server configuration, or Skills", in interactive V3 sessions of CLI 2.33 or later; "Non-interactive runs (`--no-interactive`) and V1 and V2 sessions are not gated" (https://kiro.dev/docs/permissions/#workspace-trust). Trust the folder once before checking what conforme wrote
 - `includeMcpJson` has no documented default (the configuration reference only says it controls "whether to include MCP servers defined in the MCP configuration files"); conforme does not write it, so whether a generated agent sees `.kiro/settings/mcp.json` is unconfirmed
 - Every Kiro docs page has a Markdown twin at the same path with a `.md` suffix (https://kiro.dev/llms.txt)
 - A Kiro V3 agent's tool IDs reach other hosts: `file_search` → `Glob`, `grep_search` → `Grep`, `remote_web_search` → `WebSearch`, `invoke_sub_agent` → `Agent`, `str_replace` → `Edit`, `fs_append` → `Write`, `execute_pwsh` → `PowerShell` (Claude Code names; Gemini's equivalents likewise)

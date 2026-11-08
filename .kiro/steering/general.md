@@ -153,7 +153,8 @@ src/
                        name read as the skill; skips what Claude Code refuses: a skill or command name with
                        control, zero-width, bidi, private-use, odd blank or </> characters (claude_loads_name),
                        an agent whose frontmatter is not strict YAML or whose name starts with -, holds : or
-                       passes 256 characters
+                       passes 256 characters; warns about a reserved MCP server name and a credential variable
+                       Claude Code reads as empty in a remote server's url and headers
     cursor.rs       — Cursor: .cursor/rules/**/*.mdc, read recursively (alwaysApply/globs/description), plus .cursorrules; subagents at .cursor/agents/*.md
     devin.rs        — Devin Desktop (formerly Windsurf): writes .devin/{rules,skills,mcp_config.json}; reads
                        .devin/ and the legacy .windsurf/ (both loaded upstream) and cleans conforme's legacy copies;
@@ -161,6 +162,7 @@ src/
     copilot.rs      — GitHub Copilot: .github/copilot-instructions.md (applyTo); skills at .github/skills/<name>/SKILL.md; MCP merged into .vscode/mcp.json
                        and .github/mcp.json (a bare-format file is read, and moved under mcpServers on write:
                        server_settings_file_or_bare); agents read from .github/agents/ recursively;
+                       warns about an agent named like a Copilot CLI built-in agent;
                        detected from copilot-instructions.md or .github/{instructions,agents,skills}/
     codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively; agents at .codex/agents/*.toml; warns when the
                        source has MCP servers or agents and $CODEX_HOME/config.toml (default ~/.codex) trusts

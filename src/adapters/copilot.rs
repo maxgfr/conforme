@@ -10,15 +10,40 @@ use crate::frontmatter;
 
 pub struct CopilotAdapter;
 
+/// Copilot CLI's built-in agents ("Built-in agents",
+/// https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference):
+/// a custom agent of one of these names is not offered to the model, "since
+/// delegating to that name always runs the built-in agent" (changelog 1.0.107).
+const CLI_BUILTIN_AGENTS: &[&str] = &[
+    "code-review",
+    "explore",
+    "general-purpose",
+    "research",
+    "rubber-duck",
+    "security-review",
+    "task",
+];
+
 impl AiToolAdapter for CopilotAdapter {
-    /// What its variable syntax cannot carry (see [`crate::mcp::env_ref_losses`]).
+    /// What its variable syntax cannot carry (see [`crate::mcp::env_ref_losses`])
+    /// and the agents Copilot CLI's built-in ones shadow.
     fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
-        crate::mcp::env_ref_losses(
+        let mut warnings = crate::mcp::env_ref_losses(
             &config.mcp_servers,
             crate::mcp::EnvRefStyle::EnvColon,
             true,
             "VS Code",
-        )
+        );
+        for agent in &config.agents {
+            let name = crate::config::sanitize_name(&agent.name);
+            if CLI_BUILTIN_AGENTS.contains(&name.as_str()) {
+                warnings.push(format!(
+                    "agent {name}: Copilot CLI always runs its built-in agent of that name; rename \
+                     it in the source to delegate to it there"
+                ));
+            }
+        }
+        warnings
     }
 
     fn name(&self) -> &str {

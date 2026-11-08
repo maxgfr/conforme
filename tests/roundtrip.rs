@@ -2120,7 +2120,7 @@ fn test_gemini_has_no_per_server_disable_key() {
 
 /// OpenCode 2 keeps servers under `mcp.servers` with `disabled`, and agents
 /// under `agents` with `system`; it still reads the V1 shape, but a native
-/// V2 value wins (https://opencode.ai/v2/docs/migrate-v1/).
+/// V2 value wins (https://opencode.ai/docs/migrate-v1/).
 #[test]
 fn test_opencode_v2_native_config_is_read() {
     let dir = TempDir::new().unwrap();
