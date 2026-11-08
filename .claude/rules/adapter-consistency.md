@@ -8,7 +8,7 @@ paths:
 - Every adapter change MUST be reflected in its `docs/providers/<tool>.md`
 - Every MCP format change MUST update the tool's `ServerShape` (or the Codex / Vibe TOML merge) AND its unit test
 - MCP keys and shapes per tool are the "MCP key mapping per tool" table in CLAUDE.md: update it with any MCP change
-- When adding a new adapter, update ALL of: README.md tables, src/help_ai.rs, src/cli.rs tool count, CLAUDE.md architecture section
+- When adding a new adapter, update ALL of: README.md tables, src/help_ai.rs, src/cli.rs tool count, docs/architecture.md
 - Provider docs must list all official documentation URLs for the tool, back each fact with the vendor page, changelog or source it comes from, and carry a `Last verified online` line (date, upstream version) that `verify-providers` updates
 - Test round-trips: `read()` output fed into `generate()` should produce identical files
 - A JSON MCP entry shape is a `ServerShape` in `src/mcp.rs` (type values, URL key, `env` on remote, env-var syntax, layout, on/off toggle) with its `build`, `owned_keys` and `read`; add or change a tool there rather than writing another builder, owned-key list or reader

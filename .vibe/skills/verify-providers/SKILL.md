@@ -86,7 +86,10 @@ source is public, read it too (`gh api repos/<owner>/<repo>/contents/<path>`
 on the default branch): docs lag code. When the two disagree, the source is
 what the tool does: follow it, and record the disagreement in the provider
 doc with both proofs. A page that fails or answers another question is
-replaced by the vendor's current one, found by search.
+replaced by the vendor's current one, found by search. A web reader stops at a
+page's first part: for a long one, read on with its offset or fetch the source
+(GitHub docs: `https://docs.github.com/api/article/body?pathname=<path>`), so
+that a list at the end of the page is not reported as missing.
 
 Per tool, one fact sheet, each line a value (or "not supported") plus its
 proof:
@@ -158,7 +161,8 @@ Add these checks, which the fact sheet alone does not cover:
 - **Blank output**: an empty config yields no file, and a full config yields
   no blank file (`test_no_adapter_writes_blank_files` guards it).
 - **Warnings**: a value conforme writes that the tool will not use as written
-  (a `${VAR}` it does not expand, a reserved skill name, a project file it
+  (a `${VAR}` it does not expand or reads as empty, a reserved skill or MCP
+  server name, a custom agent shadowed by a built-in one, a project file it
   refuses) is named by the adapter's `warnings()`, which `sync` and `migrate`
   print, and the advice it gives works upstream; a silent loss is drift.
 
@@ -219,7 +223,10 @@ fixture with each tool as source in turn: `sync` twice (the second changes
 nothing), `check`, `status`, `diff`, `migrate` to tools that share a
 directory (Codex, Zed) and to one that keeps its instructions in
 `AGENTS.md`, `remove`, `gitignore install`. Look for lost files, blank files,
-a source file rewritten, and commands that disagree with `sync`.
+a source file rewritten, and commands that disagree with `sync`. Enter each
+source with `migrate --source <previous> --output <tool>`: a generated
+`AGENTS.md` names its source on line 1, so editing `source =` alone is refused
+on purpose and tests nothing else.
 
 Then audit again with a different slicing: by concern across all adapters
 (`watch`, `detect`, `gitignore`, `validate`, `status`/`check`/`diff`, `add`,
@@ -250,8 +257,9 @@ A mechanical complement to step 3: a `200` only says the page exists, not
 that it still says what the doc cites.
 
 ```bash
-grep -oh 'https://[^ )>,`"]*' docs/providers/*.md README.md CLAUDE.md | sed 's/[?!.,:*_~]*$//' | sort -u > urls.txt
-while read -r u; do printf '%s %s\n' "$(curl -sS -o /dev/null -w '%{http_code}' -A 'Mozilla/5.0' --max-time 60 -L "$u")" "$u"; done < urls.txt | sort | grep -v '^200'
+grep -oh 'https://[^ )>,`"]*' docs/providers/*.md docs/architecture.md README.md CLAUDE.md | sed 's/[?!.,:*_~]*$//' | sort -u > urls.txt
+awk '{print "url = \"" $0 "\"\noutput = \"/dev/null\""}' urls.txt > curl.cfg
+curl -K curl.cfg -sS -Z --parallel-max 6 -L -A 'Mozilla/5.0' --max-time 60 -w '%{http_code} %{url}\n' 2>/dev/null | sort | grep -v '^200'
 ```
 
 The `sed` drops only the trailing punctuation GitHub leaves out of a bare
@@ -260,7 +268,7 @@ stays in the rendered link, so `https://…;` is a broken link: put a comma or a
 space after the URL. GitHub answers `429` under a burst and slow sites time
 out (`000`); retry those alone. An example endpoint in a config snippet (an MCP server URL) may
 answer `401`. Any other non-200 is a broken link: find the replacement on the
-vendor domain and fix it in step 11. Done when: the loop prints nothing
+vendor domain and fix it in step 11. Done when: the command prints nothing
 unexplained.
 
 ## 10. Classify every finding
@@ -288,7 +296,7 @@ usual set is:
 2. `docs/providers/<tool>.md`: the facts with their proof URLs, deviations,
    source-versus-docs disagreements, new URLs, and its `Last verified online`
    line (date, upstream version);
-3. `README.md` tables and tool count, `CLAUDE.md` architecture and MCP
+3. `README.md` tables and tool count, `docs/architecture.md`, `CLAUDE.md` MCP
    tables, `src/help_ai.rs`, `src/cli.rs` tool count and tool list, this
    skill's description;
 4. tests: `tests/roundtrip.rs` for round-trips, `tests/error_cases.rs` and
@@ -312,8 +320,10 @@ cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt -- --check
 ```
 
 Done when: the gate is green, the conformity script exits 0, every provider
-doc's `Last verified online` line carries today's date, `git status` shows
-only intended files, and a `grep -rni '<old tool id>'` returns only sentences
+doc's `Last verified online` line carries today's date, `sync` prints no
+"Codex reads only the first 32 KiB" warning on this repository (the module map
+stays in `docs/architecture.md` for that reason), `git status` shows only
+intended files, and a `grep -rni '<old tool id>'` returns only sentences
 that describe the removal or rename (release notes live on GitHub Releases,
 not in the tree).
 
