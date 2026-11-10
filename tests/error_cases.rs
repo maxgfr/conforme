@@ -1066,3 +1066,32 @@ fn test_sync_refuses_skills_and_agents_without_a_name() {
         assert!(!root.join(".codex/agents/.toml").exists());
     }
 }
+
+#[test]
+fn test_remove_is_not_blocked_by_another_tools_unreadable_settings() {
+    // `remove cursor` must not fail because Gemini's settings do not parse;
+    // Gemini's own files stay untouched.
+    let dir = create_project_with_tools(
+        "# Instructions\nBe helpful.\n\n## MCP: fs\n<!-- command: npx -->\n",
+        &["cursor", "gemini"],
+    );
+    let root = dir.path();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert!(root.join(".cursor/rules/general.mdc").exists());
+    fs::write(root.join(".gemini/settings.json"), "{ not json").unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "remove", "cursor"])
+        .assert()
+        .success();
+
+    assert!(!root.join(".cursor/rules/general.mdc").exists());
+    assert_eq!(
+        fs::read_to_string(root.join(".gemini/settings.json")).unwrap(),
+        "{ not json"
+    );
+    assert!(root.join("GEMINI.md").exists());
+}

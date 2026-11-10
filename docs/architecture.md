@@ -22,7 +22,7 @@ src/
                        (target_config, renamed-id check, AGENTS.md output unless the source reads it, holding only
                        instructions and rules (migrate adds what the output cannot hold); a Codex
                        warning past its 32 KiB AGENTS.md budget; generated AGENTS.md names its source on
-                       line 1 and sync/check refuse a source changed by hand since (migrate moves it); remove prunes emptied directories
+                       line 1 and sync/check refuse a source changed by hand since (migrate moves it); remove prunes emptied directories, is not blocked by another tool's unreadable settings file,
                        and says how to exclude a tool still detected;
                        selected_targets (detection + only/exclude) is the one target set of sync, check,
                        diff and status; target_files/write_target leave out the source's source_files();

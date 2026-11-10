@@ -1146,18 +1146,34 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
     // a file the source reads (a Kilo Code source reading `CLAUDE.md`).
     let source_files = source_files(project_root, &source_id);
     let mut kept = std::collections::HashSet::new();
+    let mut kept_dirs = Vec::new();
     for adapter in &adapters {
         let is_source = adapter.id() == source_id;
         if !is_source && (tools.iter().any(|t| t == adapter.id()) || !adapter.detect(project_root))
         {
             continue;
         }
-        kept.extend(
-            adapter
-                .generate(project_root, &config)?
-                .into_iter()
-                .map(|(path, _)| path),
-        );
+        let generated = match adapter.generate(project_root, &config) {
+            Err(_) if !is_source => {
+                // Another tool's unreadable settings file must not block the
+                // removal (as in migrate). The files it generates besides
+                // its MCP settings (shared files, never removed) and what it
+                // manages stay protected.
+                kept_dirs.extend(
+                    adapter
+                        .managed_directories(project_root)
+                        .into_iter()
+                        .map(|dir| dir.path),
+                );
+                let without_servers = NormalizedConfig {
+                    mcp_servers: Vec::new(),
+                    ..config.clone()
+                };
+                adapter.generate(project_root, &without_servers)?
+            }
+            result => result?,
+        };
+        kept.extend(generated.into_iter().map(|(path, _)| path));
     }
 
     for tool in tools {
@@ -1184,6 +1200,7 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
         for (path, _) in &generated {
             if adapter.is_shared_file(path)
                 || kept.contains(path)
+                || kept_dirs.iter().any(|dir| path.starts_with(dir))
                 || is_source_file(path, &source_files)
             {
                 if verbose && path.exists() {
