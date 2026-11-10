@@ -2181,3 +2181,30 @@ fn test_opencode_v2_native_config_is_read() {
     assert_eq!(json["agents"]["gone"]["disabled"], true);
     assert!(json.get("agent").is_none());
 }
+
+#[test]
+fn test_roundtrip_claude_rule_body_starting_with_a_dash_line() {
+    // A rule written without frontmatter whose text opens with `---` must not
+    // have its first lines read back as a frontmatter block.
+    let adapter = conforme::adapters::claude::ClaudeAdapter;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join(".claude")).unwrap();
+    let content = "---\nAuthor: Jane\n---\nUse tabs.";
+    let config = NormalizedConfig {
+        instructions: "Be helpful.".to_string(),
+        rules: vec![NormalizedRule {
+            name: "notes".to_string(),
+            content: content.to_string(),
+            activation: ActivationMode::Manual,
+        }],
+        ..Default::default()
+    };
+    for (path, text) in adapter.generate(dir.path(), &config).unwrap() {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+
+    let read = adapter.read(dir.path()).unwrap();
+    let notes = read.rules.iter().find(|r| r.name == "notes").unwrap();
+    assert_eq!(notes.content, content);
+}

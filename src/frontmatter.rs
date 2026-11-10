@@ -140,6 +140,15 @@ fn unquote(value: &str) -> &str {
 /// Serialize YAML frontmatter + body into a Markdown string.
 pub fn serialize(fields: &Fields, body: &str) -> Result<String> {
     if fields.is_empty() {
+        // A body opening with a `---` line would be read back as a
+        // frontmatter block: an empty block in front keeps it body text.
+        if body
+            .lines()
+            .next()
+            .is_some_and(|line| line.trim_end() == "---")
+        {
+            return Ok(format!("---\n---\n\n{body}"));
+        }
         return Ok(body.to_string());
     }
 
@@ -153,6 +162,19 @@ pub fn serialize(fields: &Fields, body: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_serialize_without_fields_keeps_a_leading_dash_line_in_the_body() {
+        let body = "---\nAuthor: Jane\n---\nUse tabs.\n";
+        let (fields, parsed) = parse(&serialize(&Fields::new(), body).unwrap()).unwrap();
+        assert!(fields.is_empty());
+        assert_eq!(parsed.trim_start(), body);
+        // Any other body is written as is.
+        assert_eq!(
+            serialize(&Fields::new(), "Use tabs.\n").unwrap(),
+            "Use tabs.\n"
+        );
+    }
 
     #[test]
     fn test_parse_with_frontmatter() {

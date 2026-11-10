@@ -16,7 +16,7 @@ src/
   frontmatter.rs    — `---` block split by hand (BOM, CRLF, files of 3 bytes or fewer), parsed as YAML, else
                        entry by entry (`globs: **/*.ts`); `read` names the file in errors; is_strict_yaml for
                        tools that ignore a broken block (Antigravity rules, which accept an unquoted
-                       `description:` holding a colon; Claude agents; Claude rules, read as always-on); serialization
+                       `description:` holding a colon; Claude agents; Claude rules, read as always-on); serialization (a body opening with `---` gets an empty block in front)
   lib.rs            — Library crate re-exports (adapters, config, etc.)
   sync.rs           — Core sync engine: init, sync, check, status, remove, diff, migrate commands
                        (target_config, renamed-id check, AGENTS.md output unless the source reads it, holding only
