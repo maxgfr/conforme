@@ -274,50 +274,10 @@ impl AiToolAdapter for ClaudeAdapter {
         }
 
         // Read skills from .claude/skills/<name>/SKILL.md
-        let mut skills = Vec::new();
-        let skills_dir = project_root.join(".claude").join("skills");
-        if skills_dir.is_dir() {
-            let mut entries: Vec<_> = std::fs::read_dir(&skills_dir)?
-                .filter_map(|e| e.ok())
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                let skill_dir = entry.path();
-                if skill_dir.is_dir() && claude_loads_name(&entry.file_name().to_string_lossy()) {
-                    let skill_file = skill_dir.join("SKILL.md");
-                    if skill_file.exists() {
-                        let (fields, body) = frontmatter::read(&skill_file)?;
-                        let name = fields
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .map(str::to_string)
-                            .unwrap_or_else(|| {
-                                skill_dir
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                                    .into_owned()
-                            });
-                        let description = fields
-                            .get("description")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let allowed_tools = parse_tool_list(fields.get("allowed-tools"));
-                        skills.push(NormalizedSkill {
-                            name,
-                            description,
-                            content: body.trim().to_string(),
-                            allowed_tools,
-                            manual_invocation: crate::skills::read_manual_invocation(
-                                &fields, &skill_dir,
-                            )?,
-                            files: crate::skills::read_bundled_files(&skill_dir)?,
-                        });
-                    }
-                }
-            }
-        }
+        let mut skills = crate::skills::read_skills_from_dir_where(
+            &project_root.join(".claude").join("skills"),
+            claude_loads_name,
+        )?;
 
         // Read commands from .claude/commands/**/*.md (mapped to skills for
         // cross-tool sync). A nested command is namespaced by its folders:

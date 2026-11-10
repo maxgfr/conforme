@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::adapters::{AiToolAdapter, ManagedDir};
 use crate::config::{
-    join_flat_globs, rule_file_name, ActivationMode, NormalizedAgent, NormalizedConfig,
-    NormalizedRule,
+    join_flat_globs, rule_file_name, ActivationMode, NormalizedConfig, NormalizedRule,
 };
 use crate::frontmatter;
 
@@ -102,49 +101,12 @@ impl AiToolAdapter for CursorAdapter {
             }
         }
 
-        // Read agents from .cursor/agents/*.md (Cursor subagents use .md, not .mdc)
-        let mut agents = Vec::new();
-        let agents_dir = project_root.join(".cursor").join("agents");
-        if agents_dir.is_dir() {
-            let mut entries: Vec<_> = std::fs::read_dir(&agents_dir)?
-                .filter_map(|e| e.ok())
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "md") {
-                    let (fields, body) = frontmatter::read(&path)?;
-                    let name = fields
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string)
-                        .unwrap_or_else(|| {
-                            path.file_stem()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .into_owned()
-                        });
-                    let description = fields
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let model = fields
-                        .get("model")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let tools = crate::skills::parse_frontmatter_tool_list(fields.get("tools"));
-                    agents.push(NormalizedAgent {
-                        name,
-                        description,
-                        content: body.trim().to_string(),
-                        model,
-                        tools,
-                        ..Default::default()
-                    });
-                }
-            }
-        }
+        // Read agents from .cursor/agents/*.md (Cursor subagents use .md, not
+        // .mdc), top level only.
+        let agents = crate::skills::read_agents_from_dir(
+            &project_root.join(".cursor").join("agents"),
+            false,
+        )?;
 
         // Read MCP servers from .cursor/mcp.json
         let mut mcp_servers = Vec::new();

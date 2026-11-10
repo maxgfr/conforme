@@ -51,6 +51,16 @@ fn split_tool_list(text: &str) -> Vec<String> {
 /// Mirrors the SKILL.md folder layout every per-rule adapter writes, so `read()`
 /// can round-trip the skills that `generate()` produced.
 pub(crate) fn read_skills_from_dir(skills_dir: &Path) -> Result<Vec<NormalizedSkill>> {
+    read_skills_from_dir_where(skills_dir, |_| true)
+}
+
+/// [`read_skills_from_dir`], for a tool that skips some folder names (Claude
+/// Code refuses a name holding control or `<`/`>` characters): only a folder
+/// whose name `loads` accepts is read.
+pub(crate) fn read_skills_from_dir_where(
+    skills_dir: &Path,
+    loads: impl Fn(&str) -> bool,
+) -> Result<Vec<NormalizedSkill>> {
     let mut skills = Vec::new();
     if !skills_dir.is_dir() {
         return Ok(skills);
@@ -61,7 +71,7 @@ pub(crate) fn read_skills_from_dir(skills_dir: &Path) -> Result<Vec<NormalizedSk
     entries.sort_by_key(|e| e.file_name());
     for entry in entries {
         let skill_dir = entry.path();
-        if !skill_dir.is_dir() {
+        if !skill_dir.is_dir() || !loads(&entry.file_name().to_string_lossy()) {
             continue;
         }
         let skill_file = skill_dir.join("SKILL.md");
