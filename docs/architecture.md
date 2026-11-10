@@ -25,7 +25,9 @@ src/
                        line 1 and sync/check refuse a source changed by hand since (migrate moves it); remove prunes emptied directories, is not blocked by another tool's unreadable settings file,
                        and says how to exclude a tool still detected;
                        selected_targets (detection + only/exclude) is the one target set of sync, check,
-                       diff and status; target_files/write_target leave out the source's source_files();
+                       diff and status; target_files/write_target leave out the source's source_files() and any
+                       file or directory linked to what the source reads (`CLAUDE.md -> AGENTS.md`: is_source_file,
+                       is_one_of), migrate replaces such an output link with the file;
                        generated_agents_md is compared by check and diff too; check validates the config;
                        status shows excluded tools as "Excluded" and AGENTS.md as "Source's own file" /
                        "Generated output" / "Not managed";

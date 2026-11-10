@@ -112,9 +112,14 @@ fn build_gitignore_block(project_root: &Path, config: &project_config::ProjectCo
         .filter_map(|p| p.strip_prefix(project_root).ok())
         .map(|p| p.to_string_lossy().replace('\\', "/"))
         .collect();
+    // A file linked to one the source reads (`CLAUDE.md -> AGENTS.md`) is
+    // the user's link, never written by sync: it stays tracked too.
+    let source_paths = crate::sync::source_files(project_root, source_id);
     let reads_pattern = |pattern: &str| {
         let pattern = pattern.trim_start_matches('/').trim_end_matches('/');
         source_files.iter().any(|f| f == pattern)
+            || (!pattern.contains('*')
+                && crate::sync::is_source_file(&project_root.join(pattern), &source_paths))
     };
     for adapter in &all {
         if adapter.id() == source_id {
@@ -144,7 +149,13 @@ fn build_gitignore_block(project_root: &Path, config: &project_config::ProjectCo
     let source_reads_agents_md = all
         .iter()
         .any(|a| a.id() == source_id && a.reads_agents_md(project_root));
-    if source_id != "agents.md" && !source_reads_agents_md && config.generate_agents_md {
+    let agents_md_is_the_source =
+        crate::sync::is_source_file(&project_root.join("AGENTS.md"), &source_paths);
+    if source_id != "agents.md"
+        && !source_reads_agents_md
+        && config.generate_agents_md
+        && !agents_md_is_the_source
+    {
         lines.push("# Generated AGENTS.md".to_string());
         lines.push("/AGENTS.md".to_string());
     }
@@ -450,6 +461,30 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_block_keeps_a_link_to_the_source_tracked() {
+        // `CLAUDE.md -> AGENTS.md` and `AGENTS.md -> CLAUDE.md` are the
+        // user's links: sync never writes them, so they are not ignored.
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "# A\n").unwrap();
+        std::os::unix::fs::symlink("AGENTS.md", dir.path().join("CLAUDE.md")).unwrap();
+        std::fs::write(dir.path().join("GEMINI.md"), "generated\n").unwrap();
+        let block = build_gitignore_block(dir.path(), &project_config::ProjectConfig::default());
+        assert!(!block.contains("\n/CLAUDE.md\n"), "{block}");
+        assert!(block.contains("\n/GEMINI.md\n"), "{block}");
+
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("CLAUDE.md"), "# A\n").unwrap();
+        std::os::unix::fs::symlink("CLAUDE.md", dir.path().join("AGENTS.md")).unwrap();
+        let config = project_config::ProjectConfig {
+            source: Some("claude".to_string()),
+            ..Default::default()
+        };
+        let block = build_gitignore_block(dir.path(), &config);
+        assert!(!block.contains("\n/AGENTS.md\n"), "{block}");
     }
 
     #[test]

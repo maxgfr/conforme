@@ -76,15 +76,7 @@ fn target_managed_dirs(
     source_id: &str,
     target: &dyn AiToolAdapter,
 ) -> Vec<adapters::ManagedDir> {
-    let mut source_dirs: Vec<std::path::PathBuf> = source_files(project_root, source_id);
-    if let Some(source) = find_adapter(source_id) {
-        source_dirs.extend(
-            source
-                .managed_directories(project_root)
-                .into_iter()
-                .map(|d| d.path),
-        );
-    }
+    let source_dirs = source_locations(project_root, source_id);
     target
         .managed_directories(project_root)
         .into_iter()
@@ -92,10 +84,25 @@ fn target_managed_dirs(
         .collect()
 }
 
+/// Everything the source reads: its [`source_files`] and its managed
+/// directories.
+fn source_locations(project_root: &Path, source_id: &str) -> Vec<std::path::PathBuf> {
+    let mut locations = source_files(project_root, source_id);
+    if let Some(source) = find_adapter(source_id) {
+        locations.extend(
+            source
+                .managed_directories(project_root)
+                .into_iter()
+                .map(|d| d.path),
+        );
+    }
+    locations
+}
+
 /// What the source reads outside its own managed directories (see
 /// [`AiToolAdapter::source_files`]); `AGENTS.md` itself when it is the source.
 /// No target writes these, and `remove`/`migrate` never delete them.
-fn source_files(project_root: &Path, source_id: &str) -> Vec<std::path::PathBuf> {
+pub(crate) fn source_files(project_root: &Path, source_id: &str) -> Vec<std::path::PathBuf> {
     if source_id == "agents.md" {
         return vec![project_root.join("AGENTS.md")];
     }
@@ -104,8 +111,24 @@ fn source_files(project_root: &Path, source_id: &str) -> Vec<std::path::PathBuf>
         .unwrap_or_default()
 }
 
-fn is_source_file(path: &Path, source_files: &[std::path::PathBuf]) -> bool {
-    source_files.iter().any(|p| path.starts_with(p))
+/// Whether `path` is one of the source's files: in `source_files` (or beneath
+/// one that is a directory), or a symbolic link to one — a `CLAUDE.md`
+/// linked to the `AGENTS.md` source is that source under another name, and
+/// writing it would replace the source with one tool's share of it.
+pub(crate) fn is_source_file(path: &Path, source_files: &[std::path::PathBuf]) -> bool {
+    source_files.iter().any(|p| path.starts_with(p)) || is_link_into(path, source_files)
+}
+
+/// Whether `path` is a symbolic link that resolves to one of `locations`, or
+/// beneath one that is a directory.
+fn is_link_into(path: &Path, locations: &[std::path::PathBuf]) -> bool {
+    let is_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    is_link
+        && std::fs::canonicalize(path).is_ok_and(|resolved| {
+            locations
+                .iter()
+                .any(|p| std::fs::canonicalize(p).is_ok_and(|p| resolved.starts_with(p)))
+        })
 }
 
 /// The detected tools sync writes to: every tool but the source, filtered by
@@ -160,9 +183,21 @@ fn target_output(
 ) -> Result<TargetOutput> {
     let config = target_config(project_root, source_id, target, config);
     let expected = target.generate(project_root, &config)?;
+    // A directory of the target that is a link to one the source reads
+    // (`.kiro/steering -> ../.claude/rules`) holds the source's own files.
+    let source_dirs = source_locations(project_root, source_id);
+    let linked_dirs: Vec<std::path::PathBuf> = target
+        .managed_directories(project_root)
+        .into_iter()
+        .map(|dir| dir.path)
+        .filter(|dir| !source_dirs.contains(dir) && is_one_of(dir, &source_dirs))
+        .collect();
     let files = expected
         .iter()
-        .filter(|(path, _)| !is_source_file(path, source_files))
+        .filter(|(path, _)| {
+            !is_source_file(path, source_files)
+                && !linked_dirs.iter().any(|dir| path.starts_with(dir))
+        })
         .cloned()
         .collect();
     Ok(TargetOutput { expected, files })
@@ -178,18 +213,28 @@ fn generated_agents_md(
 ) -> Option<(std::path::PathBuf, String)> {
     let source_reads_agents_md =
         find_adapter(source_id).is_some_and(|a| a.reads_agents_md(project_root));
-    (source_id != "agents.md" && !source_reads_agents_md && project_cfg.generate_agents_md).then(
-        || {
-            (
-                project_root.join("AGENTS.md"),
-                format!(
-                    "{}\n\n{}",
-                    markdown::generated_marker(source_id),
-                    markdown::export_as_agents_md(&instructions_and_rules(config))
-                ),
-            )
-        },
-    )
+    // An AGENTS.md linked to a file the source reads (`AGENTS.md ->
+    // CLAUDE.md`) is that file: generating it would overwrite the source.
+    let is_the_source = || {
+        is_source_file(
+            &project_root.join("AGENTS.md"),
+            &source_files(project_root, source_id),
+        )
+    };
+    (source_id != "agents.md"
+        && !source_reads_agents_md
+        && project_cfg.generate_agents_md
+        && !is_the_source())
+    .then(|| {
+        (
+            project_root.join("AGENTS.md"),
+            format!(
+                "{}\n\n{}",
+                markdown::generated_marker(source_id),
+                markdown::export_as_agents_md(&instructions_and_rules(config))
+            ),
+        )
+    })
 }
 
 /// Refuse to replace an AGENTS.md conforme did not generate (no marker on its
@@ -1451,7 +1496,11 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
                 // Codex, OpenCode, DeepSeek, Vibe, Kilo (and Claude Code or Gemini
                 // CLI when they fall back to it) read AGENTS.md as their config.
                 Some(source)
-                    if find_adapter(source).is_some_and(|a| a.reads_agents_md(project_root)) =>
+                    if find_adapter(source).is_some_and(|a| a.reads_agents_md(project_root))
+                        || is_source_file(
+                            &project_root.join("AGENTS.md"),
+                            &source_files(project_root, source),
+                        ) =>
                 {
                     "Source's own file"
                 }
@@ -1874,6 +1923,19 @@ pub fn run_migrate(
             }
         }
     } else {
+        // An output file that is a link to one of the source's files
+        // (`AGENTS.md -> CLAUDE.md`) would be written into that file, which
+        // is deleted below or which the source tool keeps reading: the link
+        // is replaced by the file itself.
+        let mut source_paths = source_locations(project_root, source);
+        source_paths.extend(source_files.iter().map(|(path, _)| path.clone()));
+        let output_files = output_adapter.generate(project_root, &output_config)?;
+        for (path, _) in output_files.iter().chain(agents_md.iter()) {
+            if is_link_into(path, &source_paths) {
+                std::fs::remove_file(path)?;
+            }
+        }
+
         // 1. Write output files
         let mut report = output_adapter.write(project_root, &output_config)?;
         if let Some((path, content)) = &agents_md {

@@ -4660,3 +4660,165 @@ fn test_sync_leaves_source_skills_behind_a_symlinked_target_dir_alone() {
     assert!(!root.join(".claude/skills/deploy/.conforme").exists());
     assert!(root.join(".cursor/rules/general.mdc").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn test_sync_never_writes_the_source_through_a_linked_instructions_file() {
+    // `CLAUDE.md -> AGENTS.md` is a common setup: with AGENTS.md as the
+    // source, writing Claude Code's CLAUDE.md through the link would replace
+    // the source by its instructions alone, losing its rules and skills.
+    let source = "# Instructions\nBe helpful.\n\n## Rule: TS\n<!-- activation: glob **/*.ts -->\nUse TS.\n\n## Skill: deploy\n<!-- description: Deploy -->\nRun deploy.\n";
+    let dir = create_project_with_tools(source, &["claude", "gemini", "zed"]);
+    let root = dir.path();
+    fs::remove_file(root.join(".rules")).unwrap();
+    for link in ["CLAUDE.md", "GEMINI.md", ".rules"] {
+        std::os::unix::fs::symlink("AGENTS.md", root.join(link)).unwrap();
+    }
+
+    for _ in 0..2 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+        assert_eq!(fs::read_to_string(root.join("AGENTS.md")).unwrap(), source);
+    }
+    for link in ["CLAUDE.md", "GEMINI.md", ".rules"] {
+        assert!(fs::symlink_metadata(root.join(link))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+    // The rest of the tool is still synced, and the project is in sync.
+    assert!(root.join(".claude/rules/ts.md").exists());
+    assert!(root.join(".claude/skills/deploy/SKILL.md").exists());
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+    // Removing the tool leaves the link, which is the user's.
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "remove", "claude"])
+        .assert()
+        .success();
+    assert!(!root.join(".claude/rules/ts.md").exists());
+    assert_eq!(fs::read_to_string(root.join("CLAUDE.md")).unwrap(), source);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_sync_does_not_generate_agents_md_over_a_link_to_the_source() {
+    // `AGENTS.md -> CLAUDE.md` with Claude Code as the source: the generated
+    // AGENTS.md would be written into CLAUDE.md, and grow on every sync.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    let rule = "---\npaths:\n  - \"**/*.ts\"\n---\nUse TS.\n";
+    fs::write(root.join(".claude/rules/ts.md"), rule).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    std::os::unix::fs::symlink("CLAUDE.md", root.join("AGENTS.md")).unwrap();
+
+    for _ in 0..2 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+        assert_eq!(
+            fs::read_to_string(root.join("CLAUDE.md")).unwrap(),
+            "Be helpful.\n"
+        );
+    }
+    assert!(root.join(".cursor/rules/ts.mdc").exists());
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "status"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Source's own file"));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_sync_leaves_a_target_directory_linked_to_the_sources_alone() {
+    // `.kiro/steering -> ../.claude/rules`: Kiro's files would overwrite the
+    // Claude Code rules of the same name with Kiro's frontmatter.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::create_dir_all(root.join(".kiro")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    let rule = "---\npaths:\n  - \"**/*.ts\"\n---\nUse TS.\n";
+    fs::write(root.join(".claude/rules/ts.md"), rule).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    std::os::unix::fs::symlink("../.claude/rules", root.join(".kiro/steering")).unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(root.join(".claude/rules/ts.md")).unwrap(),
+        rule
+    );
+    assert!(!root.join(".claude/rules/general.md").exists());
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}
+
+#[cfg(unix)]
+#[test]
+fn test_migrate_replaces_an_output_link_to_a_source_file_with_the_file() {
+    // `AGENTS.md -> CLAUDE.md`, Claude Code to Codex: AGENTS.md written
+    // through the link lands in CLAUDE.md, which migrate then deletes —
+    // leaving a dangling link and nothing of the instructions or rules.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    fs::write(root.join(".claude/rules/ts.md"), "Use TS.\n").unwrap();
+    std::os::unix::fs::symlink("CLAUDE.md", root.join("AGENTS.md")).unwrap();
+
+    migrate(root, "claude", "codex");
+
+    let agents = root.join("AGENTS.md");
+    assert!(fs::symlink_metadata(&agents).unwrap().file_type().is_file());
+    let text = fs::read_to_string(&agents).unwrap();
+    assert!(text.contains("Be helpful."), "{text}");
+    assert!(text.contains("## Rule: ts"), "{text}");
+    assert!(text.contains("Use TS."), "{text}");
+    assert!(!root.join("CLAUDE.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_migrate_does_not_write_through_a_link_to_the_sources_agents_md() {
+    // `CLAUDE.md -> AGENTS.md`, Codex to Claude Code: CLAUDE.md written
+    // through the link would strip the rules from the AGENTS.md Codex keeps
+    // reading, and the next sync would delete the migrated rule.
+    let source =
+        "# Instructions\nBe helpful.\n\n## Rule: TS\n<!-- activation: glob **/*.ts -->\nUse TS.\n";
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::write(root.join("AGENTS.md"), source).unwrap();
+    std::os::unix::fs::symlink("AGENTS.md", root.join("CLAUDE.md")).unwrap();
+
+    migrate(root, "codex", "claude");
+
+    assert_eq!(fs::read_to_string(root.join("AGENTS.md")).unwrap(), source);
+    let claude = root.join("CLAUDE.md");
+    assert!(fs::symlink_metadata(&claude).unwrap().file_type().is_file());
+    assert_eq!(
+        fs::read_to_string(&claude).unwrap(),
+        "# Instructions\nBe helpful.\n"
+    );
+    assert!(root.join(".claude/rules/ts.md").exists());
+}

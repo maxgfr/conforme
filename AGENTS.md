@@ -169,7 +169,12 @@ existing context files, Devin `global_rules.md` and `.windsurfrules`, Cursor `.c
 `.roorules`. With that tool as the source no target writes them
 (`sync::target_files` / `write_target`), `remove`/`migrate` never delete them,
 `gitignore install` never ignores them, and `target_config` treats a fallback
-skills root like a shared one.
+skills root like a shared one. A target file or directory that is a symbolic
+link to one of them, or to a directory the source manages (`CLAUDE.md ->
+AGENTS.md`, `.cursor/skills -> ../.claude/skills`), is the source under another
+name (`sync::is_source_file`, `is_one_of`): sync never writes through it nor
+generates an `AGENTS.md` over it, `remove` keeps it, `gitignore install` does
+not ignore it, and `migrate` replaces such an output link with the file itself.
 
 `reads_agents_md(project_root)` is true for Codex, OpenCode, DeepSeek, Vibe, Kilo and Antigravity CLI;
 for Claude Code when the project has no `CLAUDE.md` nor `.claude/CLAUDE.md` but
