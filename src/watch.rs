@@ -100,7 +100,11 @@ pub fn run_watch(project_root: &Path, only: Option<&[String]>, verbose: bool) ->
                 if touched && now != last {
                     println!("\n{} Change detected, syncing...", ">".cyan());
                     sync();
-                    last = fingerprint(&relevant_now);
+                    // The content synced, not the content after the sync: an
+                    // edit saved while it ran differs, so its event syncs
+                    // again (the sync's own AGENTS.md write at worst costs
+                    // one sync that changes nothing).
+                    last = now;
                 }
             }
             Ok(Err(errors)) => {
