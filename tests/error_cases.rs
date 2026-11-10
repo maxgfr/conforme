@@ -1040,3 +1040,29 @@ fn test_sync_refuses_to_replace_an_agents_md_it_cannot_read() {
 
     assert_eq!(fs::read(root.join("AGENTS.md")).unwrap(), original);
 }
+
+#[test]
+fn test_sync_refuses_skills_and_agents_without_a_name() {
+    // An empty name would become the skills or agents directory itself
+    // (`.claude/skills/SKILL.md`, `.claude/agents/.md`).
+    for section in [
+        "## Skill:  \n<!-- description: Deploy -->\nRun deploy.\n",
+        "## Agent:  \n<!-- description: Review -->\nReview code.\n",
+    ] {
+        let dir = create_project_with_tools(
+            &format!("# Instructions\nBe helpful.\n\n{section}"),
+            &["claude", "codex"],
+        );
+        let root = dir.path();
+
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("with empty name"));
+
+        assert!(!root.join(".claude/skills/SKILL.md").exists());
+        assert!(!root.join(".claude/agents/.md").exists());
+        assert!(!root.join(".codex/agents/.toml").exists());
+    }
+}

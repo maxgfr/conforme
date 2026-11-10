@@ -147,6 +147,9 @@ pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
         if skill.content.trim().is_empty() {
             warnings.push(format!("Skill '{}' has empty content", skill.name));
         }
+        if skill.name.trim().is_empty() {
+            errors.push("Skill with empty name found".to_string());
+        }
         if CLAUDE_RESERVED_SKILL_NAMES.contains(&sanitize_name(&skill.name).as_str()) {
             warnings.push(format!(
                 "Skill '{}' uses a name Claude Code reserves; Claude Code skips it",
@@ -175,6 +178,9 @@ pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
         }
         if agent.content.trim().is_empty() {
             warnings.push(format!("Agent '{}' has empty content", agent.name));
+        }
+        if agent.name.trim().is_empty() {
+            errors.push("Agent with empty name found".to_string());
         }
     }
     check_file_names(
@@ -240,6 +246,30 @@ mod tests {
             ..Default::default()
         };
         assert!(validate(&config, false));
+    }
+
+    #[test]
+    fn test_skill_and_agent_without_a_name_are_errors() {
+        let skill = NormalizedConfig {
+            skills: vec![NormalizedSkill {
+                name: " ".to_string(),
+                description: "Deploy".to_string(),
+                content: "Run deploy.".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(!validate(&skill, false));
+        let agent = NormalizedConfig {
+            agents: vec![NormalizedAgent {
+                name: String::new(),
+                description: "Review".to_string(),
+                content: "Review code.".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(!validate(&agent, false));
     }
 
     #[test]

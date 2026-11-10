@@ -62,7 +62,7 @@ src/
                        files, the source's own locations and its source_files() stay tracked
   project_config.rs  — .conformerc.toml parser (source, only, exclude, clean options); strict: an unknown key,
                        a parse error or an unknown or renamed tool id (RENAMED_IDS) is an error in every command
-  validate.rs        — Config validation (duplicate names, empty content, invalid globs,
+  validate.rs        — Config validation (duplicate or empty names, empty content, invalid globs,
                        names that sanitize to nothing or collide, skill descriptions over the 1024
                        characters Zoo Code and Vibe accept,
                        a rule whose file name becomes `general` while there are instructions — Cursor,
