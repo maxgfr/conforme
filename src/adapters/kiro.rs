@@ -139,7 +139,7 @@ impl AiToolAdapter for KiroAdapter {
             let mut fields = BTreeMap::new();
             fields.insert(
                 "inclusion".to_string(),
-                serde_yaml_ng::Value::String("always".to_string()),
+                serde_norway::Value::String("always".to_string()),
             );
             let content = frontmatter::serialize(&fields, &format!("{}\n", config.instructions))?;
             files.push((steering_dir.join("general.md"), content));
@@ -182,7 +182,7 @@ impl AiToolAdapter for KiroAdapter {
     }
 }
 
-fn parse_kiro_activation(fields: &BTreeMap<String, serde_yaml_ng::Value>) -> ActivationMode {
+fn parse_kiro_activation(fields: &BTreeMap<String, serde_norway::Value>) -> ActivationMode {
     let inclusion = fields
         .get("inclusion")
         .and_then(|v| v.as_str())
@@ -192,8 +192,8 @@ fn parse_kiro_activation(fields: &BTreeMap<String, serde_yaml_ng::Value>) -> Act
         "always" => ActivationMode::Always,
         "fileMatch" => {
             let patterns = fields.get("fileMatchPattern").and_then(|v| match v {
-                serde_yaml_ng::Value::String(s) => Some(vec![s.clone()]),
-                serde_yaml_ng::Value::Sequence(arr) => {
+                serde_norway::Value::String(s) => Some(vec![s.clone()]),
+                serde_norway::Value::Sequence(arr) => {
                     let p: Vec<String> = arr
                         .iter()
                         .filter_map(|item| item.as_str().map(|s| s.to_string()))
@@ -225,43 +225,43 @@ fn parse_kiro_activation(fields: &BTreeMap<String, serde_yaml_ng::Value>) -> Act
     }
 }
 
-fn build_kiro_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_ng::Value> {
+fn build_kiro_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_norway::Value> {
     let mut fields = BTreeMap::new();
 
     match &rule.activation {
         ActivationMode::Always => {
             fields.insert(
                 "inclusion".to_string(),
-                serde_yaml_ng::Value::String("always".to_string()),
+                serde_norway::Value::String("always".to_string()),
             );
         }
         ActivationMode::GlobMatch(globs) => {
             fields.insert(
                 "inclusion".to_string(),
-                serde_yaml_ng::Value::String("fileMatch".to_string()),
+                serde_norway::Value::String("fileMatch".to_string()),
             );
-            let yaml_globs: Vec<serde_yaml_ng::Value> = globs
+            let yaml_globs: Vec<serde_norway::Value> = globs
                 .iter()
-                .map(|g| serde_yaml_ng::Value::String(g.clone()))
+                .map(|g| serde_norway::Value::String(g.clone()))
                 .collect();
             fields.insert(
                 "fileMatchPattern".to_string(),
-                serde_yaml_ng::Value::Sequence(yaml_globs),
+                serde_norway::Value::Sequence(yaml_globs),
             );
         }
         ActivationMode::AgentDecision { description } => {
             fields.insert(
                 "inclusion".to_string(),
-                serde_yaml_ng::Value::String("auto".to_string()),
+                serde_norway::Value::String("auto".to_string()),
             );
             fields.insert(
                 "name".to_string(),
-                serde_yaml_ng::Value::String(rule_file_name(&rule.name)),
+                serde_norway::Value::String(rule_file_name(&rule.name)),
             );
             // `auto` rules require a description: Kiro decides from it.
             fields.insert(
                 "description".to_string(),
-                serde_yaml_ng::Value::String(crate::skills::description_or_name(
+                serde_norway::Value::String(crate::skills::description_or_name(
                     description,
                     &rule.name,
                 )),
@@ -270,11 +270,11 @@ fn build_kiro_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_ng::V
         ActivationMode::Manual => {
             fields.insert(
                 "inclusion".to_string(),
-                serde_yaml_ng::Value::String("manual".to_string()),
+                serde_norway::Value::String("manual".to_string()),
             );
             fields.insert(
                 "name".to_string(),
-                serde_yaml_ng::Value::String(rule_file_name(&rule.name)),
+                serde_norway::Value::String(rule_file_name(&rule.name)),
             );
         }
     }

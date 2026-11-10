@@ -233,7 +233,7 @@ impl AiToolAdapter for CopilotAdapter {
                         "applyTo".to_string(),
                         // Copilot splits `applyTo` on every comma, so brace
                         // groups are expanded first.
-                        serde_yaml_ng::Value::String(join_flat_globs(globs, ",")),
+                        serde_norway::Value::String(join_flat_globs(globs, ",")),
                     );
                     let content = frontmatter::serialize(&fields, &format!("{}\n", rule.content))?;
                     files.push((instr_dir.join(filename), content));

@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-pub(crate) type Fields = BTreeMap<String, serde_yaml_ng::Value>;
+pub(crate) type Fields = BTreeMap<String, serde_norway::Value>;
 
 /// Split a Markdown file into its `---` frontmatter block and its body. A
 /// leading BOM is skipped and CRLF line ends are accepted; without a closing
@@ -47,7 +47,7 @@ pub fn parse(content: &str) -> Result<(Fields, String)> {
     let fields = if yaml.trim().is_empty() {
         Fields::new()
     } else {
-        match serde_yaml_ng::from_str::<Fields>(&yaml) {
+        match serde_norway::from_str::<Fields>(&yaml) {
             Ok(fields) => fields,
             Err(_) => parse_lenient(&yaml)?,
         }
@@ -60,7 +60,7 @@ pub fn parse(content: &str) -> Result<(Fields, String)> {
 pub fn is_strict_yaml(content: &str) -> bool {
     split(content).is_none_or(|(yaml, _)| {
         let yaml = yaml.replace("\r\n", "\n");
-        yaml.trim().is_empty() || serde_yaml_ng::from_str::<Fields>(&yaml).is_ok()
+        yaml.trim().is_empty() || serde_norway::from_str::<Fields>(&yaml).is_ok()
     })
 }
 
@@ -99,7 +99,7 @@ fn parse_lenient(yaml: &str) -> Result<Fields> {
     let mut fields = Fields::new();
     for (key, lines) in entries {
         let block = lines.join("\n");
-        if let Ok(parsed) = serde_yaml_ng::from_str::<Fields>(&block) {
+        if let Ok(parsed) = serde_norway::from_str::<Fields>(&block) {
             fields.extend(parsed);
             continue;
         }
@@ -108,17 +108,17 @@ fn parse_lenient(yaml: &str) -> Result<Fields> {
             .map(|(_, value)| value.trim())
             .unwrap_or("");
         let value = if !inline.is_empty() {
-            serde_yaml_ng::Value::String(unquote(inline).to_string())
+            serde_norway::Value::String(unquote(inline).to_string())
         } else {
-            let items: Vec<serde_yaml_ng::Value> = lines[1..]
+            let items: Vec<serde_norway::Value> = lines[1..]
                 .iter()
                 .filter_map(|l| l.trim().strip_prefix('-'))
-                .map(|item| serde_yaml_ng::Value::String(unquote(item.trim()).to_string()))
+                .map(|item| serde_norway::Value::String(unquote(item.trim()).to_string()))
                 .collect();
             if items.is_empty() {
                 continue;
             }
-            serde_yaml_ng::Value::Sequence(items)
+            serde_norway::Value::Sequence(items)
         };
         fields.insert(key, value);
     }
@@ -152,8 +152,8 @@ pub fn serialize(fields: &Fields, body: &str) -> Result<String> {
         return Ok(body.to_string());
     }
 
-    let yaml = serde_yaml_ng::to_string(fields).context("failed to serialize frontmatter")?;
-    // serde_yaml_ng adds a trailing newline, trim it
+    let yaml = serde_norway::to_string(fields).context("failed to serialize frontmatter")?;
+    // serde_norway adds a trailing newline, trim it
     let yaml = yaml.trim_end();
 
     Ok(format!("---\n{}\n---\n\n{}", yaml, body))
@@ -182,7 +182,7 @@ mod tests {
         let (fields, body) = parse(input).unwrap();
         assert_eq!(
             fields.get("alwaysApply"),
-            Some(&serde_yaml_ng::Value::Bool(true))
+            Some(&serde_norway::Value::Bool(true))
         );
         assert!(body.contains("Body content here."));
     }
@@ -209,7 +209,7 @@ mod tests {
         let (fields, body) = parse("\u{feff}---\r\nalwaysApply: true\r\n---\r\nBody\r\n").unwrap();
         assert_eq!(
             fields.get("alwaysApply"),
-            Some(&serde_yaml_ng::Value::Bool(true))
+            Some(&serde_norway::Value::Bool(true))
         );
         assert_eq!(body.trim(), "Body");
     }
@@ -223,11 +223,11 @@ mod tests {
         assert_eq!(text("globs").as_deref(), Some("**/*.ts"));
         assert_eq!(
             fields.get("alwaysApply"),
-            Some(&serde_yaml_ng::Value::Bool(false))
+            Some(&serde_norway::Value::Bool(false))
         );
         assert_eq!(
             fields.get("tags"),
-            Some(&serde_yaml_ng::Value::Sequence(vec![
+            Some(&serde_norway::Value::Sequence(vec![
                 "a".into(),
                 "*b".into()
             ]))
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn test_serialize_roundtrip() {
         let mut fields = BTreeMap::new();
-        fields.insert("alwaysApply".to_string(), serde_yaml_ng::Value::Bool(true));
+        fields.insert("alwaysApply".to_string(), serde_norway::Value::Bool(true));
         let body = "Rule content here.";
         let output = serialize(&fields, body).unwrap();
         assert!(output.starts_with("---\n"));

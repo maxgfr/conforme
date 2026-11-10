@@ -211,7 +211,7 @@ impl AiToolAdapter for DevinAdapter {
             let mut fields = BTreeMap::new();
             fields.insert(
                 "trigger".to_string(),
-                serde_yaml_ng::Value::String("always_on".to_string()),
+                serde_norway::Value::String("always_on".to_string()),
             );
             let content = frontmatter::serialize(&fields, &format!("{}\n", config.instructions))?;
             files.push((rules_dir.join("general.md"), content));
@@ -246,7 +246,7 @@ impl AiToolAdapter for DevinAdapter {
 }
 
 pub(crate) fn parse_devin_activation(
-    fields: &BTreeMap<String, serde_yaml_ng::Value>,
+    fields: &BTreeMap<String, serde_norway::Value>,
 ) -> ActivationMode {
     let trigger = fields
         .get("trigger")
@@ -257,7 +257,7 @@ pub(crate) fn parse_devin_activation(
         "always_on" => ActivationMode::Always,
         "glob" => {
             let patterns = match fields.get("globs") {
-                Some(serde_yaml_ng::Value::Sequence(seq)) => seq
+                Some(serde_norway::Value::Sequence(seq)) => seq
                     .iter()
                     .filter_map(|v| v.as_str())
                     .flat_map(split_globs)
@@ -287,10 +287,10 @@ pub(crate) fn parse_devin_activation(
     }
 }
 
-pub(crate) fn build_devin_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_ng::Value> {
+pub(crate) fn build_devin_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_norway::Value> {
     let mut fields = BTreeMap::new();
     let mut set = |key: &str, value: String| {
-        fields.insert(key.to_string(), serde_yaml_ng::Value::String(value));
+        fields.insert(key.to_string(), serde_norway::Value::String(value));
     };
 
     match &rule.activation {

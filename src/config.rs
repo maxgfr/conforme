@@ -276,14 +276,14 @@ pub fn split_globs(globs: &str) -> Vec<String> {
 
 /// Read a glob frontmatter field written either as a YAML list or as a
 /// comma-separated string (`split_globs`); blank entries are dropped.
-pub fn yaml_globs(value: Option<&serde_yaml_ng::Value>) -> Vec<String> {
+pub fn yaml_globs(value: Option<&serde_norway::Value>) -> Vec<String> {
     match value {
-        Some(serde_yaml_ng::Value::Sequence(items)) => items
+        Some(serde_norway::Value::Sequence(items)) => items
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
             .filter(|s| !s.is_empty())
             .collect(),
-        Some(serde_yaml_ng::Value::String(s)) => split_globs(s),
+        Some(serde_norway::Value::String(s)) => split_globs(s),
         _ => Vec::new(),
     }
 }

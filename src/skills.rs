@@ -9,10 +9,10 @@ use crate::frontmatter;
 /// comma-separated, e.g. `Read, Bash Write`) or a YAML sequence. Spaces and
 /// commas inside parentheses belong to the tool (`Bash(git add:*)`). Shared
 /// by the per-tool skill/agent readers.
-pub(crate) fn parse_frontmatter_tool_list(value: Option<&serde_yaml_ng::Value>) -> Vec<String> {
+pub(crate) fn parse_frontmatter_tool_list(value: Option<&serde_norway::Value>) -> Vec<String> {
     match value {
-        Some(serde_yaml_ng::Value::String(s)) => split_tool_list(s),
-        Some(serde_yaml_ng::Value::Sequence(seq)) => seq
+        Some(serde_norway::Value::String(s)) => split_tool_list(s),
+        Some(serde_norway::Value::Sequence(seq)) => seq
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
             .filter(|s| !s.is_empty())
@@ -333,15 +333,15 @@ pub(crate) fn read_flat_skills_from_dir(skills_dir: &Path) -> Result<Vec<Normali
 /// A frontmatter boolean. Claude Code documents that boolean fields accept
 /// `yes`/`no`, `on`/`off` and `1`/`0` besides `true`/`false`; YAML 1.2
 /// parses those as strings or integers, so they are matched here.
-pub(crate) fn yaml_flag(value: &serde_yaml_ng::Value) -> Option<bool> {
+pub(crate) fn yaml_flag(value: &serde_norway::Value) -> Option<bool> {
     match value {
-        serde_yaml_ng::Value::Bool(b) => Some(*b),
-        serde_yaml_ng::Value::Number(n) => match n.as_i64() {
+        serde_norway::Value::Bool(b) => Some(*b),
+        serde_norway::Value::Number(n) => match n.as_i64() {
             Some(1) => Some(true),
             Some(0) => Some(false),
             _ => None,
         },
-        serde_yaml_ng::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+        serde_norway::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
             "true" | "yes" | "on" | "1" => Some(true),
             "false" | "no" | "off" | "0" => Some(false),
             _ => None,
@@ -352,14 +352,14 @@ pub(crate) fn yaml_flag(value: &serde_yaml_ng::Value) -> Option<bool> {
 
 /// Read explicit-only settings from supported skill metadata.
 pub(crate) fn read_manual_invocation(
-    fields: &BTreeMap<String, serde_yaml_ng::Value>,
+    fields: &BTreeMap<String, serde_norway::Value>,
     skill_dir: &Path,
 ) -> Result<bool> {
     if fields.get("disable-model-invocation").and_then(yaml_flag) == Some(true) {
         return Ok(true);
     }
     // Devin: `triggers` lists who may invoke the skill (`user`, `model`).
-    if let Some(serde_yaml_ng::Value::Sequence(triggers)) = fields.get("triggers") {
+    if let Some(serde_norway::Value::Sequence(triggers)) = fields.get("triggers") {
         return Ok(!triggers.iter().any(|t| t.as_str() == Some("model")));
     }
     // OpenCode 2's own key (https://opencode.ai/docs/skills/), which
@@ -375,8 +375,8 @@ pub(crate) fn read_manual_invocation(
     }
     let policy_path = skill_dir.join("agents/openai.yaml");
     if policy_path.exists() {
-        let value: serde_yaml_ng::Value =
-            serde_yaml_ng::from_str(&crate::config::read_text(&policy_path)?)?;
+        let value: serde_norway::Value =
+            serde_norway::from_str(&crate::config::read_text(&policy_path)?)?;
         return Ok(value
             .get("policy")
             .and_then(|v| v.get("allow_implicit_invocation"))
@@ -399,7 +399,7 @@ pub(crate) fn description_or_name(description: &str, name: &str) -> String {
 }
 
 fn add_invocation_fields(
-    fields: &mut BTreeMap<String, serde_yaml_ng::Value>,
+    fields: &mut BTreeMap<String, serde_norway::Value>,
     skill: &NormalizedSkill,
 ) {
     if !skill.manual_invocation {
@@ -407,7 +407,7 @@ fn add_invocation_fields(
     }
     fields.insert(
         "disable-model-invocation".into(),
-        serde_yaml_ng::Value::Bool(true),
+        serde_norway::Value::Bool(true),
     );
 }
 
@@ -425,22 +425,22 @@ fn invocation_policy(
     if !path.exists() && !(create && skill.manual_invocation) {
         return Ok(None);
     }
-    let mut fields: BTreeMap<String, serde_yaml_ng::Value> = if path.exists() {
-        serde_yaml_ng::from_str(&crate::config::read_text(&path)?)?
+    let mut fields: BTreeMap<String, serde_norway::Value> = if path.exists() {
+        serde_norway::from_str(&crate::config::read_text(&path)?)?
     } else {
         BTreeMap::new()
     };
     let policy = fields
         .entry("policy".into())
-        .or_insert_with(|| serde_yaml_ng::Value::Mapping(Default::default()));
+        .or_insert_with(|| serde_norway::Value::Mapping(Default::default()));
     let policy = policy.as_mapping_mut().ok_or_else(|| {
         anyhow::anyhow!("skill policy must be a YAML mapping: {}", path.display())
     })?;
     policy.insert(
         "allow_implicit_invocation".into(),
-        serde_yaml_ng::Value::Bool(!skill.manual_invocation),
+        serde_norway::Value::Bool(!skill.manual_invocation),
     );
-    Ok(Some((path, serde_yaml_ng::to_string(&fields)?)))
+    Ok(Some((path, serde_norway::to_string(&fields)?)))
 }
 
 /// Read `<dir>/*.md` agent files into `NormalizedAgent`s (the common frontmatter
@@ -616,15 +616,15 @@ pub fn generate_skills(
         let skill_dir = skills_dir.join(&skill_name);
 
         let mut fields = BTreeMap::new();
-        fields.insert("name".to_string(), serde_yaml_ng::Value::String(skill_name));
+        fields.insert("name".to_string(), serde_norway::Value::String(skill_name));
         fields.insert(
             "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&skill.description, &skill.name)),
+            serde_norway::Value::String(description_or_name(&skill.description, &skill.name)),
         );
         if shape.allowed_tools && !skill.allowed_tools.is_empty() {
             fields.insert(
                 "allowed-tools".to_string(),
-                serde_yaml_ng::Value::String(skill.allowed_tools.join(" ")),
+                serde_norway::Value::String(skill.allowed_tools.join(" ")),
             );
         }
         match shape.manual {
@@ -632,7 +632,7 @@ pub fn generate_skills(
             ManualInvocation::UserTrigger if skill.manual_invocation => {
                 fields.insert(
                     "triggers".to_string(),
-                    serde_yaml_ng::Value::Sequence(vec!["user".into()]),
+                    serde_norway::Value::Sequence(vec!["user".into()]),
                 );
             }
             ManualInvocation::UserTrigger => {}
@@ -890,27 +890,27 @@ pub fn generate_copilot_agents(
         let mut fields = BTreeMap::new();
         fields.insert(
             "name".to_string(),
-            serde_yaml_ng::Value::String(agent.name.clone()),
+            serde_norway::Value::String(agent.name.clone()),
         );
         fields.insert(
             "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
+            serde_norway::Value::String(description_or_name(&agent.description, &agent.name)),
         );
         if let Some(model) = copilot_model(agent.model.as_deref()) {
             fields.insert(
                 "model".to_string(),
-                serde_yaml_ng::Value::String(model.to_string()),
+                serde_norway::Value::String(model.to_string()),
             );
         }
         if !agent.tools.is_empty() {
-            let yaml_tools: Vec<serde_yaml_ng::Value> = agent
+            let yaml_tools: Vec<serde_norway::Value> = agent
                 .tools
                 .iter()
-                .map(|t| serde_yaml_ng::Value::String(t.clone()))
+                .map(|t| serde_norway::Value::String(t.clone()))
                 .collect();
             fields.insert(
                 "tools".to_string(),
-                serde_yaml_ng::Value::Sequence(yaml_tools),
+                serde_norway::Value::Sequence(yaml_tools),
             );
         }
 
@@ -934,16 +934,16 @@ pub fn generate_claude_agents(
         let mut fields = BTreeMap::new();
         fields.insert(
             "name".to_string(),
-            serde_yaml_ng::Value::String(sanitize_name(&agent.name)),
+            serde_norway::Value::String(sanitize_name(&agent.name)),
         );
         fields.insert(
             "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
+            serde_norway::Value::String(description_or_name(&agent.description, &agent.name)),
         );
         if let Some(model) = claude_model(agent.model.as_deref()) {
             fields.insert(
                 "model".to_string(),
-                serde_yaml_ng::Value::String(model.to_string()),
+                serde_norway::Value::String(model.to_string()),
             );
         }
         // Names from other hosts are translated; a list in which nothing
@@ -953,19 +953,19 @@ pub fn generate_claude_agents(
         if !tools.is_empty() {
             fields.insert(
                 "tools".to_string(),
-                serde_yaml_ng::Value::String(tools.join(", ")),
+                serde_norway::Value::String(tools.join(", ")),
             );
         }
         if let Some(color) = &agent.color {
             fields.insert(
                 "color".to_string(),
-                serde_yaml_ng::Value::String(color.clone()),
+                serde_norway::Value::String(color.clone()),
             );
         }
         if let Some(permission_mode) = &agent.permission_mode {
             fields.insert(
                 "permissionMode".to_string(),
-                serde_yaml_ng::Value::String(permission_mode.clone()),
+                serde_norway::Value::String(permission_mode.clone()),
             );
         }
 
@@ -993,16 +993,16 @@ pub fn generate_cursor_agents(
         // Cursor subagent names use lowercase letters and hyphens.
         fields.insert(
             "name".to_string(),
-            serde_yaml_ng::Value::String(sanitize_name(&agent.name)),
+            serde_norway::Value::String(sanitize_name(&agent.name)),
         );
         fields.insert(
             "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
+            serde_norway::Value::String(description_or_name(&agent.description, &agent.name)),
         );
         if let Some(model) = cursor_model(agent.model.as_deref()) {
             fields.insert(
                 "model".to_string(),
-                serde_yaml_ng::Value::String(model.to_string()),
+                serde_norway::Value::String(model.to_string()),
             );
         }
 
@@ -1028,12 +1028,12 @@ pub fn generate_kiro_agents(
         let mut fields = BTreeMap::new();
         fields.insert(
             "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
+            serde_norway::Value::String(description_or_name(&agent.description, &agent.name)),
         );
         if let Some(model) = kiro_model(agent.model.as_deref()) {
             fields.insert(
                 "model".to_string(),
-                serde_yaml_ng::Value::String(model.to_string()),
+                serde_norway::Value::String(model.to_string()),
             );
         }
         insert_tool_list(&mut fields, &kiro_tools(&agent.tools));
@@ -1396,17 +1396,17 @@ fn translate_tools(
 }
 
 /// Insert `tools` as a YAML list, or leave it out when empty.
-fn insert_tool_list(fields: &mut BTreeMap<String, serde_yaml_ng::Value>, tools: &[String]) {
+fn insert_tool_list(fields: &mut BTreeMap<String, serde_norway::Value>, tools: &[String]) {
     if tools.is_empty() {
         return;
     }
     let yaml_tools = tools
         .iter()
-        .map(|t| serde_yaml_ng::Value::String(t.clone()))
+        .map(|t| serde_norway::Value::String(t.clone()))
         .collect();
     fields.insert(
         "tools".to_string(),
-        serde_yaml_ng::Value::Sequence(yaml_tools),
+        serde_norway::Value::Sequence(yaml_tools),
     );
 }
 
@@ -1424,21 +1424,21 @@ pub fn generate_gemini_agents(
         let mut fields = BTreeMap::new();
         fields.insert(
             "name".to_string(),
-            serde_yaml_ng::Value::String(sanitize_name(&agent.name)),
+            serde_norway::Value::String(sanitize_name(&agent.name)),
         );
         fields.insert(
             "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
+            serde_norway::Value::String(description_or_name(&agent.description, &agent.name)),
         );
         fields.insert(
             "kind".to_string(),
-            serde_yaml_ng::Value::String("local".to_string()),
+            serde_norway::Value::String("local".to_string()),
         );
         insert_tool_list(&mut fields, &gemini_tools(&agent.tools));
         if let Some(model) = gemini_model(agent.model.as_deref()) {
             fields.insert(
                 "model".to_string(),
-                serde_yaml_ng::Value::String(model.to_string()),
+                serde_norway::Value::String(model.to_string()),
             );
         }
 
@@ -1478,16 +1478,16 @@ fn generate_opencode_style_agents(
         let mut fields = BTreeMap::new();
         fields.insert(
             "description".to_string(),
-            serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
+            serde_norway::Value::String(description_or_name(&agent.description, &agent.name)),
         );
         fields.insert(
             "mode".to_string(),
-            serde_yaml_ng::Value::String("subagent".to_string()),
+            serde_norway::Value::String("subagent".to_string()),
         );
         if let Some(model) = opencode_model(agent.model.as_deref()) {
             fields.insert(
                 "model".to_string(),
-                serde_yaml_ng::Value::String(model.to_string()),
+                serde_norway::Value::String(model.to_string()),
             );
         }
 
@@ -1575,7 +1575,7 @@ mod tests {
 
     #[test]
     fn test_tool_list_all_forms() {
-        use serde_yaml_ng::Value;
+        use serde_norway::Value;
         // Comma-separated string
         assert_eq!(
             parse_frontmatter_tool_list(Some(&Value::String("Read, Bash, Write".to_string()))),

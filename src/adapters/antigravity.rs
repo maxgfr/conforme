@@ -45,14 +45,14 @@ fn is_builtin_agent_file(path: &Path) -> bool {
             .and_then(|fields| {
                 fields
                     .get("name")
-                    .and_then(serde_yaml_ng::Value::as_str)
+                    .and_then(serde_norway::Value::as_str)
                     .map(|name| is_builtin_agent(name.trim()))
             })
             .unwrap_or(false)
 }
 
 /// The frontmatter of an agent file, when it exists and parses.
-fn agent_file_fields(path: &Path) -> Option<BTreeMap<String, serde_yaml_ng::Value>> {
+fn agent_file_fields(path: &Path) -> Option<BTreeMap<String, serde_norway::Value>> {
     let content = crate::config::read_text(path).ok()?;
     frontmatter::parse(&content).ok().map(|(fields, _)| fields)
 }
@@ -60,7 +60,7 @@ fn agent_file_fields(path: &Path) -> Option<BTreeMap<String, serde_yaml_ng::Valu
 /// The `tools` value an existing `.agents/agents/<name>.md` holds. conforme
 /// cannot translate tool names into Antigravity's (they are undocumented), so
 /// the user's own restriction there is kept as written.
-fn existing_agent_tools(project_root: &Path, name: &str) -> Option<serde_yaml_ng::Value> {
+fn existing_agent_tools(project_root: &Path, name: &str) -> Option<serde_norway::Value> {
     agent_file_fields(&agents_dir(project_root).join(format!("{name}.md")))?.remove("tools")
 }
 
@@ -263,14 +263,14 @@ impl AiToolAdapter for AntigravityAdapter {
             let mut fields = BTreeMap::new();
             fields.insert(
                 "name".to_string(),
-                serde_yaml_ng::Value::String(name.clone()),
+                serde_norway::Value::String(name.clone()),
             );
             fields.insert(
                 "description".to_string(),
-                serde_yaml_ng::Value::String(description_or_name(&agent.description, &agent.name)),
+                serde_norway::Value::String(description_or_name(&agent.description, &agent.name)),
             );
             if let Some(model) = agent.model.as_deref().and_then(antigravity_model) {
-                fields.insert("model".to_string(), serde_yaml_ng::Value::String(model));
+                fields.insert("model".to_string(), serde_norway::Value::String(model));
             }
             // Tool names are not translated (Antigravity's are undocumented);
             // a `tools` the user wrote in the target file is kept as written.
@@ -797,8 +797,8 @@ mod tests {
         let (fields, body) = frontmatter::parse(content).unwrap();
         assert_eq!(
             fields.get("tools"),
-            Some(&serde_yaml_ng::Value::Sequence(vec![
-                serde_yaml_ng::Value::String("read_file".to_string())
+            Some(&serde_norway::Value::Sequence(vec![
+                serde_norway::Value::String("read_file".to_string())
             ])),
             "{content}"
         );

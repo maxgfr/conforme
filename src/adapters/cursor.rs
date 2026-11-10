@@ -180,7 +180,7 @@ impl AiToolAdapter for CursorAdapter {
 
         if !config.instructions.is_empty() {
             let mut fields = BTreeMap::new();
-            fields.insert("alwaysApply".to_string(), serde_yaml_ng::Value::Bool(true));
+            fields.insert("alwaysApply".to_string(), serde_norway::Value::Bool(true));
             let content = frontmatter::serialize(&fields, &format!("{}\n", config.instructions))?;
             files.push((rules_dir.join("general.mdc"), content));
         }
@@ -223,7 +223,7 @@ impl AiToolAdapter for CursorAdapter {
     }
 }
 
-fn parse_cursor_activation(fields: &BTreeMap<String, serde_yaml_ng::Value>) -> ActivationMode {
+fn parse_cursor_activation(fields: &BTreeMap<String, serde_norway::Value>) -> ActivationMode {
     let always_apply = fields
         .get("alwaysApply")
         .and_then(|v| v.as_bool())
@@ -246,39 +246,39 @@ fn parse_cursor_activation(fields: &BTreeMap<String, serde_yaml_ng::Value>) -> A
     }
 }
 
-fn build_cursor_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_yaml_ng::Value> {
+fn build_cursor_fields(rule: &NormalizedRule) -> BTreeMap<String, serde_norway::Value> {
     let mut fields = BTreeMap::new();
 
     match &rule.activation {
         ActivationMode::Always => {
-            fields.insert("alwaysApply".to_string(), serde_yaml_ng::Value::Bool(true));
+            fields.insert("alwaysApply".to_string(), serde_norway::Value::Bool(true));
         }
         ActivationMode::GlobMatch(globs) => {
             fields.insert(
                 "description".to_string(),
-                serde_yaml_ng::Value::String(rule.name.clone()),
+                serde_norway::Value::String(rule.name.clone()),
             );
             fields.insert(
                 "globs".to_string(),
                 // "Separate multiple patterns with commas": brace groups are
                 // expanded so that split keeps them whole.
-                serde_yaml_ng::Value::String(join_flat_globs(globs, ", ")),
+                serde_norway::Value::String(join_flat_globs(globs, ", ")),
             );
-            fields.insert("alwaysApply".to_string(), serde_yaml_ng::Value::Bool(false));
+            fields.insert("alwaysApply".to_string(), serde_norway::Value::Bool(false));
         }
         ActivationMode::AgentDecision { description } => {
             // Without a description Cursor would read the rule as Manual.
             fields.insert(
                 "description".to_string(),
-                serde_yaml_ng::Value::String(crate::skills::description_or_name(
+                serde_norway::Value::String(crate::skills::description_or_name(
                     description,
                     &rule.name,
                 )),
             );
-            fields.insert("alwaysApply".to_string(), serde_yaml_ng::Value::Bool(false));
+            fields.insert("alwaysApply".to_string(), serde_norway::Value::Bool(false));
         }
         ActivationMode::Manual => {
-            fields.insert("alwaysApply".to_string(), serde_yaml_ng::Value::Bool(false));
+            fields.insert("alwaysApply".to_string(), serde_norway::Value::Bool(false));
         }
     }
 
@@ -563,8 +563,8 @@ mod tests {
         assert!(files.is_empty());
     }
 
-    fn fields(yaml: &str) -> BTreeMap<String, serde_yaml_ng::Value> {
-        serde_yaml_ng::from_str(yaml).unwrap()
+    fn fields(yaml: &str) -> BTreeMap<String, serde_norway::Value> {
+        serde_norway::from_str(yaml).unwrap()
     }
 
     #[test]

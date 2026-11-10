@@ -485,13 +485,13 @@ impl AiToolAdapter for ClaudeAdapter {
             for (rule, filename) in rule_files {
                 let mut fields = BTreeMap::new();
                 if let ActivationMode::GlobMatch(globs) = &rule.activation {
-                    let yaml_globs: Vec<serde_yaml_ng::Value> = globs
+                    let yaml_globs: Vec<serde_norway::Value> = globs
                         .iter()
-                        .map(|g| serde_yaml_ng::Value::String(g.clone()))
+                        .map(|g| serde_norway::Value::String(g.clone()))
                         .collect();
                     fields.insert(
                         "paths".to_string(),
-                        serde_yaml_ng::Value::Sequence(yaml_globs),
+                        serde_norway::Value::Sequence(yaml_globs),
                     );
                 }
 

@@ -1451,7 +1451,7 @@ fn manual_skill_invocation_survives_every_skill_adapter() {
             .any(|(p, _)| p.starts_with(dir.path().join(".agents/skills")));
         assert_eq!(policy.is_some(), in_codex_root, "{}", adapter.id());
         if let Some(policy) = policy {
-            let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(&policy.1).unwrap();
+            let value: serde_norway::Value = serde_norway::from_str(&policy.1).unwrap();
             assert_eq!(
                 value["policy"]["allow_implicit_invocation"].as_bool(),
                 Some(false)
@@ -1500,8 +1500,8 @@ fn codex_policy_import_and_explicit_reenable_preserve_other_fields() {
     assert!(config.skills[0].manual_invocation);
     config.skills[0].manual_invocation = false;
     adapter.write(dir.path(), &config).unwrap();
-    let value: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&fs::read_to_string(policy).unwrap()).unwrap();
+    let value: serde_norway::Value =
+        serde_norway::from_str(&fs::read_to_string(policy).unwrap()).unwrap();
     assert_eq!(
         value["policy"]["allow_implicit_invocation"].as_bool(),
         Some(true)
@@ -1541,8 +1541,8 @@ fn existing_policy_sidecar_follows_the_source_in_every_skills_root() {
 
         adapter.write(dir.path(), &config).unwrap();
 
-        let value: serde_yaml_ng::Value =
-            serde_yaml_ng::from_str(&fs::read_to_string(&policy).unwrap()).unwrap();
+        let value: serde_norway::Value =
+            serde_norway::from_str(&fs::read_to_string(&policy).unwrap()).unwrap();
         assert_eq!(
             value["policy"]["allow_implicit_invocation"].as_bool(),
             Some(true),
