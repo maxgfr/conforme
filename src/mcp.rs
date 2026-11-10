@@ -695,8 +695,12 @@ pub fn parse_codex_mcp_toml(content: &str) -> Result<Vec<NormalizedMcpServer>> {
             )?;
             let args = toml_string_array(entry, "args", name)?;
             let mut env = toml_string_map(entry, "env", name)?;
+            // A name set in `env` too keeps its literal value: Codex applies
+            // `env` over the variables it forwards
+            // (`create_env_for_mcp_server`, codex-rs/rmcp-client/src/utils.rs).
             for var in codex_env_vars(entry, name)? {
-                env.insert(var.clone(), format!("${{{var}}}"));
+                env.entry(var.clone())
+                    .or_insert_with(|| format!("${{{var}}}"));
             }
             (McpTransport::Stdio { command, args }, env)
         } else {
@@ -2357,6 +2361,14 @@ callback_port = 5555
         let existing = "[mcp_servers.fs]\ncommand = \"node\"\nenv_vars = [{ name = \"R\", source = \"remote\" }]\n";
         let merged = merge_codex_mcp_toml(existing, &[stdio(&[])]).unwrap();
         assert!(merged.contains("source = \"remote\""), "{merged}");
+    }
+
+    #[test]
+    fn test_parse_codex_literal_env_wins_over_a_forwarded_name() {
+        let content = "[mcp_servers.fs]\ncommand = \"node\"\nenv = { TOKEN = \"abc\" }\nenv_vars = [\"TOKEN\", \"OTHER\"]\n";
+        let servers = parse_codex_mcp_toml(content).unwrap();
+        assert_eq!(servers[0].env["TOKEN"], "abc");
+        assert_eq!(servers[0].env["OTHER"], "${OTHER}");
     }
 
     #[test]
