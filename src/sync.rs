@@ -16,6 +16,19 @@ fn find_adapter(id: &str) -> Option<Box<dyn AiToolAdapter>> {
     adapters::all_adapters().into_iter().find(|a| a.id() == id)
 }
 
+/// Whether `path` is one of `dirs`, spelled alike or reached through a
+/// symbolic link (`.cursor/skills -> ../.claude/skills`).
+fn is_one_of(path: &Path, dirs: &[std::path::PathBuf]) -> bool {
+    if dirs.iter().any(|dir| dir == path) {
+        return true;
+    }
+    let Ok(canonical) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    dirs.iter()
+        .any(|dir| std::fs::canonicalize(dir).is_ok_and(|dir| dir == canonical))
+}
+
 /// The config a target tool is generated from. When the target writes skills
 /// into a directory the source tool reads its own skills from
 /// (`.agents/skills/` is shared by Codex and Zed), that directory is
@@ -42,7 +55,10 @@ fn target_config<'a>(
     // `.agents/skills` when `.dsh/skills` is empty).
     let mut source_dirs = skills_dirs(source.as_ref());
     source_dirs.extend(source.source_files(project_root));
-    if skills_dirs(target).iter().any(|d| source_dirs.contains(d)) {
+    if skills_dirs(target)
+        .iter()
+        .any(|d| is_one_of(d, &source_dirs))
+    {
         let mut stripped = config.clone();
         stripped.skills.clear();
         std::borrow::Cow::Owned(stripped)
@@ -72,7 +88,7 @@ fn target_managed_dirs(
     target
         .managed_directories(project_root)
         .into_iter()
-        .filter(|dir| !source_dirs.contains(&dir.path))
+        .filter(|dir| !is_one_of(&dir.path, &source_dirs))
         .collect()
 }
 

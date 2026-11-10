@@ -122,7 +122,7 @@ src/
   adapters/
     mod.rs          — AiToolAdapter trait + registry + shared write_files (atomic for is_shared_file paths),
                        write_if_changed, contents_match (line ends aside), is_real_dir (walks never follow a
-                       linked directory), push_inline_rule, is_instructions_file (only the top-level `general`) +
+                       linked directory, a linked skill folder is never an orphan), push_inline_rule, is_instructions_file (only the top-level `general`) +
                        collect_rule_files (recursive rules-dir scan, sorted by base name) +
                        ManagedDir (`recursive`: the tool reads nested files there, so migrate moves them) / find_orphans (what sync would remove, including skill folders that hold the
                        `.conforme` marker but left the source; check, diff and status report it) /

@@ -239,7 +239,7 @@ pub fn find_orphans(
             .collect();
         paths.sort();
         let Some(suffix) = dir.orphan_suffix else {
-            for folder in paths.iter().filter(|p| p.is_dir()) {
+            for folder in paths.iter().filter(|p| is_real_dir(p)) {
                 orphans.extend(crate::skills::stale_bundled_files(folder, &expected_set)?);
                 orphans.extend(crate::skills::stale_skill_folder_files(
                     folder,
@@ -357,7 +357,7 @@ fn clean_superseded_skills(
     let mut entries: Vec<PathBuf> = std::fs::read_dir(legacy)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.is_dir())
+        .filter(|p| is_real_dir(p))
         .collect();
     entries.sort();
     for skill_dir in entries {
@@ -600,6 +600,28 @@ fn collect_rule_files_into(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn test_find_orphans_does_not_walk_a_linked_skill_folder() {
+        // A skill folder that is a link points at files outside the managed
+        // directory (a shared skill): it is never conforme's to delete.
+        let project = tempfile::TempDir::new().unwrap();
+        let shared = project.path().join("shared").join("deploy");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(
+            shared.join("SKILL.md"),
+            "---\nname: deploy\n---\n\nShared.\n",
+        )
+        .unwrap();
+        std::fs::write(shared.join(crate::skills::SKILL_MARKER), "").unwrap();
+        let skills = project.path().join(".cursor").join("skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        std::os::unix::fs::symlink(&shared, skills.join("deploy")).unwrap();
+
+        let orphans = find_orphans(&[ManagedDir::subdirs(skills)], &[]).unwrap();
+        assert!(orphans.is_empty(), "{orphans:?}");
+    }
 
     #[test]
     fn test_contents_match_ignores_line_ends_only() {

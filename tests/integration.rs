@@ -4633,3 +4633,30 @@ fn test_migrate_keeps_nested_files_the_source_does_not_read() {
     );
     assert_eq!(fs::read_to_string(&skill_notes).unwrap(), "Not a skill.\n");
 }
+
+#[cfg(unix)]
+#[test]
+fn test_sync_leaves_source_skills_behind_a_symlinked_target_dir_alone() {
+    // `.cursor/skills` linked to `.claude/skills` is the source's own skills
+    // root under another name: Cursor must not rewrite the source's SKILL.md
+    // through it (Cursor drops `allowed-tools`).
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    fs::create_dir_all(root.join(".claude/skills/deploy")).unwrap();
+    let skill = root.join(".claude/skills/deploy/SKILL.md");
+    let original = "---\nname: deploy\ndescription: Deploy the app\nallowed-tools: Bash\n---\n\nRun the deploy.\n";
+    fs::write(&skill, original).unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    std::os::unix::fs::symlink("../.claude/skills", root.join(".cursor/skills")).unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert_eq!(fs::read_to_string(&skill).unwrap(), original);
+    assert!(!root.join(".claude/skills/deploy/.conforme").exists());
+    assert!(root.join(".cursor/rules/general.mdc").exists());
+}
