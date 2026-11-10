@@ -27,9 +27,10 @@ src/
                        selected_targets (detection + only/exclude) is the one target set of sync, check,
                        diff and status; target_files/write_target leave out the source's source_files() and any
                        file reached through a link into what the source reads (`CLAUDE.md -> AGENTS.md`,
-                       `.cursor/skills -> ../.claude/skills`: is_source_file, is_one_of, LinkWalk against
-                       source_read_paths), remove and migrate never delete through such a link, migrate replaces
-                       such an output link with a file or directory of its own;
+                       `.cursor/skills -> ../.claude/skills`: is_source_file, is_one_of, LinkWalk and is_beneath
+                       against source_read_paths) or that the source reads through its own link; remove and migrate
+                       never delete a file that really is the source's or a staying tool's, migrate replaces an
+                       output link into the source with a file or directory of its own;
                        generated_agents_md is compared by check and diff too; check validates the config;
                        status shows excluded tools as "Excluded" and AGENTS.md as "Source's own file" /
                        "Generated output" / "Not managed";

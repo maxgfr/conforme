@@ -99,21 +99,34 @@ fn source_locations(project_root: &Path, source_id: &str) -> Vec<std::path::Path
     locations
 }
 
-/// Everything the source may read — the locations `watch` follows, its
-/// managed directories and its [`source_files`] — with symbolic links
-/// resolved: what a path that goes through a link is compared with (see
-/// [`LinkWalk`]).
-fn source_read_paths(project_root: &Path, source_id: &str) -> Vec<std::path::PathBuf> {
+/// The files the source holds for `config` — what it generates, which is
+/// what it reads back, its settings files included — with its managed
+/// directories and its [`source_files`], symbolic links resolved: what a
+/// path that goes through a link is compared with (see [`LinkWalk`]). A
+/// fallback location the source does not read in this project (Mistral
+/// Vibe's `.agents/skills` when `.vibe/skills` holds skills) is not one.
+fn source_read_paths(
+    project_root: &Path,
+    source_id: &str,
+    config: &NormalizedConfig,
+) -> Vec<std::path::PathBuf> {
     let mut paths = source_locations(project_root, source_id);
-    paths.extend(
-        crate::watch::source_locations(source_id)
-            .iter()
-            .map(|location| project_root.join(location)),
-    );
+    if let Some(Ok(files)) = find_adapter(source_id).map(|a| a.generate(project_root, config)) {
+        paths.extend(files.into_iter().map(|(path, _)| path));
+    }
     let mut resolved: Vec<_> = paths.iter().map(|p| adapters::resolved_path(p)).collect();
     resolved.sort();
     resolved.dedup();
     resolved
+}
+
+/// Whether `path`, once its symbolic links are resolved, is one of `resolved`
+/// (paths resolved likewise) or beneath one.
+fn is_beneath(path: &Path, resolved: &[std::path::PathBuf]) -> bool {
+    !resolved.is_empty() && {
+        let real = adapters::resolved_path(path);
+        resolved.iter().any(|location| real.starts_with(location))
+    }
 }
 
 /// The symbolic links on the way to the files of a project, each directory
@@ -151,13 +164,21 @@ impl<'a> LinkWalk<'a> {
         None
     }
 
-    /// Whether `path` goes through a symbolic link and really is one of
-    /// `resolved` (paths with their links resolved) or beneath one.
-    fn leads_into(&mut self, path: &Path, resolved: &[std::path::PathBuf]) -> bool {
-        self.first_link(path).is_some() && {
-            let real = adapters::resolved_path(path);
-            resolved.iter().any(|location| real.starts_with(location))
-        }
+    /// Those of `paths` that go through a symbolic link, resolved: where the
+    /// files a tool reaches through its links really are. A file spelled
+    /// without any link may be one of them (`.claude/skills/x/SKILL.md` when
+    /// `.agents/skills -> ../.claude/skills`); see [`is_beneath`].
+    fn linked<'p>(
+        &mut self,
+        paths: impl Iterator<Item = &'p std::path::PathBuf>,
+    ) -> Vec<std::path::PathBuf> {
+        let mut resolved: Vec<_> = paths
+            .filter(|path| self.first_link(path).is_some())
+            .map(|path| adapters::resolved_path(path))
+            .collect();
+        resolved.sort();
+        resolved.dedup();
+        resolved
     }
 }
 
@@ -269,21 +290,27 @@ fn target_output(
     config: &NormalizedConfig,
     source_files: &[std::path::PathBuf],
 ) -> Result<TargetOutput> {
+    let source_config = config;
     let config = target_config(project_root, source_id, target, config);
     let expected = target.generate(project_root, &config)?;
-    // A file of the target reached through a link into what the source reads
+    // A file of the target that really is one of the source's is not
+    // written: one reached through a link into what the source reads
     // (`.kiro/steering -> ../.claude/rules`, `.cursor/mcp.json ->
-    // ../.mcp.json`) is the source's own file: it is not written.
+    // ../.mcp.json`), or one the source reads through a link of its own
+    // (`.claude/rules -> ../.kiro/steering`, Claude Code the source).
     let mut walk = LinkWalk::new(project_root);
+    let linked_sources = walk.linked(source_locations(project_root, source_id).iter());
     let mut source_paths = None;
     let files = expected
         .iter()
         .filter(|(path, _)| {
             !is_source_file(path, source_files)
+                && !is_beneath(path, &linked_sources)
                 && (walk.first_link(path).is_none() || {
-                    let sources = source_paths
-                        .get_or_insert_with(|| source_read_paths(project_root, source_id));
-                    !walk.leads_into(path, sources)
+                    let sources = source_paths.get_or_insert_with(|| {
+                        source_read_paths(project_root, source_id, source_config)
+                    });
+                    !is_beneath(path, sources)
                 })
         })
         .cloned()
@@ -1343,9 +1370,13 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
     let mut any_removed = false;
     // A file reached through a symbolic link (`.cursor/skills ->
     // ../.claude/skills`) lives elsewhere: it stays when that is something
-    // the source reads, or that a tool that stays generates or manages.
+    // the source reads, or that a tool that stays generates or manages. So
+    // does a file the source or a staying tool reaches through a link of
+    // its own (`.agents/skills -> ../.claude/skills`, Codex staying).
     let mut walk = LinkWalk::new(project_root);
     let mut protected = None;
+    let source_dirs = source_locations(project_root, &source_id);
+    let linked_owners = walk.linked(kept.iter().chain(&kept_dirs).chain(&source_dirs));
 
     for adapter in &adapters {
         if !tools.iter().any(|t| t == adapter.id()) {
@@ -1356,18 +1387,19 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
         let mut removed_files = Vec::new();
 
         for (path, _) in &generated {
-            let behind_a_link = walk.first_link(path).is_some() && {
-                let protected = protected.get_or_insert_with(|| {
-                    let mut paths = source_read_paths(project_root, &source_id);
-                    paths.extend(
-                        kept.iter()
-                            .chain(kept_dirs.iter())
-                            .map(|p| adapters::resolved_path(p)),
-                    );
-                    paths
+            let behind_a_link = is_beneath(path, &linked_owners)
+                || (walk.first_link(path).is_some() && {
+                    let protected = protected.get_or_insert_with(|| {
+                        let mut paths = source_read_paths(project_root, &source_id, &config);
+                        paths.extend(
+                            kept.iter()
+                                .chain(kept_dirs.iter())
+                                .map(|p| adapters::resolved_path(p)),
+                        );
+                        paths
+                    });
+                    is_beneath(path, protected)
                 });
-                walk.leads_into(path, protected)
-            };
             if adapter.is_shared_file(path)
                 || kept.contains(path)
                 || kept_dirs.iter().any(|dir| path.starts_with(dir))
@@ -1971,13 +2003,38 @@ pub fn run_migrate(
                 .map(|(path, _)| path),
         );
     }
+    // An output file reached through a link into the source's files
+    // (`AGENTS.md -> CLAUDE.md`, `.kiro/steering -> ../.claude/rules`) would
+    // be written into a file that is deleted below, or that the source tool
+    // keeps reading: the link is removed before the output is written, which
+    // gets a file or a directory of its own.
+    let source_paths = source_read_paths(project_root, source, &config);
+    let mut replaced_links: Vec<std::path::PathBuf> = Vec::new();
+    for (path, _) in output_adapter
+        .generate(project_root, &output_config)?
+        .iter()
+        .chain(agents_md.iter())
+    {
+        let mut links = LinkWalk::new(project_root);
+        if let Some(link) = links.first_link(path) {
+            if !replaced_links.contains(&link) && is_beneath(path, &source_paths) {
+                replaced_links.push(link);
+            }
+        }
+    }
+    let staying_dirs_left: Vec<std::path::PathBuf> = staying_dirs
+        .iter()
+        .filter(|dir| !replaced_links.iter().any(|link| dir.starts_with(link)))
+        .cloned()
+        .collect();
     // Migrating away from a tool clears what conforme manages in its
-    // directories, except a directory a staying tool manages too: everything
-    // in it (bundled skill scripts included) belongs to that tool.
+    // directories, except a directory a staying tool manages too (as
+    // spelled, or through a link that stays): everything in it (bundled
+    // skill scripts included) belongs to that tool.
     let source_managed_dirs: Vec<adapters::ManagedDir> = source_adapter
         .managed_directories(project_root)
         .into_iter()
-        .filter(|dir| !is_one_of(&dir.path, &staying_dirs))
+        .filter(|dir| !is_one_of(&dir.path, &staying_dirs_left))
         .collect();
     // A skill folder bundling a file conforme cannot carry (not text) stays,
     // its SKILL.md with it; text files (scripts, references) are copied.
@@ -1987,25 +2044,37 @@ pub fn run_migrate(
         .filter(|dir| dir.orphan_suffix.is_none())
         .flat_map(|dir| bundled_skill_folders(&dir.path))
         .collect();
-    // A source file reached through a symbolic link (`.claude/skills ->
-    // ../.agents/skills`) lives where the link leads: it is kept when that
-    // is a file or a directory of a staying tool.
+    // A source file may really be a staying tool's: reached through a link
+    // (`.claude/skills -> ../.agents/skills`), or the file a staying tool
+    // reaches through a link of its own (`.agents/skills ->
+    // ../.claude/skills`). It is kept. What sits behind a link replaced
+    // above no longer counts: the output gets its own copy.
+    let staying_owned = || {
+        kept_paths
+            .iter()
+            .chain(staying_dirs.iter())
+            .filter(|path| !replaced_links.iter().any(|link| path.starts_with(link)))
+    };
+    let staying_linked = LinkWalk::new(project_root).linked(staying_owned());
     let walk = std::cell::RefCell::new(LinkWalk::new(project_root));
     let staying_resolved = std::cell::OnceCell::new();
     let is_kept = |path: &std::path::PathBuf| {
-        kept_paths.contains(path)
+        if kept_paths.contains(path)
             || staying_dirs.iter().any(|dir| path.starts_with(dir))
             || bundled_skill_dirs.iter().any(|dir| path.starts_with(dir))
-            || (walk.borrow_mut().first_link(path).is_some() && {
-                let staying = staying_resolved.get_or_init(|| {
-                    kept_paths
-                        .iter()
-                        .chain(staying_dirs.iter())
-                        .map(|p| adapters::resolved_path(p))
-                        .collect::<Vec<_>>()
-                });
-                walk.borrow_mut().leads_into(path, staying)
-            })
+            || is_beneath(path, &staying_linked)
+        {
+            return true;
+        }
+        let through_a_link = walk.borrow_mut().first_link(path).is_some();
+        through_a_link && {
+            let staying = staying_resolved.get_or_init(|| {
+                staying_owned()
+                    .map(|p| adapters::resolved_path(p))
+                    .collect::<Vec<_>>()
+            });
+            is_beneath(path, staying)
+        }
     };
     let managed_files = |dir: &adapters::ManagedDir| -> Result<Vec<std::path::PathBuf>> {
         Ok(migrated_files(dir)?
@@ -2064,26 +2133,8 @@ pub fn run_migrate(
             }
         }
     } else {
-        // An output file reached through a link into the source's files
-        // (`AGENTS.md -> CLAUDE.md`, `.kiro/steering -> ../.claude/rules`)
-        // would be written into a file that is deleted below, or that the
-        // source tool keeps reading: the link is removed, and the output
-        // gets a file or a directory of its own.
-        let mut source_paths = source_read_paths(project_root, source);
-        source_paths.extend(
-            source_files
-                .iter()
-                .map(|(path, _)| adapters::resolved_path(path)),
-        );
-        let output_files = output_adapter.generate(project_root, &output_config)?;
-        for (path, _) in output_files.iter().chain(agents_md.iter()) {
-            // A walk per file: the link removed for one is gone for the next.
-            let mut links = LinkWalk::new(project_root);
-            if let Some(link) = links.first_link(path) {
-                if links.leads_into(path, &source_paths) {
-                    std::fs::remove_file(&link).or_else(|_| std::fs::remove_dir(&link))?;
-                }
-            }
+        for link in &replaced_links {
+            std::fs::remove_file(link).or_else(|_| std::fs::remove_dir(link))?;
         }
 
         // 1. Write output files

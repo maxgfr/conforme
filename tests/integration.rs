@@ -5074,6 +5074,9 @@ fn test_migrate_through_linked_directories_loses_nothing() {
         .unwrap()
         .contains("Use TS."));
     assert!(root.join(".kiro/skills/deploy/SKILL.md").exists());
+    // The source is cleared as in any migration.
+    assert!(!root.join(".claude/rules").exists());
+    assert!(!root.join("CLAUDE.md").exists());
 }
 
 #[test]
@@ -5133,5 +5136,94 @@ fn test_migrate_leaves_no_litter_in_the_source_skill_folders() {
     assert!(
         !root.join(".claude").exists(),
         "source directory left behind"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_migrate_and_remove_keep_files_a_staying_tool_reads_through_its_link() {
+    // The staying tool's directory is the link, and the tool being left
+    // holds the files: deleting them deletes the only copy.
+    let skill = ".claude/skills/deploy/SKILL.md";
+
+    // Claude Code to Codex, Codex reading the skills through its link.
+    let dir = claude_source_project();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".agents")).unwrap();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    std::os::unix::fs::symlink("../.claude/skills", root.join(".agents/skills")).unwrap();
+    migrate(root, "claude", "codex");
+    assert!(root.join(skill).exists());
+    assert!(root.join(".agents/skills/deploy/SKILL.md").exists());
+    assert!(!root.join(".claude/rules/ts.md").exists());
+
+    // Claude Code to Cursor, Cursor's skills directory being the link.
+    let dir = claude_source_project();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    std::os::unix::fs::symlink("../.claude/skills", root.join(".cursor/skills")).unwrap();
+    migrate(root, "claude", "cursor");
+    assert!(root.join(skill).exists());
+    assert!(root.join(".cursor/rules/ts.mdc").exists());
+
+    // Codex is the source and reads its skills through a link into
+    // `.claude/skills`: removing Claude Code must leave them.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/skills/deploy")).unwrap();
+    fs::create_dir_all(root.join(".agents")).unwrap();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::write(root.join("AGENTS.md"), "Be helpful.\n").unwrap();
+    fs::write(
+        root.join(skill),
+        "---\nname: deploy\ndescription: Deploy\n---\n\nRun deploy.\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("../.claude/skills", root.join(".agents/skills")).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"codex\"\n").unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "remove", "claude"])
+        .assert()
+        .success();
+    assert!(root.join(skill).exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_a_link_to_a_location_the_source_does_not_read_is_written_through() {
+    // Mistral Vibe reads `.agents/skills` only when `.vibe/skills` holds no
+    // skill. Here it does, so `.claude/skills -> ../.agents/skills` is not a
+    // link into the source: Claude Code's skill is written through it, and a
+    // migration leaves the link alone.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".vibe/skills/deploy")).unwrap();
+    fs::create_dir_all(root.join(".agents/skills/shared")).unwrap();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::write(root.join("AGENTS.md"), "Be helpful.\n").unwrap();
+    fs::write(
+        root.join(".vibe/skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy\n---\n\nRun deploy.\n",
+    )
+    .unwrap();
+    let shared = "---\nname: shared\ndescription: Shared\n---\n\nHand-written.\n";
+    fs::write(root.join(".agents/skills/shared/SKILL.md"), shared).unwrap();
+    std::os::unix::fs::symlink("../.agents/skills", root.join(".claude/skills")).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"vibe\"\n").unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert!(root.join(".agents/skills/deploy/SKILL.md").exists());
+
+    migrate(root, "vibe", "claude");
+    assert!(fs::symlink_metadata(root.join(".claude/skills"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        fs::read_to_string(root.join(".claude/skills/shared/SKILL.md")).unwrap(),
+        shared
     );
 }
