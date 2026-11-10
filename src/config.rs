@@ -186,7 +186,8 @@ pub fn rule_file_name(name: &str) -> String {
     if name.is_ascii() {
         return ascii;
     }
-    name.chars()
+    let mut file_name = name
+        .chars()
         .map(|c| match fold_to_ascii(c) {
             Some(folded) => folded.to_string(),
             None if c.is_alphanumeric() => c.to_lowercase().collect(),
@@ -196,8 +197,22 @@ pub fn rule_file_name(name: &str) -> String {
         .split('-')
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
-        .join("-")
+        .join("-");
+    if file_name.len() > MAX_RULE_FILE_NAME_BYTES {
+        let mut end = MAX_RULE_FILE_NAME_BYTES;
+        while !file_name.is_char_boundary(end) {
+            end -= 1;
+        }
+        file_name.truncate(end);
+        file_name.truncate(file_name.trim_end_matches('-').len());
+    }
+    file_name
 }
+
+/// Longest [`rule_file_name`] of a name outside ASCII, in bytes: file systems
+/// cap a file name at 255 bytes, and a tool adds up to a `000-` prefix and an
+/// `.instructions.md` suffix to it.
+const MAX_RULE_FILE_NAME_BYTES: usize = 230;
 
 /// The lowercase ASCII spelling of an accented Latin letter, if `c` is one.
 fn fold_to_ascii(c: char) -> Option<&'static str> {
@@ -367,6 +382,21 @@ mod tests {
         // Written back joined by commas, the list reads back the same.
         let globs = vec!["lib/[a,b].rs".to_string(), "**/*.{ts,tsx}".to_string()];
         assert_eq!(split_globs(&globs.join(",")), globs);
+    }
+
+    #[test]
+    fn test_rule_file_name_fits_a_file_name() {
+        // 300 CJK characters are 900 bytes: no file system takes that name.
+        let long = "部".repeat(300);
+        let file_name = rule_file_name(&long);
+        assert!(file_name.len() <= 230, "{}", file_name.len());
+        assert!(format!("000-{file_name}.instructions.md").len() <= 255);
+        assert!(file_name.chars().all(|c| c == '部'));
+        // Cut at a separator: no trailing `-`.
+        let name = format!("{} {}", "é".repeat(229), "x".repeat(10));
+        assert_eq!(rule_file_name(&name), "e".repeat(229));
+        // Shorter names are unchanged.
+        assert_eq!(rule_file_name("部署 Rules"), "部署-rules");
     }
 
     #[test]
