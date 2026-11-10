@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{AiToolAdapter, ManagedDir};
@@ -92,9 +92,8 @@ impl AiToolAdapter for OpenCodeAdapter {
     }
 
     /// `opencode.json` is the user's whole OpenCode configuration; conforme
-    /// only merges `mcp.servers` into it (and takes its own OpenCode 1
-    /// entries out), so `remove`/`migrate` must never delete the file
-    /// wholesale.
+    /// only merges `mcp.servers` into it, so `remove`/`migrate` must never
+    /// delete the file wholesale.
     fn is_shared_file(&self, path: &Path) -> bool {
         path.file_name()
             .is_some_and(|name| name == "opencode.json" || name == "opencode.jsonc")
@@ -142,9 +141,8 @@ impl AiToolAdapter for OpenCodeAdapter {
         }
 
         // Read agents back from `.opencode/agents/` and the singular
-        // `.opencode/agent/`, then the `agents` key in `opencode.json` (and
-        // OpenCode 1's `agent`, which OpenCode 2 still loads): the markdown
-        // files win on a clash.
+        // `.opencode/agent/`, then the `agents` key in `opencode.json`: the
+        // markdown files win on a clash.
         let mut agents = Vec::new();
         for dir in ["agents", "agent"] {
             for agent in crate::skills::read_agents_from_dir(
@@ -165,33 +163,26 @@ impl AiToolAdapter for OpenCodeAdapter {
 
         // MCP servers live inside `opencode.json` under `mcp.servers`, in
         // OpenCode's own shape (`type: local/remote`, `command` array,
-        // `environment`) — not the standard `mcpServers` layout. OpenCode 2
-        // still loads OpenCode 1's `mcp.<name>` entries, a native one of the
-        // same name winning. OpenCode parses the file as JSONC, so comments
-        // are accepted here too. Later files override earlier ones, server by
-        // server.
+        // `environment`) — not the standard `mcpServers` layout. OpenCode
+        // parses the file as JSONC, so comments are accepted here too. Later
+        // files override earlier ones, server by server. OpenCode 1's
+        // `mcp.<name>` and `agent` entries are not conforme's concern: they
+        // are neither read nor touched.
         let mut mcp_servers: Vec<crate::config::NormalizedMcpServer> = Vec::new();
         for name in CONFIG_FILES {
             let Some(root) = crate::json_settings::load(&project_root.join(name))? else {
                 continue;
             };
-            if let Some(mcp) = root.get("mcp") {
-                let v1 = crate::mcp::OPENCODE_V1_SHAPE.read(mcp);
-                let v2 = mcp
-                    .get("servers")
-                    .map(|servers| crate::mcp::OPENCODE_SHAPE.read(servers))
-                    .unwrap_or_default();
-                for server in v1.into_iter().chain(v2) {
+            if let Some(servers) = root.get("mcp").and_then(|mcp| mcp.get("servers")) {
+                for server in crate::mcp::OPENCODE_SHAPE.read(servers) {
                     mcp_servers.retain(|s| s.name != server.name);
                     mcp_servers.push(server);
                 }
             }
-            for key in ["agents", "agent"] {
-                if let Some(agent) = root.get(key) {
-                    for agent in crate::mcp::parse_opencode_agent_object(agent) {
-                        if !agents.iter().any(|a| a.name == agent.name) {
-                            agents.push(agent);
-                        }
+            if let Some(entries) = root.get("agents") {
+                for agent in crate::mcp::parse_opencode_agent_object(entries) {
+                    if !agents.iter().any(|a| a.name == agent.name) {
+                        agents.push(agent);
                     }
                 }
             }
@@ -254,177 +245,38 @@ impl AiToolAdapter for OpenCodeAdapter {
     }
 }
 
-/// The OpenCode config files a sync rewrites: the servers merged into
-/// `mcp.servers` of `.opencode/opencode.json(c)` (see [`config_path`]), and
-/// what earlier conforme versions wrote in OpenCode 1's shape taken out of
-/// every project config file — the root `opencode.json` included, which they
-/// merged into when it existed.
-///
-/// What conforme takes out is what it owned before: the expressible
-/// `mcp.<name>` servers of the file it merged into (moved to `mcp.servers`,
-/// where the merge keeps a disabled one and the per-server keys conforme does
-/// not own, converted to OpenCode 2's names), and, in `agent.<name>` entries,
-/// the keys it wrote for an agent it now writes as markdown only. Like every
-/// other MCP target, a source with no server leaves the servers alone.
+/// The OpenCode config file a sync rewrites: the servers merged into
+/// `mcp.servers` of `.opencode/opencode.json(c)` (see [`config_path`]), every
+/// other key of the file kept. Like every other MCP target, a source with no
+/// server leaves the file alone. No other config file is written: OpenCode 1
+/// entries (`mcp.<name>`, `agent.<name>`), wherever they sit, are the user's.
 fn config_files(project_root: &Path, config: &NormalizedConfig) -> Result<Vec<(PathBuf, String)>> {
-    // Every existing config file, lowest precedence first, then the target:
-    // OpenCode 1 servers move up to it in OpenCode's own order.
+    if config.mcp_servers.is_empty() {
+        return Ok(Vec::new());
+    }
     let target = config_path(project_root);
-    let mut paths: Vec<PathBuf> = CONFIG_FILES
-        .iter()
-        .map(|name| project_root.join(name))
-        .filter(|path| path.is_file() && *path != target)
-        .collect();
-    paths.push(target.clone());
-
-    let mut files = Vec::new();
-    let mut legacy_servers = Map::new();
-    for path in paths {
-        let is_target = path == target;
-        let writes_servers = is_target && !config.mcp_servers.is_empty();
-        // With nothing to write or take out, a file conforme cannot parse
-        // is only left alone.
-        let existing = match crate::json_settings::load(&path) {
-            Err(_) if config.mcp_servers.is_empty() && config.agents.is_empty() => continue,
-            loaded => loaded?,
-        };
-        if existing.is_none() && !writes_servers {
-            continue;
-        }
-        let mut set: Vec<(&str, Value)> = Vec::new();
-        let mut remove: Vec<&str> = Vec::new();
-
-        let mut mcp = existing
-            .as_ref()
-            .and_then(|f| f.get("mcp"))
-            .and_then(Value::as_object)
-            .cloned();
-        if !config.mcp_servers.is_empty() {
-            if let Some(mcp) = mcp.as_mut() {
-                let v1: Vec<String> = mcp
-                    .iter()
-                    .filter(|(name, entry)| {
-                        name.as_str() != "servers"
-                            && crate::json_settings::is_expressible_server(entry)
-                    })
-                    .map(|(name, _)| name.clone())
-                    .collect();
-                for name in v1 {
-                    if let Some(entry) = mcp.remove(&name) {
-                        legacy_servers.insert(name, crate::mcp::opencode_v1_server_to_v2(&entry));
-                    }
-                }
-            }
-        }
-        if writes_servers {
-            let mcp = mcp.get_or_insert_with(Map::new);
-            // A native entry wins over an OpenCode 1 one of the same name.
-            let mut servers = mcp
-                .get("servers")
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default();
-            for (name, entry) in std::mem::take(&mut legacy_servers) {
-                servers.entry(name).or_insert(entry);
-            }
-            let servers = crate::json_settings::merge_server_entries(
-                Some(&Value::Object(servers)),
-                crate::mcp::OPENCODE_SHAPE.build(&config.mcp_servers),
-                &crate::mcp::OPENCODE_SHAPE.owned_keys(),
-            );
-            mcp.insert("servers".into(), Value::Object(servers));
-        }
-        if let Some(mcp) = mcp {
-            if existing.as_ref().and_then(|f| f.get("mcp")) != Some(&Value::Object(mcp.clone())) {
-                if mcp.is_empty() {
-                    remove.push("mcp");
-                } else {
-                    set.push(("mcp", Value::Object(mcp)));
-                }
-            }
-        }
-
-        if let Some(agent) = without_conforme_agents(
-            project_root,
-            existing.as_ref().and_then(|f| f.get("agent")),
-            &config.agents,
-        ) {
-            if agent.is_empty() {
-                remove.push("agent");
-            } else {
-                set.push(("agent", Value::Object(agent)));
-            }
-        }
-
-        if set.is_empty() && remove.is_empty() && !writes_servers {
-            continue;
-        }
-        let defaults: &[(&str, Value)] = if writes_servers {
-            &[(
-                "$schema",
-                Value::String("https://opencode.ai/config.json".to_string()),
-            )]
-        } else {
-            &[]
-        };
-        let json =
-            crate::json_settings::render_removing(existing.as_ref(), &set, defaults, &remove)?;
-        files.push((path, json));
-    }
-    Ok(files)
-}
-
-/// The OpenCode 1 `agent` map with what earlier conforme versions wrote there
-/// taken out, or `None` when there is nothing to take out. They wrote every
-/// agent twice, as `.opencode/agents/<name>.md` and as `agent.<name>`; the
-/// markdown file is now the only copy. In the entry of an agent the source
-/// defines, conforme's keys go (`description`, `mode`, `prompt`, and `model`
-/// when the source has one OpenCode can use; otherwise it may be the user's),
-/// the user's own (`permission`, `temperature`, …) stay and still tune the
-/// agent, and an entry left empty goes. An entry for an agent that has left
-/// the source goes with its file (orphan cleanup removes it in the same
-/// sync), provided it still has that file and holds only conforme's keys; an
-/// entry without the file, or one the user extended, is the user's.
-fn without_conforme_agents(
-    project_root: &Path,
-    existing: Option<&Value>,
-    agents: &[crate::config::NormalizedAgent],
-) -> Option<Map<String, Value>> {
-    let entries = existing.and_then(Value::as_object)?;
-    let mut kept = entries.clone();
-    for agent in agents {
-        let name = crate::config::sanitize_name(&agent.name);
-        let Some(Value::Object(entry)) = kept.get_mut(&name) else {
-            continue;
-        };
-        for key in crate::mcp::OPENCODE_OWNED_AGENT_KEYS {
-            if *key != "model" || crate::skills::opencode_model(agent.model.as_deref()).is_some() {
-                entry.remove(*key);
-            }
-        }
-        if entry.is_empty() {
-            kept.remove(&name);
-        }
-    }
-    let generated: Vec<String> = agents
-        .iter()
-        .map(|a| crate::config::sanitize_name(&a.name))
-        .collect();
-    kept.retain(|name, entry| {
-        generated.contains(name)
-            || crate::mcp::is_opencode_builtin_agent(name)
-            || !entry.as_object().is_some_and(|fields| {
-                fields
-                    .keys()
-                    .all(|key| crate::mcp::OPENCODE_OWNED_AGENT_KEYS.contains(&key.as_str()))
-            })
-            || !project_root
-                .join(".opencode")
-                .join("agents")
-                .join(format!("{name}.md"))
-                .is_file()
-    });
-    (kept != *entries).then_some(kept)
+    let existing = crate::json_settings::load(&target)?;
+    let existing_mcp = existing.as_ref().and_then(|f| f.get("mcp"));
+    let mut mcp = existing_mcp
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let servers = crate::json_settings::merge_server_entries(
+        mcp.get("servers"),
+        crate::mcp::OPENCODE_SHAPE.build(&config.mcp_servers),
+        &crate::mcp::OPENCODE_SHAPE.owned_keys(),
+    );
+    mcp.insert("servers".into(), Value::Object(servers));
+    let mcp = Value::Object(mcp);
+    // An unchanged key keeps its text (comments, layout).
+    let set: &[(&str, Value)] = if existing_mcp == Some(&mcp) {
+        &[]
+    } else {
+        &[("mcp", mcp)]
+    };
+    let schema = Value::String("https://opencode.ai/config.json".to_string());
+    let json = crate::json_settings::render(existing.as_ref(), set, &[("$schema", schema)])?;
+    Ok(vec![(target, json)])
 }
 
 #[cfg(test)]
@@ -599,37 +451,52 @@ mod tests {
     }
 
     #[test]
-    fn test_v1_entries_written_by_earlier_versions_move_to_v2() {
-        // An earlier conforme merged into the root `opencode.json` in
-        // OpenCode 1's shape. Its servers move to `.opencode/opencode.json`
-        // under `mcp.servers` (a disabled one the source lacks is the user's
-        // and survives, converted), its agent keys go, and the user's keys
-        // stay where they are.
+    fn test_opencode_1_entries_are_neither_read_nor_touched() {
+        // conforme targets OpenCode 2 only: `mcp.<name>` servers and
+        // `agent.<name>` entries in OpenCode 1's shape are the user's, in the
+        // root file as in the one conforme merges into.
         let adapter = make_adapter();
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join(".opencode/agents")).unwrap();
-        std::fs::write(tmp.path().join(".opencode/agents/old.md"), "x").unwrap();
-        std::fs::write(
-            tmp.path().join("opencode.json"),
-            r#"{
-  "$schema": "https://opencode.ai/config.json",
+        std::fs::create_dir_all(tmp.path().join(".opencode")).unwrap();
+        let root = r#"{
   "theme": "dark",
   "mcp": {
-    "fs": {"type": "local", "command": ["old"], "timeout": 5000},
-    "gone": {"type": "local", "command": ["gone"]},
-    "off": {"type": "remote", "url": "https://e.x/mcp", "enabled": false},
-    "github": {"enabled": false}
+    "mine": {"type": "local", "command": ["mine"]},
+    "fs": {"type": "local", "command": ["old"], "timeout": 5000}
   },
   "agent": {
-    "build": {"permission": {"bash": "ask"}},
-    "reviewer": {"description": "Review", "mode": "subagent", "prompt": "Old.", "temperature": 0.1},
-    "old": {"description": "Old", "mode": "subagent", "prompt": "Old."},
-    "mine": {"description": "Mine", "mode": "subagent", "prompt": "Mine."}
+    "reviewer": {"description": "Review", "mode": "subagent", "prompt": "Old."}
+  }
+}
+"#;
+        std::fs::write(tmp.path().join("opencode.json"), root).unwrap();
+        std::fs::write(
+            tmp.path().join(".opencode/opencode.json"),
+            r#"{
+  "mcp": {
+    "legacy": {"type": "remote", "url": "https://e.x/mcp", "enabled": false},
+    "servers": {
+      "native": {"type": "local", "command": ["native"]},
+      "gone": {"type": "local", "command": ["gone"]}
+    }
+  },
+  "agent": {
+    "old": {"description": "Old", "mode": "subagent", "prompt": "Old."}
   }
 }
 "#,
         )
         .unwrap();
+
+        // Read: only `mcp.servers` and `agents`.
+        let read = adapter.read(tmp.path()).unwrap();
+        let names: Vec<_> = read.mcp_servers.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["gone", "native"]);
+        assert!(read.agents.is_empty(), "{:?}", read.agents);
+
+        // Write: the root file is not generated at all, and in the target
+        // only `mcp.servers` changes (a server the source lacks is dropped,
+        // as in every target).
         let config = NormalizedConfig {
             mcp_servers: vec![fs_server()],
             agents: vec![crate::config::NormalizedAgent {
@@ -641,60 +508,37 @@ mod tests {
             ..Default::default()
         };
         let files = adapter.generate(tmp.path(), &config).unwrap();
-        let file = |rel: &str| {
-            let (_, text) = files
+        assert!(
+            !files
                 .iter()
-                .find(|(p, _)| *p == tmp.path().join(rel))
-                .unwrap_or_else(|| panic!("{rel} not generated: {files:?}"));
-            crate::json_settings::parse_jsonc(text).unwrap()
-        };
-
-        let root = file("opencode.json");
-        assert_eq!(root["theme"], "dark");
-        // Only the toggle conforme cannot express is left in `mcp`.
-        assert_eq!(
-            root["mcp"],
-            serde_json::json!({"github": {"enabled": false}})
+                .any(|(p, _)| *p == tmp.path().join("opencode.json")),
+            "{files:?}"
         );
-        assert_eq!(
-            root["agent"],
-            serde_json::json!({
-                "build": {"permission": {"bash": "ask"}},
-                "reviewer": {"temperature": 0.1},
-                "mine": {"description": "Mine", "mode": "subagent", "prompt": "Mine."}
-            })
-        );
-
-        let servers = &file(".opencode/opencode.json")["mcp"]["servers"];
-        assert_eq!(
-            servers["fs"],
-            serde_json::json!({
-                "type": "local",
-                "command": ["npx"],
-                "timeout": {"catalog": 5000, "execution": 5000}
-            })
-        );
-        assert_eq!(
-            servers["off"],
-            serde_json::json!({"type": "remote", "url": "https://e.x/mcp", "disabled": true})
-        );
-        assert!(servers.get("gone").is_none(), "{servers}");
-
-        // A second sync, once these files are written, changes nothing.
-        for (path, text) in &files {
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, text).unwrap();
-        }
-        let again = adapter.generate(tmp.path(), &config).unwrap();
-        let configs: Vec<_> = again
+        let (_, text) = files
             .iter()
-            .filter(|(p, _)| p.extension().is_some_and(|e| e == "json"))
-            .collect();
-        assert_eq!(configs.len(), 1, "{configs:?}");
+            .find(|(p, _)| *p == tmp.path().join(".opencode/opencode.json"))
+            .unwrap();
+        let json = crate::json_settings::parse_jsonc(text).unwrap();
         assert_eq!(
-            configs[0].1,
-            std::fs::read_to_string(&configs[0].0).unwrap()
+            json["mcp"]["legacy"],
+            serde_json::json!({"type": "remote", "url": "https://e.x/mcp", "enabled": false})
         );
+        assert_eq!(
+            json["agent"]["old"],
+            serde_json::json!({"description": "Old", "mode": "subagent", "prompt": "Old."})
+        );
+        let servers = json["mcp"]["servers"].as_object().unwrap();
+        assert_eq!(servers.keys().collect::<Vec<_>>(), ["fs"]);
+        assert_eq!(servers["fs"]["command"], serde_json::json!(["npx"]));
+
+        // A second sync, once the file is written, changes nothing.
+        std::fs::write(tmp.path().join(".opencode/opencode.json"), text).unwrap();
+        let again = adapter.generate(tmp.path(), &config).unwrap();
+        let (_, again) = again
+            .iter()
+            .find(|(p, _)| *p == tmp.path().join(".opencode/opencode.json"))
+            .unwrap();
+        assert_eq!(again, text);
     }
 
     #[test]

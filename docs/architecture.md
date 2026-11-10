@@ -47,7 +47,7 @@ src/
                        merge_server_entries keeps per-server keys conforme does not own;
                        is_expressible_server: an entry with neither `command` nor `url`/`httpUrl`/`serverUrl`,
                        or a Claude `type: "sdk"` one, is skipped on read and kept untouched on write
-                       (Zed extension servers, Claude SDK servers, OpenCode 1 `{ "enabled": false }` toggles);
+                       (Zed extension servers, Claude SDK servers, Kilo `{ "enabled": false }` toggles);
                        server_settings_file leaves the file untouched when the source has no server;
                        server_settings_file_or_bare moves a bare-format file's servers under the key (Copilot CLI);
                        a tool's own toggle (ServerShape.toggle, an owned `disabled` / `enabled`) skips a disabled
@@ -95,11 +95,9 @@ src/
                        - per-tool keys and shapes: see "MCP key mapping per tool" below
                        - Claude .mcp.json parsing: `sse` maps to Sse, http/https/streamable-http/ws to Http;
                          `type: "sdk"` entries are skipped
-                       - OpenCode: OPENCODE_SHAPE is OpenCode 2's `mcp.servers` (`disabled`); OPENCODE_V1_SHAPE
-                         (`mcp.<name>`, `enabled`) is read only, and opencode_v1_server_to_v2 moves the V1
-                         servers earlier versions wrote; OPENCODE_OWNED_AGENT_KEYS are the `agent.<name>` keys
-                         they wrote, taken back out
-                       - Kilo: KILO_SHAPE (OpenCode 1's shape, no variable reference)
+                       - OpenCode: OPENCODE_SHAPE is OpenCode 2's `mcp.servers` (`disabled`), the only shape
+                         read or written for OpenCode
+                       - Kilo: KILO_SHAPE (OpenCode 1's shape: `mcp.<name>`, `enabled`; no variable reference)
                        - Vibe: merge_vibe_mcp_toml / parse_vibe_mcp_toml; a string `command` is shell-split
                          as Vibe does, one that would not survive it is written as a list; vibe_api_key maps
                          `Bearer ${VAR}`, else a header holding one `${VAR}`, to `api_key_env` + `api_key_format`; an inline
@@ -155,12 +153,12 @@ src/
                        are ignored)
     opencode.rs     — OpenCode 2 only: reads AGENTS.md natively (no CLAUDE.md / CONTEXT.md fallback); agents
                        written to .opencode/agents/<name>.md only, read from .opencode/agents/, .opencode/agent/
-                       and the opencode.json `agents` / V1 `agent` keys together (markdown wins; built-in
+                       and the opencode.json `agents` key together (markdown wins; built-in
                        overrides skipped); an agent named like a built-in one (build, plan, …) is never written;
                        MCP merged into `mcp.servers` of .opencode/opencode.jsonc if it exists, else
                        .opencode/opencode.json — never the root one (Kilo, which refuses `{env:VAR}`, loads it
-                       and never reads .opencode/); config_files moves the V1 `mcp.<name>` servers and takes the
-                       `agent.<name>` keys earlier versions wrote out of every project opencode.json(c)
+                       and never reads .opencode/); OpenCode 1 entries (`mcp.<name>`, `agent`) are neither read
+                       nor touched, in any project opencode.json(c)
     zoocode.rs      — Zoo Code (community fork of Roo Code): .roo/rules/**/*.md, read recursively (plain Markdown);
                        2–3 digit `NN-` prefix stripped, `Intended scope` comment read back as globs and
                        `Apply when` as an agent-decision description; .roorules read

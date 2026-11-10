@@ -146,9 +146,9 @@ pub fn print_help_ai() {
             "Skills synced to .opencode/skills/<name>/SKILL.md (name, description, disable-model-invocation for a manual skill)",
             "MCP merged into .opencode/opencode.jsonc if it exists, else .opencode/opencode.json, under `mcp.servers` (type:local/remote, command as single array, key `environment`, {env:VAR}, `disabled` toggle); never the root opencode.json, which Kilo Code loads with OpenCode 1's schema",
             "Legacy SSE servers written as type remote with a warning (OpenCode 2 speaks streamable HTTP only; read back as streamable HTTP)",
-            "Agents written to .opencode/agents/<name>.md only (model only as provider/model); conforme's OpenCode 1 `agent.<name>` keys and `mcp.<name>` servers from earlier versions are taken out (servers moved to `mcp.servers`), the user's keys kept",
-            "Agents read from .opencode/agents/, .opencode/agent/ and the `agents` (and OpenCode 1 `agent`) keys together (markdown wins); built-in agent names (build, plan, general, …) are neither written nor read",
-            "MCP read from `mcp.servers` and OpenCode 1 `mcp.<name>` entries of every project opencode.json(c), which OpenCode 2 still loads (native wins)",
+            "Agents written to .opencode/agents/<name>.md only (model only as provider/model); OpenCode 1 entries (`mcp.<name>` servers, `agent.<name>`) are neither read nor touched, in any opencode.json(c)",
+            "Agents read from .opencode/agents/, .opencode/agent/ and the `agents` key together (markdown wins); built-in agent names (build, plan, general, …) are neither written nor read",
+            "MCP read from `mcp.servers` of every project opencode.json(c), later files winning",
             "Skills read from .opencode/skills/ and .opencode/skill/ only; OpenCode also loads .claude/skills/ and .agents/skills/ and keeps one copy of a skill synced there too (the project .opencode/skills/ one)",
         ],
     );

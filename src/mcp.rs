@@ -1340,71 +1340,16 @@ pub const OPENCODE_SHAPE: ServerShape = ServerShape {
     remote_needs_type: false,
 };
 
-/// OpenCode 1's `mcp.<name>` entries: the same entry shape, turned off with
-/// `enabled: false`. OpenCode 2 still loads them, so they are read; conforme
-/// writes only `mcp.servers` and moves its own V1 entries there
-/// ([`opencode_v1_server_to_v2`]). Kilo Code, an OpenCode 1 fork, keeps this
-/// shape.
-pub const OPENCODE_V1_SHAPE: ServerShape = ServerShape {
-    toggle: Some("enabled"),
-    ..OPENCODE_SHAPE
-};
-
-/// An OpenCode 1 `mcp.<name>` entry in OpenCode 2's `mcp.servers` shape
-/// (https://opencode.ai/docs/migrate-v1/#mcp-servers): `enabled: false`
-/// becomes `disabled: true`, a numeric `timeout` both `timeout.catalog` and
-/// `timeout.execution`, and the OAuth keys are snake_case. Every other key is
-/// kept as is.
-pub fn opencode_v1_server_to_v2(entry: &serde_json::Value) -> serde_json::Value {
-    let Some(fields) = entry.as_object() else {
-        return entry.clone();
-    };
-    let mut v2 = serde_json::Map::new();
-    for (key, value) in fields {
-        match (key.as_str(), value) {
-            ("enabled", serde_json::Value::Bool(enabled)) => {
-                if !enabled {
-                    v2.insert("disabled".into(), serde_json::Value::Bool(true));
-                }
-            }
-            ("timeout", serde_json::Value::Number(_)) => {
-                v2.insert(
-                    "timeout".into(),
-                    serde_json::json!({ "catalog": value, "execution": value }),
-                );
-            }
-            ("oauth", serde_json::Value::Object(oauth)) => {
-                let oauth = oauth
-                    .iter()
-                    .map(|(key, value)| {
-                        let key = match key.as_str() {
-                            "clientId" => "client_id",
-                            "clientSecret" => "client_secret",
-                            "callbackPort" => "callback_port",
-                            "redirectUri" => "redirect_uri",
-                            other => other,
-                        };
-                        (key.to_string(), value.clone())
-                    })
-                    .collect();
-                v2.insert("oauth".into(), serde_json::Value::Object(oauth));
-            }
-            _ => {
-                v2.insert(key.clone(), value.clone());
-            }
-        }
-    }
-    serde_json::Value::Object(v2)
-}
-
-/// Kilo Code `mcp`: OpenCode 1's shape with no variable reference — Kilo
-/// refuses a project config holding `{env:VAR}`, so strings are copied
-/// verbatim (see [`ServerShape::drop_passthrough_env`]).
+/// Kilo Code `mcp.<name>`: OpenCode 1's shape, which this OpenCode 1 fork
+/// keeps — OpenCode's entry shape, turned off with `enabled: false` — and
+/// with no variable reference: Kilo refuses a project config holding
+/// `{env:VAR}`, so strings are copied verbatim (see
+/// [`ServerShape::drop_passthrough_env`]).
 pub const KILO_SHAPE: ServerShape = ServerShape {
+    toggle: Some("enabled"),
     env_refs: EnvRefStyle::Literal,
     drop_passthrough_env: true,
-    remote_needs_type: false,
-    ..OPENCODE_V1_SHAPE
+    ..OPENCODE_SHAPE
 };
 
 fn string_map(map: &BTreeMap<String, String>) -> serde_json::Value {
@@ -1783,12 +1728,6 @@ pub fn parse_opencode_agent_object(
 
     result
 }
-
-/// Keys earlier conforme versions wrote into an OpenCode 1 `agent.<name>`
-/// entry (they now write `.opencode/agents/<name>.md` only, and take these
-/// keys back out). Anything else (`permission`, `temperature`, `steps`,
-/// `color`, …) is the user's.
-pub const OPENCODE_OWNED_AGENT_KEYS: &[&str] = &["description", "mode", "model", "prompt"];
 
 /// Parse an MCP config file into normalized servers. Handles every key conforme
 /// emits — `mcpServers` (standard), `servers` (Copilot/VS Code),
@@ -2701,13 +2640,14 @@ auth = { type = "static", api_key_env = "TOKEN", api_key_header = "Authorization
 
     #[test]
     fn test_parse_opencode_mcp_object_skips_toggle_entries() {
-        // An OpenCode 1 `mcp.<name>` may be just `{ "enabled": false }`,
-        // toggling a server defined in the global config.
+        // A Kilo Code (OpenCode 1 shape) `mcp.<name>` may be just
+        // `{ "enabled": false }`, toggling a server defined in the global
+        // config.
         let mcp = serde_json::json!({
             "github": {"enabled": false},
             "fs": {"type": "local", "command": ["npx", "-y", "fs"]}
         });
-        let parsed = OPENCODE_V1_SHAPE.read(&mcp);
+        let parsed = KILO_SHAPE.read(&mcp);
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].name, "fs");
     }
@@ -2969,7 +2909,7 @@ auth = { type = "static", api_key_env = "TOKEN", api_key_header = "Authorization
     #[test]
     fn test_opencode_disabled_toggle_is_v2_only() {
         // OpenCode 2 turns a server off with `disabled: true`; OpenCode 1's
-        // `enabled: false` belongs to the V1 shape (and Kilo Code's).
+        // `enabled: false` is Kilo Code's toggle.
         let v2 = serde_json::json!({
             "off": {"type": "local", "command": ["a"], "disabled": true},
             "on": {"type": "local", "command": ["b"], "enabled": false}
@@ -2980,43 +2920,10 @@ auth = { type = "static", api_key_env = "TOKEN", api_key_header = "Authorization
             .map(|s| s.name)
             .collect();
         assert_eq!(names, ["on"]);
-        let names: Vec<_> = OPENCODE_V1_SHAPE
-            .read(&v2)
-            .into_iter()
-            .map(|s| s.name)
-            .collect();
+        let names: Vec<_> = KILO_SHAPE.read(&v2).into_iter().map(|s| s.name).collect();
         assert_eq!(names, ["off"]);
         assert!(OPENCODE_SHAPE.owned_keys().contains(&"disabled"));
         assert!(!OPENCODE_SHAPE.owned_keys().contains(&"enabled"));
-    }
-
-    #[test]
-    fn test_opencode_v1_server_to_v2() {
-        let v1 = serde_json::json!({
-            "type": "remote",
-            "url": "https://e.x/mcp",
-            "enabled": false,
-            "timeout": 30000,
-            "oauth": {"clientId": "id", "clientSecret": "s", "callbackPort": 1, "redirectUri": "r", "scope": "x"},
-            "headers": {"A": "b"}
-        });
-        assert_eq!(
-            opencode_v1_server_to_v2(&v1),
-            serde_json::json!({
-                "type": "remote",
-                "url": "https://e.x/mcp",
-                "disabled": true,
-                "timeout": {"catalog": 30000, "execution": 30000},
-                "oauth": {"client_id": "id", "client_secret": "s", "callback_port": 1, "redirect_uri": "r", "scope": "x"},
-                "headers": {"A": "b"}
-            })
-        );
-        // `enabled: true` is the default: nothing to carry over.
-        let on = serde_json::json!({"type": "local", "command": ["x"], "enabled": true});
-        assert_eq!(
-            opencode_v1_server_to_v2(&on),
-            serde_json::json!({"type": "local", "command": ["x"]})
-        );
     }
 
     fn remote_with_env(url: &str) -> NormalizedMcpServer {

@@ -2239,28 +2239,17 @@ Review.
 "#;
     let dir = create_project_with_tools(agents_md, &["opencode"]);
     let config = dir.path().join("opencode.json");
-    fs::write(
-        &config,
-        r#"{"agent": {"build": {"permission": {"bash": "ask"}}, "reviewer": {"description": "old", "mode": "subagent", "temperature": 0.2}}}"#,
-    )
-    .unwrap();
+    let original = r#"{"agent": {"build": {"permission": {"bash": "ask"}}, "reviewer": {"description": "old", "mode": "subagent", "temperature": 0.2}}}"#;
+    fs::write(&config, original).unwrap();
 
     conforme()
         .args(["-C", dir.path().to_str().unwrap(), "sync"])
         .assert()
         .success();
 
-    let value: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
-    // The agent is written as `.opencode/agents/reviewer.md`; the entry an
-    // earlier version wrote loses conforme's keys and keeps the user's, which
-    // OpenCode 2 still applies to it.
-    assert_eq!(value["agent"]["build"]["permission"]["bash"], "ask");
-    assert_eq!(
-        value["agent"]["reviewer"],
-        serde_json::json!({"temperature": 0.2})
-    );
-    assert!(value.get("agents").is_none());
+    // The agent is written as `.opencode/agents/reviewer.md`; OpenCode 1's
+    // `agent` entries are the user's and the file is left as it is.
+    assert_eq!(fs::read_to_string(&config).unwrap(), original);
     assert!(dir.path().join(".opencode/agents/reviewer.md").is_file());
 
     conforme()
@@ -3220,7 +3209,7 @@ fn test_opencode_env_references_reach_other_tools_in_their_syntax() {
     fs::create_dir_all(root.join(".cursor")).unwrap();
     fs::write(
         root.join("opencode.json"),
-        r#"{"mcp": {"api": {"type": "remote", "url": "https://e.x/mcp", "headers": {"Authorization": "Bearer {env:GH_TOKEN}"}}}}"#,
+        r#"{"mcp": {"servers": {"api": {"type": "remote", "url": "https://e.x/mcp", "headers": {"Authorization": "Bearer {env:GH_TOKEN}"}}}}}"#,
     )
     .unwrap();
 

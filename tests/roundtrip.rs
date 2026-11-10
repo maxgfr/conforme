@@ -1180,8 +1180,9 @@ fn test_opencode_builtin_agent_names_are_neither_read_nor_written() {
 #[test]
 fn test_opencode_reads_every_agent_location() {
     // OpenCode loads `.opencode/agents/`, the singular `.opencode/agent/` and
-    // the `agent` key of opencode.json together; built-in overrides
-    // (`build`, `plan`) are not agents.
+    // the `agents` key of opencode.json together; built-in overrides
+    // (`build`, `plan`) are not agents, and OpenCode 1's `agent` key is not
+    // read.
     let adapter = conforme::adapters::opencode::OpenCodeAdapter;
     let dir = TempDir::new().unwrap();
     let root = dir.path();
@@ -1199,10 +1200,12 @@ fn test_opencode_reads_every_agent_location() {
     .unwrap();
     fs::write(
         root.join("opencode.json"),
-        r#"{"agent": {
+        r#"{"agents": {
             "build": {"model": "anthropic/claude-sonnet-4-5"},
-            "code-reviewer": {"description": "Review", "prompt": "Review."},
-            "docs": {"description": "JSON docs", "prompt": "Ignored."}
+            "code-reviewer": {"description": "Review", "system": "Review."},
+            "docs": {"description": "JSON docs", "system": "Ignored."}
+        }, "agent": {
+            "v1-only": {"description": "OpenCode 1", "prompt": "Not read."}
         }}"#,
     )
     .unwrap();
@@ -2119,8 +2122,8 @@ fn test_gemini_has_no_per_server_disable_key() {
 }
 
 /// OpenCode 2 keeps servers under `mcp.servers` with `disabled`, and agents
-/// under `agents` with `system`; it still reads the V1 shape, but a native
-/// V2 value wins (https://opencode.ai/docs/migrate-v1/).
+/// under `agents` with `system` (https://opencode.ai/docs/migrate-v1/);
+/// conforme reads and writes that native shape only.
 #[test]
 fn test_opencode_v2_native_config_is_read() {
     let dir = TempDir::new().unwrap();
@@ -2161,18 +2164,16 @@ fn test_opencode_v2_native_config_is_read() {
     assert_eq!(read.agents.len(), 1);
     assert_eq!(read.agents[0].content, "Review it.");
 
-    // Written back, everything is native: the V1 `both` is gone, the native
-    // one kept, the disabled server and the user's `agents` left alone.
+    // Written back, `mcp.servers` is merged and nothing else changes: the
+    // OpenCode 1 `both` entry, the disabled server and the user's `agents`
+    // are left alone.
     let files = adapter.generate(root, &read).unwrap();
     let (_, text) = files
         .iter()
         .find(|(p, _)| *p == root.join(".opencode/opencode.json"))
         .unwrap();
     let json: serde_json::Value = serde_json::from_str(text).unwrap();
-    assert_eq!(
-        json["mcp"].as_object().unwrap().keys().collect::<Vec<_>>(),
-        vec!["servers"]
-    );
+    assert_eq!(json["mcp"]["both"]["command"], serde_json::json!(["v1"]));
     assert_eq!(
         json["mcp"]["servers"]["both"]["command"],
         serde_json::json!(["v2"])

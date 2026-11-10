@@ -105,7 +105,7 @@ Review for bugs.
 | Zoo Code | `mcpServers` (inside `.roo/mcp.json`) | HTTP uses `type: streamable-http` (not `http`), SSE `type: "sse"`, no `env` on remote servers; merged (keeps Zoo's `alwaysAllow`/`disabledTools`) |
 | Copilot | `servers` (inside `.vscode/mcp.json`) + `mcpServers` (inside `.github/mcp.json`) | VS Code reads the first (`env` on stdio, `headers` on HTTP; keeps `inputs`/`sandbox`), Copilot CLI only the second (Claude Code shape); both merged, SSE as `type: "sse"` in both. The cloud agent reads no file: its servers are in the repository settings |
 | Devin | `mcpServers` (inside `.devin/mcp_config.json`) | No type field; remote `url` + `transport: http` (SSE: `transport: "sse"`); `${env:VAR}`; merged |
-| OpenCode | `mcp.servers` (inside `.opencode/opencode.jsonc` if it exists, else `.opencode/opencode.json`; never the root one) | OpenCode 2's native shape: `type: local/remote` (SSE is `remote` with a warning, read as HTTP); `disabled` toggle; `command` is a single array; env key is `environment` (local only); `{env:VAR}`, editor variables such as `${workspaceFolder}` kept verbatim; merged (preserves user keys, `mcp.timeout` and OpenCode 1 `{ "enabled": false }` toggles); V1 `mcp.<name>` servers earlier versions wrote are moved to `mcp.servers` |
+| OpenCode | `mcp.servers` (inside `.opencode/opencode.jsonc` if it exists, else `.opencode/opencode.json`; never the root one) | OpenCode 2's native shape: `type: local/remote` (SSE is `remote` with a warning, read as HTTP); `disabled` toggle; `command` is a single array; env key is `environment` (local only); `{env:VAR}`, editor variables such as `${workspaceFolder}` kept verbatim; merged (preserves user keys and every other member of `mcp`: `mcp.timeout`, OpenCode 1 `mcp.<name>` entries); OpenCode 1 entries (`mcp.<name>`, `agent`) are neither read nor touched, in any config file |
 | Zed | `context_servers` (inside `.zed/settings.json`) | No type field; SSE becomes streamable HTTP (warned); merged into existing settings (preserves theme/keybindings/etc. and extension servers configured only via `settings`) |
 | Gemini | `mcpServers` (inside `.gemini/settings.json`) | `httpUrl` for HTTP, `url` + `type: "sse"` for SSE; merged into existing settings |
 | Kilo Code | `mcp` (inside `.kilo/kilo.jsonc` or the existing `kilo.json(c)`) | OpenCode 1 shape (SSE is `remote`); no variable reference (Kilo refuses `{env:VAR}` in a project config): `NAME=${NAME}` dropped, other `${VAR}` written as is with a warning; merged |
@@ -190,12 +190,11 @@ source regenerates. Renamed tool ids (`windsurf` → `devin`) are an error
 wherever an id is accepted.
 
 In a tool that has its own off switch (`disabled: true` for Kiro, Zoo, Devin, Antigravity and OpenCode
-`mcp.servers`; `enabled: false` for Zed, Kilo and OpenCode 1 `mcp.<name>`; Codex `enabled = false`; Vibe `disabled = true`), a
+`mcp.servers`; `enabled: false` for Zed and Kilo; Codex `enabled = false`; Vibe `disabled = true`), a
 disabled server is not read from a source and the tool's own disabled server is kept; Claude Code, Cursor,
 Copilot and Gemini keep their toggles outside the file. Every other server the source does not define is
-dropped from every target, Codex and Vibe included. conforme writes OpenCode 2's native `mcp.servers`; OpenCode 1's
-`mcp.<name>` and `agent` entries, which OpenCode 2 still loads, are read too (OPENCODE_V1_SHAPE), a native entry
-winning.
+dropped from every target, Codex and Vibe included. conforme targets OpenCode 2 only: it reads and writes the native
+`mcp.servers` and `agents`; OpenCode 1's `mcp.<name>` and `agent` entries are the user's, never read nor touched.
 
 Every JSON file conforme merges into (`.mcp.json`, `.cursor/mcp.json`,
 `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`,
