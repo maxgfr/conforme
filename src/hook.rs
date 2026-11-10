@@ -19,34 +19,15 @@ struct Repo {
     shared: bool,
 }
 
-/// `path` with symbolic links resolved, as far as it exists (a hooks
-/// directory may not be created yet).
-fn resolved(path: &Path) -> PathBuf {
-    let mut missing = Vec::new();
-    let mut current = path;
-    loop {
-        if let Ok(existing) = std::fs::canonicalize(current) {
-            return missing.iter().rev().fold(existing, |p, part| p.join(part));
-        }
-        match (current.parent(), current.file_name()) {
-            (Some(parent), Some(name)) => {
-                missing.push(name.to_os_string());
-                current = parent;
-            }
-            _ => return path.to_path_buf(),
-        }
-    }
-}
-
 /// Whether `hooks_dir` is neither in the working tree nor in the git
 /// directory of the repository `project_root` belongs to.
 fn is_shared_hooks_dir(project_root: &Path, hooks_dir: &Path) -> bool {
     let own: Vec<PathBuf> = ["--show-toplevel", "--git-common-dir"]
         .iter()
         .filter_map(|flag| git_output(project_root, &["rev-parse", flag]))
-        .map(|dir| resolved(&project_root.join(dir)))
+        .map(|dir| crate::adapters::resolved_path(&project_root.join(dir)))
         .collect();
-    let hooks_dir = resolved(hooks_dir);
+    let hooks_dir = crate::adapters::resolved_path(hooks_dir);
     !own.is_empty() && !own.iter().any(|dir| hooks_dir.starts_with(dir))
 }
 

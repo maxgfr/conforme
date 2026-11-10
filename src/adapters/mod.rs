@@ -568,6 +568,26 @@ pub(crate) fn is_instructions_file(
         && path.parent() == Some(rules_dir)
 }
 
+/// `path` with symbolic links resolved, as far as it exists: the nearest
+/// existing ancestor is resolved and the rest (a file not written yet)
+/// appended as it is.
+pub fn resolved_path(path: &Path) -> PathBuf {
+    let mut missing = Vec::new();
+    let mut current = path;
+    loop {
+        if let Ok(existing) = std::fs::canonicalize(current) {
+            return missing.iter().rev().fold(existing, |p, part| p.join(part));
+        }
+        match (current.parent(), current.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name.to_os_string());
+                current = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
 /// Whether `path` is a directory itself, not a symbolic link to one. Every
 /// recursive walk descends only into those: a link to a directory may loop
 /// back on itself, or lead out of the project where `migrate` would delete.

@@ -26,8 +26,10 @@ src/
                        and says how to exclude a tool still detected;
                        selected_targets (detection + only/exclude) is the one target set of sync, check,
                        diff and status; target_files/write_target leave out the source's source_files() and any
-                       file or directory linked to what the source reads (`CLAUDE.md -> AGENTS.md`: is_source_file,
-                       is_one_of), migrate replaces such an output link with the file;
+                       file reached through a link into what the source reads (`CLAUDE.md -> AGENTS.md`,
+                       `.cursor/skills -> ../.claude/skills`: is_source_file, is_one_of, LinkWalk against
+                       source_read_paths), remove and migrate never delete through such a link, migrate replaces
+                       such an output link with a file or directory of its own;
                        generated_agents_md is compared by check and diff too; check validates the config;
                        status shows excluded tools as "Excluded" and AGENTS.md as "Source's own file" /
                        "Generated output" / "Not managed";

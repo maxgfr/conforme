@@ -174,9 +174,12 @@ skills root like a shared one. A target file or directory that is a symbolic
 link to one of them, or to a directory the source manages (`CLAUDE.md ->
 AGENTS.md`, `.cursor/skills -> ../.claude/skills`), is the source under another
 name (`sync::is_source_file`, `is_one_of`), and so is the file a source file
-links to (`sync::source_files`): sync never writes through it nor
+links to (`sync::source_files`); a path that goes through any link is
+compared where it really is (`sync::LinkWalk`): sync never writes through it nor
 generates an `AGENTS.md` over it, `remove` keeps it, `gitignore install` does
-not ignore it, and `migrate` replaces such an output link with the file itself.
+not ignore it, and `migrate` replaces such an output link with a file or
+directory of its own and never deletes a source file that really is a staying
+tool's.
 
 `reads_agents_md(project_root)` is true for Codex, OpenCode, DeepSeek, Vibe, Kilo and Antigravity CLI;
 for Claude Code when the project has no `CLAUDE.md` nor `.claude/CLAUDE.md` but

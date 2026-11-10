@@ -4926,3 +4926,152 @@ fn test_sync_does_not_generate_agents_md_over_the_file_the_source_links_to() {
         .assert()
         .success();
 }
+
+/// A Claude Code source with a rule, a skill and an MCP server, and the
+/// source set in `.conformerc.toml`.
+#[cfg(unix)]
+fn claude_source_project() -> TempDir {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::create_dir_all(root.join(".claude/skills/deploy")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    fs::write(
+        root.join(".claude/rules/ts.md"),
+        "---\npaths:\n  - \"**/*.ts\"\n---\nUse TS.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".claude/skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy\nallowed-tools: Bash\n---\n\nRun deploy.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".mcp.json"),
+        "{\"mcpServers\": {\"api\": {\"type\": \"http\", \"url\": \"https://e.x/mcp\", \"headers\": {\"Authorization\": \"Bearer ${GH_TOKEN}\"}}}}\n",
+    )
+    .unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    dir
+}
+
+#[cfg(unix)]
+#[test]
+fn test_sync_never_writes_the_source_through_a_link_below_a_target_directory() {
+    // A skill folder, a rule file or a settings file of the target linked to
+    // the source's own: each is the source's file under another name.
+    let dir = claude_source_project();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor/skills")).unwrap();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    let link = std::os::unix::fs::symlink::<&str, std::path::PathBuf>;
+    link(
+        "../../.claude/skills/deploy",
+        root.join(".cursor/skills/deploy"),
+    )
+    .unwrap();
+    link(
+        "../../.claude/rules/ts.md",
+        root.join(".cursor/rules/ts.mdc"),
+    )
+    .unwrap();
+    link("../.mcp.json", root.join(".cursor/mcp.json")).unwrap();
+    let sources = [
+        ".claude/skills/deploy/SKILL.md",
+        ".claude/rules/ts.md",
+        ".mcp.json",
+        "CLAUDE.md",
+    ];
+    let before: Vec<String> = sources
+        .iter()
+        .map(|p| fs::read_to_string(root.join(p)).unwrap())
+        .collect();
+
+    for _ in 0..2 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+        for (path, text) in sources.iter().zip(&before) {
+            assert_eq!(
+                &fs::read_to_string(root.join(path)).unwrap(),
+                text,
+                "{path}"
+            );
+        }
+    }
+    assert!(!root.join(".claude/skills/deploy/.conforme").exists());
+    assert!(root.join(".cursor/rules/general.mdc").exists());
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}
+
+#[cfg(unix)]
+#[test]
+fn test_remove_never_deletes_the_source_through_a_linked_directory() {
+    let dir = claude_source_project();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    fs::create_dir_all(root.join(".kiro")).unwrap();
+    std::os::unix::fs::symlink("../.claude/skills", root.join(".cursor/skills")).unwrap();
+    std::os::unix::fs::symlink("../.claude/rules", root.join(".kiro/steering")).unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "remove", "cursor", "kiro"])
+        .assert()
+        .success();
+
+    assert!(root.join(".claude/skills/deploy/SKILL.md").exists());
+    assert!(root.join(".claude/rules/ts.md").exists());
+    assert!(!root.join(".cursor/rules/general.mdc").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_migrate_through_linked_directories_loses_nothing() {
+    // The source's skills directory is a link to the output's: deleting the
+    // source's skills through it would delete what was just written.
+    let dir = claude_source_project();
+    let root = dir.path();
+    fs::rename(root.join(".claude/skills"), root.join("skills-tmp")).unwrap();
+    fs::create_dir_all(root.join(".agents")).unwrap();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::rename(root.join("skills-tmp"), root.join(".agents/skills")).unwrap();
+    std::os::unix::fs::symlink("../.agents/skills", root.join(".claude/skills")).unwrap();
+
+    migrate(root, "claude", "codex");
+
+    let skill = fs::read_to_string(root.join(".agents/skills/deploy/SKILL.md")).unwrap();
+    assert!(skill.contains("Run deploy."), "{skill}");
+    assert!(fs::read_to_string(root.join("AGENTS.md"))
+        .unwrap()
+        .contains("Use TS."));
+
+    // The output's rules directory is a link to the source's: written
+    // through it, the output's files would be deleted as the source's.
+    let dir = claude_source_project();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".kiro")).unwrap();
+    std::os::unix::fs::symlink("../.claude/rules", root.join(".kiro/steering")).unwrap();
+
+    migrate(root, "claude", "kiro");
+
+    let steering = root.join(".kiro/steering");
+    assert!(fs::symlink_metadata(&steering)
+        .unwrap()
+        .file_type()
+        .is_dir());
+    assert!(fs::read_to_string(steering.join("general.md"))
+        .unwrap()
+        .contains("Be helpful."));
+    assert!(fs::read_to_string(steering.join("ts.md"))
+        .unwrap()
+        .contains("Use TS."));
+    assert!(root.join(".kiro/skills/deploy/SKILL.md").exists());
+}
