@@ -164,6 +164,23 @@ impl<'a> LinkWalk<'a> {
         None
     }
 
+    /// Every symbolic link among `path` and the directories leading to it
+    /// below the project root, outermost first.
+    fn links(&self, path: &Path) -> Vec<std::path::PathBuf> {
+        let Ok(relative) = path.strip_prefix(self.project_root) else {
+            return Vec::new();
+        };
+        let mut current = self.project_root.to_path_buf();
+        let mut links = Vec::new();
+        for part in relative.components() {
+            current.push(part);
+            if std::fs::symlink_metadata(&current).is_ok_and(|m| m.file_type().is_symlink()) {
+                links.push(current.clone());
+            }
+        }
+        links
+    }
+
     /// Those of `paths` that go through a symbolic link, resolved: where the
     /// files a tool reaches through its links really are. A file spelled
     /// without any link may be one of them (`.claude/skills/x/SKILL.md` when
@@ -203,6 +220,43 @@ pub(crate) fn source_files(project_root: &Path, source_id: &str) -> Vec<std::pat
     for file in linked {
         if !files.contains(&file) {
             files.push(file);
+        }
+    }
+    files
+}
+
+/// [`source_files`], plus the files the source holds for `config` behind a
+/// symbolic link of its own (a skill folder or a rule file of the source that
+/// lives in another tool's directory), named where they really are: those
+/// are the source's too, and the tool whose directory they sit in must not
+/// rewrite them.
+fn source_files_for(
+    project_root: &Path,
+    source_id: &str,
+    config: &NormalizedConfig,
+) -> Vec<std::path::PathBuf> {
+    let mut files = source_files(project_root, source_id);
+    let Some(Ok(generated)) = find_adapter(source_id).map(|a| a.generate(project_root, config))
+    else {
+        return files;
+    };
+    let mut walk = LinkWalk::new(project_root);
+    let mut root = None;
+    for (path, _) in generated {
+        if walk.first_link(&path).is_none() {
+            continue;
+        }
+        let Some(root) = root
+            .get_or_insert_with(|| std::fs::canonicalize(project_root).ok())
+            .as_ref()
+        else {
+            break;
+        };
+        if let Ok(relative) = adapters::resolved_path(&path).strip_prefix(root) {
+            let real = project_root.join(relative);
+            if !files.contains(&real) {
+                files.push(real);
+            }
         }
     }
     files
@@ -1052,7 +1106,7 @@ pub fn run_sync(
 
     // Determine if we should clean orphans
     let should_clean = !no_clean && project_cfg.clean;
-    let source_files = source_files(project_root, &source_id);
+    let source_files = source_files_for(project_root, &source_id, &config);
 
     if verbose {
         for adapter in &adapters {
@@ -1324,7 +1378,7 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
     // A file the source or another tool that stays also generates is never
     // removed: `.agents/skills/` belongs to Codex and Zed at once. Nor is
     // a file the source reads (a Kilo Code source reading `CLAUDE.md`).
-    let source_files = source_files(project_root, &source_id);
+    let source_files = source_files_for(project_root, &source_id, &config);
     let mut kept = std::collections::HashSet::new();
     let mut kept_dirs = Vec::new();
     for adapter in &adapters {
@@ -1558,7 +1612,7 @@ pub fn run_check(project_root: &Path, from: Option<&str>, verbose: bool) -> Resu
 
     let adapters = adapters::all_adapters();
     let mut out_of_sync = Vec::new();
-    let source_files = source_files(project_root, &source_id);
+    let source_files = source_files_for(project_root, &source_id, &config);
     // An empty source makes sync stop without writing anything: nothing to
     // compare either.
     let targets = if config.is_empty() {
@@ -1712,7 +1766,7 @@ pub fn run_status(project_root: &Path, _verbose: bool) -> Result<()> {
             .iter()
             .map(|a| a.id())
             .collect();
-    let source_files = source_files(project_root, &source_id);
+    let source_files = source_files_for(project_root, &source_id, &config);
     for (tool, adapter) in tools.iter().zip(adapters.iter()) {
         let detected_str = if tool.detected {
             "Yes".green().to_string()
@@ -1789,7 +1843,7 @@ pub fn run_diff(
 
     let adapters = adapters::all_adapters();
     let mut any_diff = false;
-    let source_files = source_files(project_root, &source_id);
+    let source_files = source_files_for(project_root, &source_id, &config);
     type Output = (
         String,
         Vec<(std::path::PathBuf, String)>,
@@ -2008,6 +2062,8 @@ pub fn run_migrate(
     // be written into a file that is deleted below, or that the source tool
     // keeps reading: the link is removed before the output is written, which
     // gets a file or a directory of its own.
+    // Of the links on the way, the one replaced is the one that leads into
+    // the source: a `.kiro` linked to a folder of the user's is left alone.
     let source_paths = source_read_paths(project_root, source, &config);
     let mut replaced_links: Vec<std::path::PathBuf> = Vec::new();
     for (path, _) in output_adapter
@@ -2015,9 +2071,12 @@ pub fn run_migrate(
         .iter()
         .chain(agents_md.iter())
     {
-        let mut links = LinkWalk::new(project_root);
-        if let Some(link) = links.first_link(path) {
-            if !replaced_links.contains(&link) && is_beneath(path, &source_paths) {
+        let into_source = LinkWalk::new(project_root)
+            .links(path)
+            .into_iter()
+            .find(|link| is_beneath(link, &source_paths));
+        if let Some(link) = into_source {
+            if !replaced_links.contains(&link) {
                 replaced_links.push(link);
             }
         }
@@ -2091,9 +2150,18 @@ pub fn run_migrate(
             ">".cyan(),
             output_adapter.name().bold()
         );
+        for link in &replaced_links {
+            println!(
+                "    {} {} (a link into {}'s files) with its own copy",
+                "would replace".yellow(),
+                link.strip_prefix(project_root).unwrap_or(link).display(),
+                source_adapter.name()
+            );
+        }
         for (path, content) in generated.iter().chain(agents_md.iter()) {
             let rel = path.strip_prefix(project_root).unwrap_or(path);
-            if !path.exists() {
+            let behind_replaced_link = replaced_links.iter().any(|link| path.starts_with(link));
+            if !path.exists() || behind_replaced_link {
                 println!("    {} {}", "would create".green(), rel.display());
             } else if contents_match(&std::fs::read_to_string(path)?, content) {
                 println!("    {} {}", "unchanged".dimmed(), rel.display());

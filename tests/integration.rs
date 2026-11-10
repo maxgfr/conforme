@@ -5227,3 +5227,106 @@ fn test_a_link_to_a_location_the_source_does_not_read_is_written_through() {
         shared
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn test_sync_never_rewrites_a_source_file_that_is_itself_a_link() {
+    // The source owns the links: one of its skill folders and one of its
+    // rule files live in another tool's directory. Those tools must not
+    // rewrite them in their own shape.
+    let dir = claude_source_project();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".agents/skills")).unwrap();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::create_dir_all(root.join(".kiro/steering")).unwrap();
+    fs::rename(
+        root.join(".claude/skills/deploy"),
+        root.join(".agents/skills/deploy"),
+    )
+    .unwrap();
+    fs::rename(
+        root.join(".claude/rules/ts.md"),
+        root.join(".kiro/steering/ts.md"),
+    )
+    .unwrap();
+    let link = std::os::unix::fs::symlink::<&str, std::path::PathBuf>;
+    link(
+        "../../.agents/skills/deploy",
+        root.join(".claude/skills/deploy"),
+    )
+    .unwrap();
+    link(
+        "../../.kiro/steering/ts.md",
+        root.join(".claude/rules/ts.md"),
+    )
+    .unwrap();
+    let sources = [".agents/skills/deploy/SKILL.md", ".kiro/steering/ts.md"];
+    let before: Vec<String> = sources
+        .iter()
+        .map(|p| fs::read_to_string(root.join(p)).unwrap())
+        .collect();
+
+    for _ in 0..2 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+        for (path, text) in sources.iter().zip(&before) {
+            assert_eq!(
+                &fs::read_to_string(root.join(path)).unwrap(),
+                text,
+                "{path}"
+            );
+        }
+    }
+    assert!(root.join(".kiro/steering/general.md").exists());
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}
+
+#[cfg(unix)]
+#[test]
+fn test_migrate_replaces_the_link_that_leads_into_the_source_not_an_outer_one() {
+    // `.kiro` is a link to the user's own folder, and only its `steering`
+    // is a link into the source: that one alone is replaced.
+    let dir = claude_source_project();
+    let root = dir.path();
+    fs::create_dir_all(root.join("kiro-real/settings")).unwrap();
+    fs::write(root.join("kiro-real/settings/keep.json"), "{}\n").unwrap();
+    std::os::unix::fs::symlink("kiro-real", root.join(".kiro")).unwrap();
+    std::os::unix::fs::symlink("../.claude/rules", root.join("kiro-real/steering")).unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap()])
+        .args([
+            "migrate",
+            "--dry-run",
+            "--source",
+            "claude",
+            "--output",
+            "kiro",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("would replace"))
+        .stdout(predicate::str::contains("would create"));
+    migrate(root, "claude", "kiro");
+
+    assert!(fs::symlink_metadata(root.join(".kiro"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert!(fs::symlink_metadata(root.join("kiro-real/steering"))
+        .unwrap()
+        .file_type()
+        .is_dir());
+    assert!(fs::read_to_string(root.join("kiro-real/steering/ts.md"))
+        .unwrap()
+        .contains("Use TS."));
+    assert_eq!(
+        fs::read_to_string(root.join("kiro-real/settings/keep.json")).unwrap(),
+        "{}\n"
+    );
+}
