@@ -186,11 +186,11 @@ pub(crate) fn is_codex_server_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | '@' | '/' | '.' | '-'))
 }
 
-/// `VAR` for a value that is exactly `${VAR}`.
+/// `VAR` for a value that is exactly `${VAR}`, `VAR` being a variable name
+/// ([`is_var_name`], the one test of what a reference is).
 fn env_ref_name(text: &str) -> Option<&str> {
     let name = text.strip_prefix("${")?.strip_suffix('}')?;
-    (!name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
-        .then_some(name)
+    is_var_name(name).then_some(name)
 }
 
 /// The strings of a server a tool copies as they are: `command` and `args`
@@ -892,6 +892,8 @@ const PREDEFINED_VARIABLES: &[&str] = &[
     "pathSeparator",
 ];
 
+/// Whether `name` can name an environment variable: letters, digits and `_`,
+/// not starting with a digit.
 fn is_var_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars
@@ -1387,7 +1389,7 @@ impl ServerShape {
             if self.drop_passthrough_env {
                 server
                     .env
-                    .retain(|key, value| value.trim() != format!("${{{key}}}"));
+                    .retain(|key, value| env_ref_name(value.trim()) != Some(key.as_str()));
             }
             rewrite_server_strings(&mut server, |s| env_refs_to_tool(s, self.env_refs));
             let mut entry = serde_json::Map::new();
@@ -2119,6 +2121,16 @@ args = ["."]
                 args: vec!["-y".to_string(), "my server".to_string(), ".".to_string()],
             }
         );
+    }
+
+    #[test]
+    fn test_env_ref_name_is_a_variable_name() {
+        assert_eq!(env_ref_name("${GH_TOKEN}"), Some("GH_TOKEN"));
+        assert_eq!(env_ref_name("${_x1}"), Some("_x1"));
+        // Not a variable name, so not a reference, for any tool.
+        for text in ["${1X}", "${A-B}", "${}", "${A} ", "Bearer ${A}", "${A:-b}"] {
+            assert_eq!(env_ref_name(text), None, "{text}");
+        }
     }
 
     #[test]
