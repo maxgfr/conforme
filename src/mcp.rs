@@ -102,11 +102,24 @@ pub fn merge_codex_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> 
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
                 set_string_map(entry, "env", &literal, entry_inline);
-                // Object entries (`source = "remote"`) are Codex-only and kept.
+                // Remote entries (`source = "remote"`) are Codex-only and
+                // kept. A local one (`{ name = "X" }`, `source = "local"`) is
+                // what conforme writes as a plain name: replaced below.
                 let mut env_vars: Array = entry
                     .get("env_vars")
                     .and_then(Item::as_array)
-                    .map(|existing| existing.iter().filter(|v| !v.is_str()).cloned().collect())
+                    .map(|existing| {
+                        existing
+                            .iter()
+                            .filter(|v| {
+                                v.as_inline_table()
+                                    .and_then(|table| table.get("source"))
+                                    .and_then(|source| source.as_str())
+                                    .is_some_and(|source| source != "local")
+                            })
+                            .cloned()
+                            .collect()
+                    })
                     .unwrap_or_default();
                 for (name, _) in forwarded {
                     env_vars.push(name.as_str());
@@ -2296,6 +2309,49 @@ callback_port = 5555
             error.to_string().contains("cannot safely migrate"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn test_codex_merge_replaces_local_env_var_tables() {
+        // A local `env_vars` table is what conforme writes as a plain name:
+        // the merge must replace it, not keep it beside the new entry.
+        let stdio = |env: &[(&str, &str)]| NormalizedMcpServer {
+            name: "fs".to_string(),
+            transport: McpTransport::Stdio {
+                command: "node".to_string(),
+                args: vec![],
+            },
+            env: env
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        };
+        for table in [
+            "{ name = \"TOKEN\" }",
+            "{ name = \"TOKEN\", source = \"local\" }",
+        ] {
+            let existing = format!("[mcp_servers.fs]\ncommand = \"node\"\nenv_vars = [{table}]\n");
+
+            // Still forwarded: exactly one entry.
+            let forwarded = [stdio(&[("TOKEN", "${TOKEN}")])];
+            let merged = merge_codex_mcp_toml(&existing, &forwarded).unwrap();
+            assert_eq!(merged.matches("TOKEN").count(), 1, "{merged}");
+            assert_eq!(parse_codex_mcp_toml(&merged).unwrap(), forwarded);
+
+            // Gone from the source: no longer forwarded.
+            let merged = merge_codex_mcp_toml(&existing, &[stdio(&[])]).unwrap();
+            assert!(!merged.contains("TOKEN"), "{merged}");
+
+            // Now a literal value: it reads back as that value.
+            let literal = [stdio(&[("TOKEN", "abc")])];
+            let merged = merge_codex_mcp_toml(&existing, &literal).unwrap();
+            assert_eq!(parse_codex_mcp_toml(&merged).unwrap(), literal, "{merged}");
+        }
+
+        // A remote one is Codex's own and stays.
+        let existing = "[mcp_servers.fs]\ncommand = \"node\"\nenv_vars = [{ name = \"R\", source = \"remote\" }]\n";
+        let merged = merge_codex_mcp_toml(existing, &[stdio(&[])]).unwrap();
+        assert!(merged.contains("source = \"remote\""), "{merged}");
     }
 
     #[test]
