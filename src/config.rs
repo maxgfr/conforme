@@ -229,17 +229,21 @@ fn fold_to_ascii(c: char) -> Option<&'static str> {
     })
 }
 
-/// Split a comma-separated glob list, ignoring commas inside `{…}` braces so
-/// `src/**/*.{ts,tsx}, docs/**` yields two patterns, not three.
+/// Split a comma-separated glob list, ignoring commas inside `{…}` braces and
+/// `[…]` character classes, so `src/**/*.{ts,tsx}, docs/[a,b]*` yields two
+/// patterns, not four.
 pub fn split_globs(globs: &str) -> Vec<String> {
     let mut patterns = Vec::new();
     let mut current = String::new();
     let mut depth = 0usize;
+    let mut in_class = false;
     for c in globs.chars() {
         match c {
-            '{' => depth += 1,
-            '}' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
+            '[' => in_class = true,
+            ']' => in_class = false,
+            '{' if !in_class => depth += 1,
+            '}' if !in_class => depth = depth.saturating_sub(1),
+            ',' if depth == 0 && !in_class => {
                 patterns.push(std::mem::take(&mut current));
                 continue;
             }
@@ -352,6 +356,17 @@ mod tests {
                 "{s}"
             );
         }
+    }
+
+    #[test]
+    fn test_split_globs_keeps_character_classes() {
+        assert_eq!(
+            split_globs("src/[a,b]*.ts, docs/**, *.{md,[x,y]}"),
+            vec!["src/[a,b]*.ts", "docs/**", "*.{md,[x,y]}"]
+        );
+        // Written back joined by commas, the list reads back the same.
+        let globs = vec!["lib/[a,b].rs".to_string(), "**/*.{ts,tsx}".to_string()];
+        assert_eq!(split_globs(&globs.join(",")), globs);
     }
 
     #[test]
