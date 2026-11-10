@@ -492,6 +492,18 @@ pub fn template_agents_md() -> String {
     .to_string()
 }
 
+/// Push `text` and a line end, closing a code fence it leaves open: the
+/// parser reads every later line inside an open fence as text, so the next
+/// `## Rule:` heading and all that follows would land in this section.
+fn push_section_text(out: &mut String, text: &str) {
+    out.push_str(text);
+    out.push('\n');
+    if let Some((marker, len)) = text.lines().fold(None, next_fence) {
+        out.push_str(&marker.to_string().repeat(len));
+        out.push('\n');
+    }
+}
+
 /// Export a NormalizedConfig back to AGENTS.md format.
 pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
     let mut out = String::new();
@@ -502,8 +514,7 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
         if !config.instructions.starts_with("# ") {
             out.push_str("# Project Instructions\n\n");
         }
-        out.push_str(&config.instructions);
-        out.push('\n');
+        push_section_text(&mut out, &config.instructions);
     }
 
     for rule in &config.rules {
@@ -529,8 +540,7 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
             }
         }
         out.push('\n');
-        out.push_str(&rule.content);
-        out.push('\n');
+        push_section_text(&mut out, &rule.content);
     }
 
     for skill in &config.skills {
@@ -551,8 +561,7 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
             ));
         }
         out.push('\n');
-        out.push_str(&skill.content);
-        out.push('\n');
+        push_section_text(&mut out, &skill.content);
     }
 
     for agent in &config.agents {
@@ -579,8 +588,7 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
             ));
         }
         out.push('\n');
-        out.push_str(&agent.content);
-        out.push('\n');
+        push_section_text(&mut out, &agent.content);
     }
 
     for mcp in &config.mcp_servers {
@@ -614,6 +622,36 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_export_closes_a_code_fence_left_open() {
+        // A rule body read from a tool with an unclosed fence must not
+        // swallow the sections exported after it.
+        let config = NormalizedConfig {
+            instructions: "Intro.\n~~~~\nopen".to_string(),
+            rules: vec![
+                NormalizedRule {
+                    name: "A".to_string(),
+                    content: "Run:\n```bash\nmake".to_string(),
+                    activation: ActivationMode::Always,
+                },
+                NormalizedRule {
+                    name: "B".to_string(),
+                    content: "Second.".to_string(),
+                    activation: ActivationMode::Manual,
+                },
+            ],
+            ..Default::default()
+        };
+        let exported = export_as_agents_md(&config);
+        let parsed = parse_agents_md(&exported).unwrap();
+        assert_eq!(parsed.rules.len(), 2, "{exported}");
+        assert_eq!(parsed.rules[0].content, "Run:\n```bash\nmake\n```");
+        assert_eq!(parsed.rules[1].activation, ActivationMode::Manual);
+        assert_eq!(parsed.rules[1].content, "Second.");
+        // Stable from then on.
+        assert_eq!(export_as_agents_md(&parsed), exported);
+    }
 
     #[test]
     fn test_headings_inside_code_fences_are_text() {

@@ -11,7 +11,8 @@ src/
                        read_text / normalize_text: every file read from a tool loses its BOM and CRLF
   markdown.rs       — AGENTS.md parser (sections → rules via ## Rule: headings); metadata only in a section's
                        leading comment block (any spacing, any case of the mode); a value that would not read
-                       back (comma, line break, `-->`, edge spaces) is written in JSON form, both forms read
+                       back (comma, line break, `-->`, edge spaces) is written in JSON form, both forms read;
+                       export closes a code fence a section body leaves open
   frontmatter.rs    — `---` block split by hand (BOM, CRLF, files of 3 bytes or fewer), parsed as YAML, else
                        entry by entry (`globs: **/*.ts`); `read` names the file in errors; is_strict_yaml for
                        tools that ignore a broken block (Antigravity rules, which accept an unquoted
