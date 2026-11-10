@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use notify::{RecursiveMode, Watcher};
 use notify_debouncer_mini::new_debouncer;
 use owo_colors::OwoColorize;
@@ -10,8 +10,17 @@ use std::time::Duration;
 use crate::adapters;
 use crate::project_config::ProjectConfig;
 
+/// The project root as the watcher reports event paths: absolute, links
+/// resolved (FSEvents reports `/private/tmp/p` for `-C /tmp/p` or `-C .`), so
+/// they can be compared with the watched paths.
+fn watch_root(project_root: &Path) -> Result<PathBuf> {
+    std::fs::canonicalize(project_root)
+        .with_context(|| format!("failed to resolve {}", project_root.display()))
+}
+
 /// Run the `watch` command — watch source files and auto-sync on changes.
 pub fn run_watch(project_root: &Path, only: Option<&[String]>, verbose: bool) -> Result<()> {
+    let project_root = &watch_root(project_root)?;
     let project_cfg = ProjectConfig::load(project_root)?;
 
     // Determine what paths to watch based on the source
@@ -357,6 +366,21 @@ mod tests {
             source: Some(source.to_string()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn test_events_reported_under_the_resolved_root_are_relevant() {
+        // The watcher reports resolved absolute paths; a root given as `.`,
+        // relative or through a link (`/tmp` on macOS) must still match.
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("project")).unwrap();
+        std::fs::write(dir.path().join("project").join("AGENTS.md"), "# A\n").unwrap();
+        let unresolved = dir.path().join("project").join("..").join("project");
+        let event = std::fs::canonicalize(dir.path().join("project").join("AGENTS.md")).unwrap();
+
+        let root = watch_root(&unresolved).unwrap();
+        let paths = get_watch_paths(&root, &ProjectConfig::default()).unwrap();
+        assert!(is_relevant(&event, &paths), "{paths:?}");
     }
 
     #[test]
