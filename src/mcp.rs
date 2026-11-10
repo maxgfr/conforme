@@ -456,7 +456,7 @@ pub fn merge_vibe_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> R
                     if let Some(key) = api_key {
                         auth.insert("api_key_env", key.var.into());
                         auth.insert("api_key_header", key.header.into());
-                        auth.insert("api_key_format", key.format.into());
+                        auth.insert("api_key_format", key.format.as_str().into());
                     }
                     if !literal.is_empty() {
                         let mut table = InlineTable::new();
@@ -476,11 +476,13 @@ pub fn merge_vibe_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> R
 
 /// The one header Vibe reads from an environment variable (a static `auth`
 /// with `api_key_env`): `Authorization: Bearer ${VAR}`, else the first header
-/// that is exactly `${VAR}`.
+/// holding one `${VAR}` that `api_key_format` can express (see
+/// [`single_env_ref`]).
 pub(crate) struct VibeApiKey<'a> {
     pub header: &'a str,
     pub var: &'a str,
-    pub format: &'static str,
+    /// `api_key_format`: the value with `{token}` for the reference.
+    pub format: String,
 }
 
 pub(crate) fn vibe_api_key(headers: &BTreeMap<String, String>) -> Option<VibeApiKey<'_>> {
@@ -489,18 +491,31 @@ pub(crate) fn vibe_api_key(headers: &BTreeMap<String, String>) -> Option<VibeApi
         Some(VibeApiKey {
             header: name,
             var,
-            format: "Bearer {token}",
+            format: "Bearer {token}".to_string(),
         })
     });
     bearer.or_else(|| {
         headers.iter().find_map(|(name, value)| {
+            let (prefix, var, suffix) = single_env_ref(value)?;
             Some(VibeApiKey {
                 header: name,
-                var: env_ref_name(value)?,
-                format: "{token}",
+                var,
+                format: format!("{prefix}{{token}}{suffix}"),
             })
         })
     })
+}
+
+/// A value holding exactly one `${VAR}` and, around it, text Vibe's
+/// `api_key_format` keeps as it is (no `$`, `{` or `}`): its prefix, the
+/// variable name and its suffix (`Token ${T}` → `Token `, `T`, ``).
+fn single_env_ref(value: &str) -> Option<(&str, &str, &str)> {
+    let start = value.find("${")?;
+    let end = start + value[start..].find('}')?;
+    let var = env_ref_name(&value[start..=end])?;
+    let (prefix, suffix) = (&value[..start], &value[end + 1..]);
+    let plain = |text: &str| !text.contains(['$', '{', '}']);
+    (plain(prefix) && plain(suffix)).then_some((prefix, var, suffix))
 }
 
 /// Parse Vibe's `[[mcp_servers]]` tables into normalized servers (the inverse
@@ -2192,6 +2207,38 @@ args = ["."]
         );
         assert_eq!(split("unterminated 'quote"), None);
         assert_eq!(split("trailing\\"), None);
+    }
+
+    #[test]
+    fn test_vibe_custom_api_key_format_round_trips() {
+        // `Token {token}` reads back as `Authorization: Token ${T}`; written
+        // back it must stay a token read from `T`, not a literal `${T}`.
+        let existing = "[[mcp_servers]]\nname = \"api\"\ntransport = \"streamable-http\"\nurl = \"https://example.com/mcp\"\nauth = { type = \"static\", api_key_env = \"T\", api_key_header = \"Authorization\", api_key_format = \"Token {token}\" }\n";
+        let servers = parse_vibe_mcp_toml(existing).unwrap();
+        let McpTransport::Http { headers, .. } = &servers[0].transport else {
+            panic!("{servers:?}");
+        };
+        assert_eq!(headers["Authorization"], "Token ${T}");
+
+        let merged = merge_vibe_mcp_toml("", &servers).unwrap();
+        assert!(merged.contains("api_key_env = \"T\""), "{merged}");
+        assert!(
+            merged.contains("api_key_format = \"Token {token}\""),
+            "{merged}"
+        );
+        assert!(!merged.contains("${T}"), "{merged}");
+        assert_eq!(parse_vibe_mcp_toml(&merged).unwrap(), servers);
+
+        // Bearer on another header, too.
+        let headers = BTreeMap::from([("X-Key".to_string(), "Bearer ${K}".to_string())]);
+        let key = vibe_api_key(&headers).unwrap();
+        assert_eq!((key.header, key.var), ("X-Key", "K"));
+        assert_eq!(key.format, "Bearer {token}");
+        // A value Vibe's format cannot hold (braces, a second reference).
+        for value in ["{x} ${K}", "${A}${B}", "a $ ${K}"] {
+            let headers = BTreeMap::from([("X-Key".to_string(), value.to_string())]);
+            assert!(vibe_api_key(&headers).is_none(), "{value}");
+        }
     }
 
     #[test]

@@ -100,7 +100,7 @@ src/
                        - Kilo: KILO_SHAPE (OpenCode 1's shape, no variable reference)
                        - Vibe: merge_vibe_mcp_toml / parse_vibe_mcp_toml; a string `command` is shell-split
                          as Vibe does, one that would not survive it is written as a list; vibe_api_key maps
-                         `Bearer ${VAR}`, else an exact `${VAR}` header, to `api_key_env`; an inline
+                         `Bearer ${VAR}`, else a header holding one `${VAR}`, to `api_key_env` + `api_key_format`; an inline
                          `mcp_servers = []` is accepted; a server that left the source is dropped
                        - parse_mcp_json reads back mcpServers / servers / context_servers
                        - OpenCode agents: parse_opencode_agent_object

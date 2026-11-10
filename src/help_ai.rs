@@ -199,7 +199,7 @@ pub fn print_help_ai() {
             "Project files load only in a folder trusted in ~/.vibe/trusted_folders.toml",
             "Skills synced to .vibe/skills/<name>/SKILL.md (the shared .agents/skills/ is read only when .vibe/skills/ has none); a project skill named like a built-in one (vibe, skill-creator) wins",
             "Subagents synced to .vibe/agents/<name>.toml (agent_type = \"subagent\", enabled_tools translated to Vibe tools); other agent files are the user's modes and are kept; a built-in name (ask, accept-edits, smart-approve, auto-approve, explore, lean) and the reserved main are never written",
-            "MCP merged into .vibe/config.toml as [[mcp_servers]] (stdio / streamable-http); `Authorization: Bearer ${VAR}` (else a header that is exactly ${VAR}) becomes a static auth reading VAR, any other ${VAR} is passed as written; a command Vibe would shell-split wrongly is written as a list; a server that left the source is dropped, a disabled one kept",
+            "MCP merged into .vibe/config.toml as [[mcp_servers]] (stdio / streamable-http); `Authorization: Bearer ${VAR}` (else a header holding one ${VAR}, its text kept as api_key_format) becomes a static auth reading VAR, any other ${VAR} is passed as written; a command Vibe would shell-split wrongly is written as a list; a server that left the source is dropped, a disabled one kept",
             "Legacy SSE servers written as streamable-http with a warning (Vibe has no SSE transport)",
         ],
     );
