@@ -4872,3 +4872,26 @@ fn test_migrate_moves_nested_skills_only_from_tools_that_read_them() {
         );
     }
 }
+
+#[test]
+fn test_hook_install_refuses_a_hooks_directory_shared_with_other_repositories() {
+    // `core.hooksPath` outside the repository (set globally, as a rule) is
+    // the pre-commit hook of every repository using it: `conforme check`
+    // there would fail commits wherever there is no conforme config.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("repo");
+    let shared = dir.path().join("shared-hooks");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&shared).unwrap();
+    git(&root, &["init", "-q"]);
+    git(
+        &root,
+        &["config", "core.hooksPath", shared.to_str().unwrap()],
+    );
+
+    run(&root, &["hook", "install"])
+        .failure()
+        .stderr(predicate::str::contains("core.hooksPath"))
+        .stderr(predicate::str::contains("nothing was changed"));
+    assert!(!shared.join("pre-commit").exists());
+}

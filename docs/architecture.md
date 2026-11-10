@@ -58,7 +58,8 @@ src/
   hook.rs           — Git pre-commit hook install/uninstall (like Husky): hooks directory from
                        `git rev-parse --git-path hooks` (worktrees, core.hooksPath), a `# >>> conforme >>>` block
                        right after the shebang, `conforme check -C <dir>` from a sub-directory; a non-shell hook
-                       is refused; uninstall also removes the block earlier versions appended
+                       and a hooks directory outside the repository (a global core.hooksPath, shared by every
+                       repository) are refused; uninstall also removes the block earlier versions appended
   gitignore.rs      — `conforme gitignore install/uninstall` (a block without its end marker is refused,
                        an unchanged file is "already up to date"): ignores the files each non-source
                        adapter selected by only/exclude owns (root files anchored, rules/agents dirs

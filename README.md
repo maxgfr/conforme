@@ -673,7 +673,7 @@ conforme hook install
 conforme hook uninstall
 ```
 
-The hook runs `conforme check` before each commit and blocks the commit if configs are out of sync. It goes where git runs hooks (`git rev-parse --git-path hooks`: a worktree's main repository, `core.hooksPath` such as `.husky`), as a block between `# >>> conforme >>>` and `# <<< conforme <<<` right after the shebang, so an `exit` further down cannot skip it. Installed from a sub-directory of the repository, it checks that directory (`conforme check -C <dir>`). A hook written for another interpreter (node, python) is refused rather than edited. `uninstall` removes the block, and blocks earlier versions appended, and deletes the file only when nothing but a shebang is left.
+The hook runs `conforme check` before each commit and blocks the commit if configs are out of sync. It goes where git runs hooks (`git rev-parse --git-path hooks`: a worktree's main repository, `core.hooksPath` such as `.husky`), as a block between `# >>> conforme >>>` and `# <<< conforme <<<` right after the shebang, so an `exit` further down cannot skip it. Installed from a sub-directory of the repository, it checks that directory (`conforme check -C <dir>`). A hook written for another interpreter (node, python) is refused rather than edited, and so is a `core.hooksPath` outside the repository (a global hooks directory): its hook runs in every repository, where `conforme check` would fail commits that have no conforme config. `uninstall` removes the block, and blocks earlier versions appended, and deletes the file only when nothing but a shebang is left.
 
 ## CI/CD integration
 

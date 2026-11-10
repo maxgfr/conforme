@@ -14,6 +14,40 @@ const LEGACY_MARKER: &str = "# conforme pre-commit hook";
 struct Repo {
     hooks_dir: PathBuf,
     subdir: Option<String>,
+    /// The hooks directory is outside the repository (a `core.hooksPath` set
+    /// globally, as a rule): every repository using it runs these hooks.
+    shared: bool,
+}
+
+/// `path` with symbolic links resolved, as far as it exists (a hooks
+/// directory may not be created yet).
+fn resolved(path: &Path) -> PathBuf {
+    let mut missing = Vec::new();
+    let mut current = path;
+    loop {
+        if let Ok(existing) = std::fs::canonicalize(current) {
+            return missing.iter().rev().fold(existing, |p, part| p.join(part));
+        }
+        match (current.parent(), current.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name.to_os_string());
+                current = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
+/// Whether `hooks_dir` is neither in the working tree nor in the git
+/// directory of the repository `project_root` belongs to.
+fn is_shared_hooks_dir(project_root: &Path, hooks_dir: &Path) -> bool {
+    let own: Vec<PathBuf> = ["--show-toplevel", "--git-common-dir"]
+        .iter()
+        .filter_map(|flag| git_output(project_root, &["rev-parse", flag]))
+        .map(|dir| resolved(&project_root.join(dir)))
+        .collect();
+    let hooks_dir = resolved(hooks_dir);
+    !own.is_empty() && !own.iter().any(|dir| hooks_dir.starts_with(dir))
 }
 
 fn git_output(project_root: &Path, args: &[&str]) -> Option<String> {
@@ -36,13 +70,19 @@ fn find_repo(project_root: &Path) -> Result<Repo> {
         let subdir = git_output(project_root, &["rev-parse", "--show-prefix"])
             .map(|prefix| prefix.trim_end_matches('/').to_string())
             .filter(|prefix| !prefix.is_empty());
-        return Ok(Repo { hooks_dir, subdir });
+        let shared = is_shared_hooks_dir(project_root, &hooks_dir);
+        return Ok(Repo {
+            hooks_dir,
+            subdir,
+            shared,
+        });
     }
     // Without git (or in a repository it cannot read), the usual layout.
     if project_root.join(".git").is_dir() {
         return Ok(Repo {
             hooks_dir: project_root.join(".git").join("hooks"),
             subdir: None,
+            shared: false,
         });
     }
     bail!(
@@ -85,6 +125,16 @@ fn is_shell_hook(first_line: &str) -> bool {
 /// Install a git pre-commit hook that runs `conforme check`.
 pub fn install(project_root: &Path, verbose: bool) -> Result<()> {
     let repo = find_repo(project_root)?;
+    if repo.shared {
+        bail!(
+            "The hooks directory {} (core.hooksPath) is outside this repository: its \
+             pre-commit hook runs in every repository that uses it, and `conforme check` there \
+             would fail commits wherever there is no conforme config. Call `conforme check` \
+             from that hook yourself, or give this repository its own hooks \
+             (`git config core.hooksPath .githooks`); nothing was changed.",
+            repo.hooks_dir.display()
+        );
+    }
     std::fs::create_dir_all(&repo.hooks_dir)
         .with_context(|| format!("failed to create {}", repo.hooks_dir.display()))?;
     let hook_path = repo.hooks_dir.join("pre-commit");
