@@ -175,7 +175,8 @@ existing context files, Devin `global_rules.md` and `.windsurfrules`, Cursor `.c
 skills root like a shared one. A target file or directory that is a symbolic
 link to one of them, or to a directory the source manages (`CLAUDE.md ->
 AGENTS.md`, `.cursor/skills -> ../.claude/skills`), is the source under another
-name (`sync::is_source_file`, `is_one_of`): sync never writes through it nor
+name (`sync::is_source_file`, `is_one_of`), and so is the file a source file
+links to (`sync::source_files`): sync never writes through it nor
 generates an `AGENTS.md` over it, `remove` keeps it, `gitignore install` does
 not ignore it, and `migrate` replaces such an output link with the file itself.
 

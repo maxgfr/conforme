@@ -4895,3 +4895,34 @@ fn test_hook_install_refuses_a_hooks_directory_shared_with_other_repositories() 
         .stderr(predicate::str::contains("nothing was changed"));
     assert!(!shared.join("pre-commit").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn test_sync_does_not_generate_agents_md_over_the_file_the_source_links_to() {
+    // The other way round: CLAUDE.md is the link and AGENTS.md the file. With
+    // Claude Code as the source, AGENTS.md is what it reads through the
+    // link, so the generated AGENTS.md would overwrite the source.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    fs::write(root.join("AGENTS.md"), "Be helpful.\n").unwrap();
+    std::os::unix::fs::symlink("AGENTS.md", root.join("CLAUDE.md")).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+
+    for _ in 0..2 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+        assert_eq!(
+            fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+            "Be helpful.\n"
+        );
+    }
+    assert!(root.join(".cursor/rules/general.mdc").exists());
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}

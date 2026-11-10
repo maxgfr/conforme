@@ -103,12 +103,38 @@ fn source_locations(project_root: &Path, source_id: &str) -> Vec<std::path::Path
 /// [`AiToolAdapter::source_files`]); `AGENTS.md` itself when it is the source.
 /// No target writes these, and `remove`/`migrate` never delete them.
 pub(crate) fn source_files(project_root: &Path, source_id: &str) -> Vec<std::path::PathBuf> {
-    if source_id == "agents.md" {
-        return vec![project_root.join("AGENTS.md")];
+    let mut files = if source_id == "agents.md" {
+        vec![project_root.join("AGENTS.md")]
+    } else {
+        find_adapter(source_id)
+            .map(|source| source.source_files(project_root))
+            .unwrap_or_default()
+    };
+    // A source file that is a symbolic link (`CLAUDE.md -> AGENTS.md`, Claude
+    // Code the source) reads the file it points to: that one is the source's
+    // as well.
+    let linked: Vec<_> = files
+        .iter()
+        .filter_map(|file| link_target(project_root, file))
+        .collect();
+    for file in linked {
+        if !files.contains(&file) {
+            files.push(file);
+        }
     }
-    find_adapter(source_id)
-        .map(|source| source.source_files(project_root))
-        .unwrap_or_default()
+    files
+}
+
+/// The file of the project a symbolic link resolves to, spelled under
+/// `project_root`; `None` for anything but a link into the project.
+fn link_target(project_root: &Path, path: &Path) -> Option<std::path::PathBuf> {
+    let is_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    if !is_link {
+        return None;
+    }
+    let resolved = std::fs::canonicalize(path).ok()?;
+    let root = std::fs::canonicalize(project_root).ok()?;
+    Some(project_root.join(resolved.strip_prefix(root).ok()?))
 }
 
 /// Whether `path` is one of the source's files: in `source_files` (or beneath
