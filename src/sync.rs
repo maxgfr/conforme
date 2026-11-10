@@ -207,8 +207,20 @@ fn refuse_hand_written_agents_md(
     else {
         return Ok(());
     };
-    let Ok(existing) = std::fs::read_to_string(&path) else {
-        return Ok(());
+    let existing = match std::fs::read_to_string(&path) {
+        Ok(existing) => existing,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        // Not UTF-8 or unreadable: it cannot be compared with the source, so
+        // it is not replaced.
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!(
+                    "failed to read {}; nothing was changed (set `generate_agents_md = false` \
+                     in .conformerc.toml to leave it alone)",
+                    path.display()
+                )
+            })
+        }
     };
     if markdown::generated_from(&existing).is_some() || contents_match(&existing, &content) {
         return Ok(());
@@ -925,7 +937,11 @@ pub fn run_sync(
         } else {
             let should_write = match std::fs::read_to_string(&agents_path) {
                 Ok(existing) => !contents_match(&existing, &agents_content),
-                Err(_) => true,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+                Err(e) => {
+                    return Err(e)
+                        .with_context(|| format!("failed to read {}", agents_path.display()))
+                }
             };
             if should_write {
                 std::fs::write(&agents_path, &agents_content)?;

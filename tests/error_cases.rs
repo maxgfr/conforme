@@ -1020,3 +1020,23 @@ fn test_zed_legacy_command_object_is_read() {
     assert_eq!(json["mcpServers"]["legacy"]["args"][0], "--a", "{cursor}");
     assert_eq!(json["mcpServers"]["legacy"]["env"]["K"], "v", "{cursor}");
 }
+
+#[test]
+fn test_sync_refuses_to_replace_an_agents_md_it_cannot_read() {
+    // A hand-written AGENTS.md that is not UTF-8 (Latin-1 here) cannot be
+    // compared with the source: it must be left alone, not replaced.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::write(root.join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    let original: &[u8] = b"Caf\xe9 rules, written by hand.\n";
+    fs::write(root.join("AGENTS.md"), original).unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("AGENTS.md"));
+
+    assert_eq!(fs::read(root.join("AGENTS.md")).unwrap(), original);
+}
