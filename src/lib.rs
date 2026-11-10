@@ -1,9 +1,16 @@
 pub mod adapters;
+pub mod cli;
 pub mod config;
+pub mod detect;
 pub mod frontmatter;
+pub mod gitignore;
+pub mod help_ai;
+pub mod hook;
 pub mod json_settings;
 pub mod markdown;
 pub mod mcp;
 pub mod project_config;
 pub mod skills;
+pub mod sync;
 pub mod validate;
+pub mod watch;

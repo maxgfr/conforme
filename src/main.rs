@@ -1,19 +1,4 @@
-mod adapters;
-mod cli;
-mod config;
-mod detect;
-mod frontmatter;
-mod gitignore;
-mod help_ai;
-mod hook;
-mod json_settings;
-mod markdown;
-mod mcp;
-mod project_config;
-mod skills;
-mod sync;
-mod validate;
-mod watch;
+use conforme::{cli, gitignore, help_ai, hook, sync, watch};
 
 use anyhow::{Context, Result};
 use clap::Parser;
