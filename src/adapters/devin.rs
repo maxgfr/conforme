@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -152,10 +152,7 @@ impl AiToolAdapter for DevinAdapter {
             .into_iter()
             .find(|path| path.is_file());
         if let Some(path) = global_rules {
-            let global = crate::config::read_text(&path)
-                .with_context(|| format!("failed to read {}", path.display()))?
-                .trim()
-                .to_string();
+            let global = crate::config::read_text(&path)?.trim().to_string();
             if !global.is_empty() {
                 instructions = Some(match instructions.take() {
                     Some(general) if !general.is_empty() => format!("{general}\n\n{global}"),
@@ -168,10 +165,7 @@ impl AiToolAdapter for DevinAdapter {
         // files, always on and loaded next to the others.
         let windsurfrules = project_root.join(".windsurfrules");
         if windsurfrules.is_file() {
-            let legacy = crate::config::read_text(&windsurfrules)
-                .with_context(|| format!("failed to read {}", windsurfrules.display()))?
-                .trim()
-                .to_string();
+            let legacy = crate::config::read_text(&windsurfrules)?.trim().to_string();
             if !legacy.is_empty() {
                 instructions = Some(match instructions.take() {
                     Some(previous) if !previous.is_empty() => format!("{previous}\n\n{legacy}"),

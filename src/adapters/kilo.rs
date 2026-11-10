@@ -256,8 +256,7 @@ impl AiToolAdapter for KiloAdapter {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            let content = crate::config::read_text(&path)
-                .with_context(|| format!("failed to read {}", path.display()))?;
+            let content = crate::config::read_text(&path)?;
             config.rules.retain(|r| r.name != name);
             config.rules.push(NormalizedRule {
                 name,

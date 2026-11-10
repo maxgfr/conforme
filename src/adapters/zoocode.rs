@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{AiToolAdapter, ManagedDir};
@@ -147,8 +147,7 @@ impl AiToolAdapter for ZooCodeAdapter {
         // Zoo Code reads `.roo/rules/` recursively, sorting by base name only.
         let rule_files = crate::adapters::collect_rule_files(&rules_dir, "md")?;
         for path in &rule_files {
-            let content = crate::config::read_text(path)
-                .with_context(|| format!("failed to read {}", path.display()))?;
+            let content = crate::config::read_text(path)?;
             let stem = path.file_stem().unwrap_or_default().to_string_lossy();
             // `NN-` only orders the files; it is not part of the rule's name.
             let name = strip_order_prefix(&stem).to_string();
@@ -168,10 +167,7 @@ impl AiToolAdapter for ZooCodeAdapter {
         // empty.
         let roorules = project_root.join(".roorules");
         if rule_files.is_empty() && roorules.is_file() {
-            instructions = crate::config::read_text(&roorules)
-                .with_context(|| format!("failed to read {}", roorules.display()))?
-                .trim()
-                .to_string();
+            instructions = crate::config::read_text(&roorules)?.trim().to_string();
         }
 
         // Read skills and MCP back so a Zoo Code project round-trips as a source.

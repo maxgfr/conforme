@@ -1095,3 +1095,21 @@ fn test_remove_is_not_blocked_by_another_tools_unreadable_settings() {
     );
     assert!(root.join("GEMINI.md").exists());
 }
+
+#[test]
+fn test_unreadable_source_file_is_named_once_in_the_error() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::write(root.join("CLAUDE.md"), b"caf\xe9\n").unwrap();
+
+    let output = conforme()
+        .args(["-C", root.to_str().unwrap(), "check", "--from", "claude"])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output).unwrap();
+    assert_eq!(stderr.matches("CLAUDE.md").count(), 1, "{stderr}");
+}

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{AiToolAdapter, ManagedDir};
@@ -87,10 +87,7 @@ impl AiToolAdapter for ZedAdapter {
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let rules_file = project_root.join(".rules");
         let instructions = if rules_file.exists() {
-            crate::config::read_text(&rules_file)
-                .with_context(|| format!("failed to read {}", rules_file.display()))?
-                .trim()
-                .to_string()
+            crate::config::read_text(&rules_file)?.trim().to_string()
         } else {
             String::new()
         };

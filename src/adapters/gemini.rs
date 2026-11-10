@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{AiToolAdapter, ManagedDir};
@@ -141,8 +141,7 @@ impl AiToolAdapter for GeminiAdapter {
         for name in context_files.iter().filter(|n| *n != "AGENTS.md") {
             let path = project_root.join(name);
             if path.is_file() {
-                let text = crate::config::read_text(&path)
-                    .with_context(|| format!("failed to read {}", path.display()))?;
+                let text = crate::config::read_text(&path)?;
                 if !text.trim().is_empty() {
                     parts.push(text.trim().to_string());
                 }

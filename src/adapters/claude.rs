@@ -227,10 +227,7 @@ impl AiToolAdapter for ClaudeAdapter {
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let claude_md = claude_md_path(project_root);
         let instructions = if claude_md.exists() {
-            crate::config::read_text(&claude_md)
-                .with_context(|| format!("failed to read {}", claude_md.display()))?
-                .trim()
-                .to_string()
+            crate::config::read_text(&claude_md)?.trim().to_string()
         } else {
             String::new()
         };

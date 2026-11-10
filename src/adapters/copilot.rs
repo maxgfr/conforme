@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -100,8 +100,7 @@ impl AiToolAdapter for CopilotAdapter {
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         let instructions_file = project_root.join(".github").join("copilot-instructions.md");
         let instructions = if instructions_file.exists() {
-            crate::config::read_text(&instructions_file)
-                .with_context(|| format!("failed to read {}", instructions_file.display()))?
+            crate::config::read_text(&instructions_file)?
                 .trim()
                 .to_string()
         } else {

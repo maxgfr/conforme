@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -92,10 +92,7 @@ impl AiToolAdapter for CursorAdapter {
         // always-applied rule next to `.cursor/rules/`.
         let cursorrules = project_root.join(".cursorrules");
         if cursorrules.is_file() {
-            let legacy = crate::config::read_text(&cursorrules)
-                .with_context(|| format!("failed to read {}", cursorrules.display()))?
-                .trim()
-                .to_string();
+            let legacy = crate::config::read_text(&cursorrules)?.trim().to_string();
             if !legacy.is_empty() {
                 instructions = if instructions.is_empty() {
                     legacy
