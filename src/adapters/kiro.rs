@@ -81,7 +81,12 @@ impl AiToolAdapter for KiroAdapter {
 
                     let activation = parse_kiro_activation(&fields);
 
-                    if name == "general" && activation == ActivationMode::Always {
+                    if crate::adapters::is_instructions_file(
+                        &steering_dir,
+                        &path,
+                        &name,
+                        &activation,
+                    ) {
                         instructions = body.trim().to_string();
                     } else {
                         rules.push(NormalizedRule {
