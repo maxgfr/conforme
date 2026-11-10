@@ -267,13 +267,6 @@ fn set_string_map(
     entry.insert(key, item);
 }
 
-/// Merge normalized MCP servers into Mistral Vibe's project `.vibe/config.toml`,
-/// an array of `[[mcp_servers]]` tables matched by `name`. Every other setting,
-/// comment and server the source does not define is kept, and so are the
-/// per-server keys conforme does not own (`prompt`, timeouts, `cwd`,
-/// `disabled_tools`, an OAuth `auth`). Vibe expands no `${VAR}`: an
-/// `Authorization: Bearer ${VAR}` header becomes a static `auth` reading the
-/// token from `VAR` (`api_key_env`); any other value is written as it is.
 /// Split a command string the way Python's `shlex.split` does (POSIX mode,
 /// no comments), as Vibe does with a string `command`. `None` for an
 /// unterminated quote or escape, which `shlex` refuses too.
@@ -283,7 +276,9 @@ fn shell_split(text: &str) -> Option<Vec<String>> {
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
         match c {
-            c if c.is_whitespace() => {
+            // `shlex.whitespace`: no other blank (U+00A0, U+3000, `\v`)
+            // separates words.
+            ' ' | '\t' | '\r' | '\n' => {
                 if let Some(done) = word.take() {
                     words.push(done);
                 }
@@ -322,6 +317,13 @@ fn shell_split(text: &str) -> Option<Vec<String>> {
     Some(words)
 }
 
+/// Merge normalized MCP servers into Mistral Vibe's project `.vibe/config.toml`,
+/// an array of `[[mcp_servers]]` tables matched by `name`. Every other setting,
+/// comment and server the source does not define is kept, and so are the
+/// per-server keys conforme does not own (`prompt`, timeouts, `cwd`,
+/// `disabled_tools`, an OAuth `auth`). Vibe expands no `${VAR}`: an
+/// `Authorization: Bearer ${VAR}` header becomes a static `auth` reading the
+/// token from `VAR` (`api_key_env`); any other value is written as it is.
 pub fn merge_vibe_mcp_toml(existing: &str, servers: &[NormalizedMcpServer]) -> Result<String> {
     let mut document = if existing.trim().is_empty() {
         DocumentMut::new()
@@ -2183,6 +2185,11 @@ args = ["."]
         assert_eq!(split(r#""a\$b""#), words(&[r"a\$b"]));
         assert_eq!(split(r#""a\`b""#), words(&[r"a\`b"]));
         assert_eq!(split("a\\\nb"), words(&["a\nb"]));
+        // Only space, tab, CR and LF separate words (`shlex.whitespace`).
+        assert_eq!(
+            split("a\u{a0}b c\u{3000}d\te\u{b}f"),
+            words(&["a\u{a0}b", "c\u{3000}d", "e\u{b}f"])
+        );
         assert_eq!(split("unterminated 'quote"), None);
         assert_eq!(split("trailing\\"), None);
     }
