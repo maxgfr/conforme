@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-type Fields = BTreeMap<String, serde_yaml_ng::Value>;
+pub(crate) type Fields = BTreeMap<String, serde_yaml_ng::Value>;
 
 /// Split a Markdown file into its `---` frontmatter block and its body. A
 /// leading BOM is skipped and CRLF line ends are accepted; without a closing

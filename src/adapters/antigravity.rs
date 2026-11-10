@@ -175,10 +175,12 @@ impl AiToolAdapter for AntigravityAdapter {
         for path in top_level_rule_files(&rules_dir(project_root))? {
             // A file Antigravity discards (no valid `trigger`, broken
             // frontmatter) is not one of its rules.
-            if !is_antigravity_rule_file(&path) {
+            let Some((mut fields, body)) = crate::config::read_text(&path)
+                .ok()
+                .and_then(|content| antigravity_rule(&content))
+            else {
                 continue;
-            }
-            let (mut fields, body) = frontmatter::read(&path)?;
+            };
             // "singular `glob:` is also accepted" (antigravity.google/docs/rules).
             if !fields.contains_key("globs") {
                 if let Some(glob) = fields.remove("glob") {
@@ -299,14 +301,22 @@ const ANTIGRAVITY_TRIGGERS: &[&str] = &["always_on", "glob", "model_decision", "
 fn is_antigravity_rule_file(path: &Path) -> bool {
     crate::config::read_text(path)
         .ok()
-        .filter(|content| antigravity_parses(content))
-        .and_then(|content| frontmatter::parse(&content).ok())
-        .is_some_and(|(fields, _)| {
-            fields
-                .get("trigger")
-                .and_then(|t| t.as_str())
-                .is_some_and(|t| ANTIGRAVITY_TRIGGERS.contains(&t))
-        })
+        .and_then(|content| antigravity_rule(&content))
+        .is_some()
+}
+
+/// The frontmatter and body of a file Antigravity loads as a rule (it parses
+/// and has a valid `trigger`), `None` for one it discards.
+fn antigravity_rule(content: &str) -> Option<(frontmatter::Fields, String)> {
+    if !antigravity_parses(content) {
+        return None;
+    }
+    frontmatter::parse(content).ok().filter(|(fields, _)| {
+        fields
+            .get("trigger")
+            .and_then(|t| t.as_str())
+            .is_some_and(|t| ANTIGRAVITY_TRIGGERS.contains(&t))
+    })
 }
 
 /// Whether Antigravity parses the frontmatter of `content`: strict YAML, or

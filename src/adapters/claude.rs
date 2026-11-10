@@ -239,7 +239,10 @@ impl AiToolAdapter for ClaudeAdapter {
         let rules_dir = project_root.join(".claude").join("rules");
         // `.claude/rules/` is discovered recursively by Claude Code.
         for path in crate::adapters::collect_rule_files(&rules_dir, "md")? {
-            let (fields, body) = frontmatter::read(&path)?;
+            let content = crate::config::read_text(&path)?;
+            let (fields, body) = frontmatter::parse(&content).with_context(|| {
+                format!("failed to parse the frontmatter of {}", path.display())
+            })?;
             let name = path
                 .file_stem()
                 .unwrap_or_default()
@@ -254,8 +257,7 @@ impl AiToolAdapter for ClaudeAdapter {
             // (https://code.claude.com/docs/en/memory).
             // Brace groups (`src/**/*.{ts,tsx}`, the form Claude Code
             // recommends) keep their inner commas.
-            let strict = crate::config::read_text(&path)
-                .is_ok_and(|content| frontmatter::is_strict_yaml(&content));
+            let strict = frontmatter::is_strict_yaml(&content);
             let globs = if strict {
                 crate::config::yaml_globs(fields.get("paths"))
             } else {
