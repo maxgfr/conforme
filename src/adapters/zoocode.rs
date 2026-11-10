@@ -134,7 +134,7 @@ impl AiToolAdapter for ZooCodeAdapter {
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
-            ManagedDir::files(project_root.join(".roo").join("rules"), ".md"),
+            ManagedDir::files(project_root.join(".roo").join("rules"), ".md").recursive(),
             ManagedDir::subdirs(project_root.join(".roo").join("skills")),
         ]
     }

@@ -4596,3 +4596,40 @@ fn test_sync_warns_about_an_agent_named_like_a_copilot_built_in() {
         .stderr(predicate::str::contains("agent my-reviewer").not());
     assert!(dir.path().join(".github/agents/explore.agent.md").is_file());
 }
+
+#[test]
+fn test_migrate_keeps_nested_files_the_source_does_not_read() {
+    // Kiro loads only the top level of `.kiro/steering/` and `.kiro/agents/`,
+    // and a skills folder without a SKILL.md is not a skill: migrate never
+    // read them, so it must not delete them.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".kiro/steering/archive")).unwrap();
+    fs::write(
+        root.join(".kiro/steering/general.md"),
+        "---\ninclusion: always\n---\n\nBe helpful.\n",
+    )
+    .unwrap();
+    let nested_rule = root.join(".kiro/steering/archive/old.md");
+    fs::write(&nested_rule, "Old steering notes, never loaded.\n").unwrap();
+    fs::create_dir_all(root.join(".kiro/agents/drafts")).unwrap();
+    let nested_agent = root.join(".kiro/agents/drafts/wip.md");
+    fs::write(&nested_agent, "---\nname: wip\n---\n\nDraft.\n").unwrap();
+    fs::create_dir_all(root.join(".kiro/skills/notes")).unwrap();
+    let skill_notes = root.join(".kiro/skills/notes/README.md");
+    fs::write(&skill_notes, "Not a skill.\n").unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+
+    migrate(root, "kiro", "cursor");
+
+    assert!(!root.join(".kiro/steering/general.md").exists());
+    assert_eq!(
+        fs::read_to_string(&nested_rule).unwrap(),
+        "Old steering notes, never loaded.\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&nested_agent).unwrap(),
+        "---\nname: wip\n---\n\nDraft.\n"
+    );
+    assert_eq!(fs::read_to_string(&skill_notes).unwrap(), "Not a skill.\n");
+}

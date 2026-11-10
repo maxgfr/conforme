@@ -86,7 +86,7 @@ impl AiToolAdapter for DevinAdapter {
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         let mut dirs = vec![
-            ManagedDir::files(devin_dir(project_root).join("rules"), ".md"),
+            ManagedDir::files(devin_dir(project_root).join("rules"), ".md").recursive(),
             ManagedDir::subdirs(devin_dir(project_root).join("skills")),
         ];
         // Devin loads `.windsurf/rules/` next to `.devin/rules/`, so a rule an
@@ -95,11 +95,14 @@ impl AiToolAdapter for DevinAdapter {
         // legacy rules are the user's and stay.
         let legacy_rules = legacy_dir(project_root).join("rules");
         if legacy_rules.is_dir() {
-            dirs.push(ManagedDir::legacy_files(
-                legacy_rules,
-                devin_dir(project_root).join("rules"),
-                ".md",
-            ));
+            dirs.push(
+                ManagedDir::legacy_files(
+                    legacy_rules,
+                    devin_dir(project_root).join("rules"),
+                    ".md",
+                )
+                .recursive(),
+            );
         }
         let legacy_skills = legacy_dir(project_root).join("skills");
         if legacy_skills.is_dir() {

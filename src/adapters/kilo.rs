@@ -181,7 +181,8 @@ impl AiToolAdapter for KiloAdapter {
                 project_root.join(".kilo").join("agents"),
                 ".md",
                 is_builtin_agent_file,
-            ),
+            )
+            .recursive(),
         ]
     }
 

@@ -212,14 +212,15 @@ impl AiToolAdapter for ClaudeAdapter {
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
-            ManagedDir::files(project_root.join(".claude").join("rules"), ".md"),
+            ManagedDir::files(project_root.join(".claude").join("rules"), ".md").recursive(),
             ManagedDir::subdirs(project_root.join(".claude").join("skills")),
             // A `.md` without `name` and `description` there is not an agent
             // Claude Code loads (a README, a draft), so it is never one of
             // conforme's orphans.
             ManagedDir::files_except(project_root.join(".claude").join("agents"), ".md", |path| {
                 !is_claude_agent_file(path)
-            }),
+            })
+            .recursive(),
         ]
     }
 

@@ -146,6 +146,11 @@ pub struct ManagedDir {
     /// user's, not an orphan (a README beside Claude Code agents, a Gemini
     /// `_draft.md` agent).
     pub keep: Option<fn(&Path) -> bool>,
+    /// The tool reads this directory recursively (Claude Code, Cursor and
+    /// Zoo Code rules, …), so `migrate` moves and deletes nested files too.
+    /// Otherwise only its top level is the tool's: a file in a subfolder was
+    /// never read, and `migrate` leaves it in place.
+    pub recursive: bool,
 }
 
 impl ManagedDir {
@@ -156,6 +161,7 @@ impl ManagedDir {
             orphan_suffix: Some(suffix),
             superseded_by: None,
             keep: None,
+            recursive: false,
         }
     }
 
@@ -175,6 +181,7 @@ impl ManagedDir {
             orphan_suffix: None,
             superseded_by: None,
             keep: None,
+            recursive: false,
         }
     }
 
@@ -184,6 +191,15 @@ impl ManagedDir {
         Self {
             superseded_by: Some(current),
             ..Self::files(path, suffix)
+        }
+    }
+
+    /// Mark a files directory the tool reads recursively (see
+    /// [`ManagedDir::recursive`]).
+    pub fn recursive(self) -> Self {
+        Self {
+            recursive: true,
+            ..self
         }
     }
 

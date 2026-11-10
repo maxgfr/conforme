@@ -2243,17 +2243,28 @@ fn bundled_skill_folders(skills_dir: &Path) -> Vec<std::path::PathBuf> {
 fn migrated_files(dir: &adapters::ManagedDir) -> Result<Vec<std::path::PathBuf>> {
     let files = collect_files_recursive(&dir.path)?;
     Ok(match dir.orphan_suffix {
+        // A nested file of a directory the tool reads only at its top level
+        // was never read: it stays.
         Some(suffix) => files
             .into_iter()
             .filter(|path| {
-                path.file_name()
-                    .is_some_and(|name| name.to_string_lossy().ends_with(suffix))
+                (dir.recursive || path.parent() == Some(dir.path.as_path()))
+                    && path
+                        .file_name()
+                        .is_some_and(|name| name.to_string_lossy().ends_with(suffix))
                     && !dir.keep.is_some_and(|keep| keep(path))
             })
             .collect(),
+        // Only a skill folder (one holding a `SKILL.md`) was read; any other
+        // sub-folder of a skills directory is the user's.
         None => files
             .into_iter()
-            .filter(|path| path.parent() != Some(dir.path.as_path()))
+            .filter(|path| {
+                path.ancestors()
+                    .skip(1)
+                    .take_while(|ancestor| *ancestor != dir.path.as_path())
+                    .any(|ancestor| ancestor.join("SKILL.md").is_file())
+            })
             .collect(),
     })
 }

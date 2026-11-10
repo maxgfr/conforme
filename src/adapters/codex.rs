@@ -199,7 +199,8 @@ impl AiToolAdapter for CodexAdapter {
                 project_root.join(".codex").join("agents"),
                 ".toml",
                 |path| !is_conforme_written_agent(path) || is_builtin_agent_override(path),
-            ),
+            )
+            .recursive(),
         ]
     }
 

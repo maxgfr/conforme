@@ -117,7 +117,8 @@ impl AiToolAdapter for OpenCodeAdapter {
                         crate::mcp::is_opencode_builtin_agent(&stem.to_string_lossy())
                     })
                 },
-            ),
+            )
+            .recursive(),
             ManagedDir::subdirs(project_root.join(".opencode").join("skills")),
         ]
     }

@@ -87,12 +87,13 @@ impl AiToolAdapter for CopilotAdapter {
             ManagedDir::files(
                 project_root.join(".github").join("instructions"),
                 ".instructions.md",
-            ),
+            )
+            .recursive(),
             ManagedDir::subdirs(project_root.join(".github").join("skills")),
             // `.github/prompts/` is deliberately NOT managed: VS Code prompt
             // files are a user-authored feature, and orphan cleanup deletes
             // everything in a managed directory that conforme did not generate.
-            ManagedDir::files(project_root.join(".github").join("agents"), ".agent.md"),
+            ManagedDir::files(project_root.join(".github").join("agents"), ".agent.md").recursive(),
         ]
     }
 

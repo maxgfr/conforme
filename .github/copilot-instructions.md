@@ -143,8 +143,11 @@ Directories two tools share (`.agents/skills/` for Codex, Zed and Antigravity CL
 file another detected tool generates nor anything in a directory a staying tool
 (the output or another detected tool) manages, and in the source's own
 directories deletes only files with conforme's suffix not protected by `keep`
-(Kiro `.json` agents, Zoo `.txt` rules survive) and, in a skills directory, only
-skill sub-folders, never top-level files. It also keeps a skill folder that
+(Kiro `.json` agents, Zoo `.txt` rules survive), nested files only in a
+directory the tool reads recursively (`ManagedDir::recursive`: Claude, Cursor,
+Devin and Zoo rules, Copilot instructions and agents, Claude/Codex/OpenCode/Kilo
+agents) and, in a skills directory, only files of a folder holding a `SKILL.md`,
+never top-level files. It also keeps a skill folder that
 bundles other files (only `SKILL.md` reaches the output) and the skills or
 agents the output cannot hold. It validates the config and refuses an empty
 source, like `sync`; when the output keeps its instructions in `AGENTS.md`
