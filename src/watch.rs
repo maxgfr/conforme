@@ -100,11 +100,7 @@ pub fn run_watch(project_root: &Path, only: Option<&[String]>, verbose: bool) ->
                 if touched && now != last {
                     println!("\n{} Change detected, syncing...", ">".cyan());
                     sync();
-                    // The content synced, not the content after the sync: an
-                    // edit saved while it ran differs, so its event syncs
-                    // again (the sync's own AGENTS.md write at worst costs
-                    // one sync that changes nothing).
-                    last = now;
+                    last = synced_fingerprint(now, &fingerprint(&relevant_now), project_root);
                 }
             }
             Ok(Err(errors)) => {
@@ -167,6 +163,26 @@ fn fingerprint(relevant: &[PathBuf]) -> std::collections::BTreeMap<PathBuf, Vec<
         }
     }
     files
+}
+
+/// What a sync leaves as "already synced": the content it started from
+/// (`before`), so an edit saved while it ran still differs and syncs when
+/// its event arrives — except the AGENTS.md the sync itself generates, taken
+/// as it is afterwards (`after`): its own write is not a change to sync.
+fn synced_fingerprint(
+    mut before: std::collections::BTreeMap<PathBuf, Vec<u8>>,
+    after: &std::collections::BTreeMap<PathBuf, Vec<u8>>,
+    project_root: &Path,
+) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    let agents_md = project_root.join("AGENTS.md");
+    if let Some(content) = after.get(&agents_md) {
+        let generated = std::str::from_utf8(content)
+            .is_ok_and(|text| crate::markdown::generated_from(text).is_some());
+        if generated {
+            before.insert(agents_md, content.clone());
+        }
+    }
+    before
 }
 
 /// An event concerns the source when it is inside a relevant path.
@@ -484,6 +500,39 @@ mod tests {
         assert!(!is_relevant(root, &relevant));
         assert!(!is_relevant(&root.join("src/main.rs"), &relevant));
         assert!(!is_relevant(&root.join(".cursor/rules/ts.mdc"), &relevant));
+    }
+
+    #[test]
+    fn test_synced_fingerprint_keeps_mid_sync_edits_but_not_the_generated_agents_md() {
+        let root = Path::new("/p");
+        let (claude, agents) = (root.join("CLAUDE.md"), root.join("AGENTS.md"));
+        let generated = |body: &str| {
+            format!("{}\n\n{body}", crate::markdown::generated_marker("claude")).into_bytes()
+        };
+        let map = |claude_text: &str, agents_text: Vec<u8>| {
+            std::collections::BTreeMap::from([
+                (claude.clone(), claude_text.as_bytes().to_vec()),
+                (agents.clone(), agents_text),
+            ])
+        };
+
+        // The sync rewrote the generated AGENTS.md and nothing else changed:
+        // its event must not sync again.
+        let before = map("one", generated("old"));
+        let after = map("one", generated("one"));
+        assert_eq!(synced_fingerprint(before, &after, root), after);
+
+        // CLAUDE.md was saved again while the sync ran: still a change.
+        let before = map("one", generated("old"));
+        let after = map("two", generated("one"));
+        let synced = synced_fingerprint(before, &after, root);
+        assert_ne!(synced, after);
+        assert_eq!(synced[&agents], after[&agents]);
+
+        // A hand-written AGENTS.md is the source, never the sync's write.
+        let before = map("one", b"# Mine".to_vec());
+        let after = map("one", b"# Mine, edited".to_vec());
+        assert_ne!(synced_fingerprint(before, &after, root), after);
     }
 
     #[test]
