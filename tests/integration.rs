@@ -5075,3 +5075,63 @@ fn test_migrate_through_linked_directories_loses_nothing() {
         .contains("Use TS."));
     assert!(root.join(".kiro/skills/deploy/SKILL.md").exists());
 }
+
+#[test]
+fn test_migrate_clears_a_skill_folder_but_not_a_skill_nested_in_it() {
+    // Everything of a migrated skill folder goes with its SKILL.md (editor
+    // backups, `.DS_Store`), so the source tool is no longer detected — but a
+    // skill nested inside it was never read, nor bundled, and stays.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    let skill = "---\nname: deploy\ndescription: Deploy\n---\n\nRun deploy.\n";
+    let folder = root.join(".cursor/skills/deploy");
+    fs::create_dir_all(folder.join("scripts")).unwrap();
+    fs::create_dir_all(folder.join("sub")).unwrap();
+    fs::write(folder.join("SKILL.md"), skill).unwrap();
+    fs::write(folder.join(".DS_Store"), [0u8, 159, 146, 150]).unwrap();
+    fs::write(folder.join("scripts/run.sh"), "echo run\n").unwrap();
+    let nested = "---\nname: sub\ndescription: Sub\n---\n\nNested.\n";
+    fs::write(folder.join("sub/SKILL.md"), nested).unwrap();
+    fs::write(folder.join("sub/data.txt"), "data\n").unwrap();
+    fs::create_dir_all(root.join(".kiro")).unwrap();
+
+    migrate(root, "cursor", "kiro");
+
+    assert!(root.join(".kiro/skills/deploy/SKILL.md").exists());
+    assert!(!root.join(".kiro/skills/sub").exists());
+    assert!(!folder.join("SKILL.md").exists());
+    assert!(!folder.join("scripts").exists());
+    assert_eq!(
+        fs::read_to_string(folder.join("sub/SKILL.md")).unwrap(),
+        nested
+    );
+    assert_eq!(
+        fs::read_to_string(folder.join("sub/data.txt")).unwrap(),
+        "data\n"
+    );
+}
+
+#[test]
+fn test_migrate_leaves_no_litter_in_the_source_skill_folders() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    let folder = root.join(".claude/skills/deploy");
+    fs::create_dir_all(folder.join("scripts")).unwrap();
+    fs::write(
+        folder.join("SKILL.md"),
+        "---\nname: deploy\ndescription: Deploy\n---\n\nRun deploy.\n",
+    )
+    .unwrap();
+    fs::write(folder.join("notes.txt~"), "backup\n").unwrap();
+    fs::write(folder.join("scripts/run.sh"), "echo run\n").unwrap();
+    fs::write(root.join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    fs::create_dir_all(root.join(".kiro")).unwrap();
+
+    migrate(root, "claude", "kiro");
+
+    assert!(root.join(".kiro/skills/deploy/scripts/run.sh").exists());
+    assert!(
+        !root.join(".claude").exists(),
+        "source directory left behind"
+    );
+}

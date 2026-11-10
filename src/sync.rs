@@ -2102,7 +2102,13 @@ pub fn run_migrate(
             }
         }
 
-        // 2. Delete source files
+        // 2. Delete source files. What the managed directories hold is
+        // listed first: a skill folder is told by its SKILL.md, which goes
+        // with the source's own files just below.
+        let mut managed = Vec::new();
+        for dir in &source_managed_dirs {
+            managed.extend(managed_files(dir)?);
+        }
         let mut any_removed = false;
         let mut removed_paths = Vec::new();
 
@@ -2117,12 +2123,10 @@ pub fn run_migrate(
         }
 
         // Also clean managed directories (recursive)
-        for dir in &source_managed_dirs {
-            for path in managed_files(dir)? {
-                if path.exists() {
-                    std::fs::remove_file(&path)?;
-                    removed_paths.push(path);
-                }
+        for path in managed {
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+                removed_paths.push(path);
             }
         }
 
@@ -2517,20 +2521,29 @@ fn migrated_files(dir: &adapters::ManagedDir) -> Result<Vec<std::path::PathBuf>>
             })
             .collect(),
         // Only a skill folder (one holding a `SKILL.md`) was read: a direct
-        // child of the skills directory, or at any depth when the tool scans
-        // it recursively. Any other sub-folder is the user's.
+        // child of the skills directory, or the first one met at any depth
+        // when the tool scans it recursively. Any other sub-folder is the
+        // user's, and so is a skill nested inside a skill folder: readers
+        // stop at the first `SKILL.md` and bundle nothing below another.
         None => files
             .into_iter()
             .filter(|path| {
-                let is_skill = |folder: &Path| folder.join("SKILL.md").is_file();
-                let mut folders = path
+                // The folders between the skills directory and the file,
+                // outermost first.
+                let mut folders: Vec<&Path> = path
                     .ancestors()
                     .skip(1)
-                    .take_while(|ancestor| *ancestor != dir.path.as_path());
-                if dir.recursive {
-                    folders.any(is_skill)
-                } else {
-                    folders.last().is_some_and(is_skill)
+                    .take_while(|ancestor| *ancestor != dir.path.as_path())
+                    .collect();
+                folders.reverse();
+                let mut skills = folders
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, folder)| folder.join("SKILL.md").is_file())
+                    .map(|(depth, _)| depth);
+                match skills.next() {
+                    Some(depth) => (dir.recursive || depth == 0) && skills.next().is_none(),
+                    None => false,
                 }
             })
             .collect(),

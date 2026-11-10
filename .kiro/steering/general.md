@@ -151,8 +151,9 @@ directories deletes only files with conforme's suffix not protected by `keep`
 directory the tool reads recursively (`ManagedDir::recursive`: Claude, Cursor,
 Devin and Zoo rules, Copilot instructions and agents, Claude/Codex/OpenCode/Kilo
 agents, Codex/Cursor/Kilo/OpenCode skills) and, in a skills directory, only files
-of a skill folder (a direct child holding a `SKILL.md`, at any depth where the
-tool scans recursively), never top-level files. It also keeps a skill folder that
+of a skill folder (a direct child holding a `SKILL.md`, the first one met at
+any depth where the tool scans recursively; not a skill nested in it), never
+top-level files. It also keeps a skill folder that
 bundles other files (only `SKILL.md` reaches the output) and the skills or
 agents the output cannot hold. It validates the config and refuses an empty
 source, like `sync`; when the output keeps its instructions in `AGENTS.md`
