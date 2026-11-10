@@ -203,18 +203,22 @@ impl AiToolAdapter for ZooCodeAdapter {
         let mut idx = 0u32;
 
         // Zoo Code has no frontmatter — files are plain Markdown, loaded alphabetically.
-        // Use numeric prefix for ordering: 00-general, 01-rule-name, etc.
+        // Use numeric prefix for ordering: 00-general, 01-rule-name, etc., as
+        // wide as the last index needs (`000-` from 100 files on), so file
+        // names still sort in order.
+        let count = config.rules.len() + usize::from(!config.instructions.is_empty());
+        let width = count.saturating_sub(1).to_string().len().max(2);
 
         if !config.instructions.is_empty() {
             files.push((
-                rules_dir.join("00-general.md"),
+                rules_dir.join(format!("{:0width$}-general.md", 0)),
                 format!("{}\n", config.instructions),
             ));
             idx += 1;
         }
 
         for rule in &config.rules {
-            let filename = format!("{:02}-{}.md", idx, rule_file_name(&rule.name));
+            let filename = format!("{:0width$}-{}.md", idx, rule_file_name(&rule.name));
             // Zoo Code doesn't support activation modes — all rules are always-on.
             // For glob/agent-decision rules, we include a comment noting the intended scope.
             let mut content = String::new();
@@ -268,6 +272,34 @@ mod tests {
 
     fn make_adapter() -> ZooCodeAdapter {
         ZooCodeAdapter
+    }
+
+    #[test]
+    fn test_rule_order_survives_a_hundred_rules() {
+        // Zoo Code loads rules by file name: `100-x.md` must not sort
+        // between `10-…` and `11-…`.
+        let dir = tempfile::TempDir::new().unwrap();
+        let config = NormalizedConfig {
+            instructions: "Be helpful.".to_string(),
+            rules: (0..101)
+                .map(|i| crate::config::NormalizedRule {
+                    name: format!("rule {i}"),
+                    content: format!("Rule {i}."),
+                    activation: crate::config::ActivationMode::Always,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        for (path, text) in make_adapter().generate(dir.path(), &config).unwrap() {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+
+        let read = make_adapter().read(dir.path()).unwrap();
+        assert_eq!(read.instructions, "Be helpful.");
+        let names: Vec<_> = read.rules.iter().map(|r| r.name.clone()).collect();
+        let expected: Vec<_> = (0..101).map(|i| format!("rule-{i}")).collect();
+        assert_eq!(names, expected);
     }
 
     #[test]
