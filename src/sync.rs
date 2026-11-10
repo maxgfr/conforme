@@ -2366,15 +2366,22 @@ fn migrated_files(dir: &adapters::ManagedDir) -> Result<Vec<std::path::PathBuf>>
                     && !dir.keep.is_some_and(|keep| keep(path))
             })
             .collect(),
-        // Only a skill folder (one holding a `SKILL.md`) was read; any other
-        // sub-folder of a skills directory is the user's.
+        // Only a skill folder (one holding a `SKILL.md`) was read: a direct
+        // child of the skills directory, or at any depth when the tool scans
+        // it recursively. Any other sub-folder is the user's.
         None => files
             .into_iter()
             .filter(|path| {
-                path.ancestors()
+                let is_skill = |folder: &Path| folder.join("SKILL.md").is_file();
+                let mut folders = path
+                    .ancestors()
                     .skip(1)
-                    .take_while(|ancestor| *ancestor != dir.path.as_path())
-                    .any(|ancestor| ancestor.join("SKILL.md").is_file())
+                    .take_while(|ancestor| *ancestor != dir.path.as_path());
+                if dir.recursive {
+                    folders.any(is_skill)
+                } else {
+                    folders.last().is_some_and(is_skill)
+                }
             })
             .collect(),
     })

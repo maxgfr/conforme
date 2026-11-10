@@ -175,7 +175,7 @@ impl AiToolAdapter for KiloAdapter {
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
-            ManagedDir::subdirs(project_root.join(".kilo").join("skills")),
+            ManagedDir::subdirs(project_root.join(".kilo").join("skills")).recursive(),
             // `.kilo/agents/code.md` tunes Kilo's own Code agent: the user's.
             ManagedDir::files_except(
                 project_root.join(".kilo").join("agents"),

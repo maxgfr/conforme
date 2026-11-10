@@ -4822,3 +4822,46 @@ fn test_migrate_does_not_write_through_a_link_to_the_sources_agents_md() {
     );
     assert!(root.join(".claude/rules/ts.md").exists());
 }
+
+#[test]
+fn test_migrate_moves_nested_skills_only_from_tools_that_read_them() {
+    // Kiro loads `.kiro/skills/<name>/SKILL.md` only: a skill one level
+    // deeper was never read, so it stays. Cursor scans its skills root
+    // recursively: there the nested skill is migrated, then removed.
+    let skill = "---\nname: deploy\ndescription: Deploy\n---\n\nRun deploy.\n";
+    let nested = "---\nname: nested\ndescription: Nested\n---\n\nNested skill.\n";
+    for (source, source_dir, output, nested_is_read) in [
+        ("kiro", ".kiro", "claude", false),
+        ("cursor", ".cursor", "claude", true),
+    ] {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        let skills = root.join(source_dir).join("skills");
+        fs::create_dir_all(skills.join("deploy/scripts")).unwrap();
+        fs::write(skills.join("deploy/SKILL.md"), skill).unwrap();
+        fs::write(skills.join("deploy/scripts/run.sh"), "echo run\n").unwrap();
+        fs::create_dir_all(skills.join("group/nested")).unwrap();
+        fs::write(skills.join("group/nested/SKILL.md"), nested).unwrap();
+        fs::create_dir_all(root.join(".claude")).unwrap();
+
+        migrate(root, source, output);
+
+        // The top-level skill moved with its bundled file.
+        assert!(root.join(".claude/skills/deploy/SKILL.md").exists());
+        assert_eq!(
+            fs::read_to_string(root.join(".claude/skills/deploy/scripts/run.sh")).unwrap(),
+            "echo run\n"
+        );
+        assert!(!skills.join("deploy").exists(), "{source}");
+        assert_eq!(
+            root.join(".claude/skills/nested/SKILL.md").exists(),
+            nested_is_read,
+            "{source}"
+        );
+        assert_eq!(
+            skills.join("group/nested/SKILL.md").exists(),
+            !nested_is_read,
+            "{source}"
+        );
+    }
+}

@@ -119,7 +119,7 @@ impl AiToolAdapter for OpenCodeAdapter {
                 },
             )
             .recursive(),
-            ManagedDir::subdirs(project_root.join(".opencode").join("skills")),
+            ManagedDir::subdirs(project_root.join(".opencode").join("skills")).recursive(),
         ]
     }
 

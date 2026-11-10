@@ -56,7 +56,7 @@ impl AiToolAdapter for CursorAdapter {
         vec![
             ManagedDir::files(project_root.join(".cursor").join("rules"), ".mdc").recursive(),
             ManagedDir::files(project_root.join(".cursor").join("agents"), ".md"),
-            ManagedDir::subdirs(project_root.join(".cursor").join("skills")),
+            ManagedDir::subdirs(project_root.join(".cursor").join("skills")).recursive(),
         ]
     }
 

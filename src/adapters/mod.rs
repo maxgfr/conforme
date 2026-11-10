@@ -147,9 +147,10 @@ pub struct ManagedDir {
     /// `_draft.md` agent).
     pub keep: Option<fn(&Path) -> bool>,
     /// The tool reads this directory recursively (Claude Code, Cursor and
-    /// Zoo Code rules, …), so `migrate` moves and deletes nested files too.
-    /// Otherwise only its top level is the tool's: a file in a subfolder was
-    /// never read, and `migrate` leaves it in place.
+    /// Zoo Code rules, Codex and Cursor skills, …), so `migrate` moves and
+    /// deletes nested files and skill folders too. Otherwise only its top
+    /// level is the tool's: a file in a subfolder, or a skill folder below
+    /// the first level, was never read, and `migrate` leaves it in place.
     pub recursive: bool,
 }
 
@@ -194,7 +195,7 @@ impl ManagedDir {
         }
     }
 
-    /// Mark a files directory the tool reads recursively (see
+    /// Mark a directory the tool reads recursively (see
     /// [`ManagedDir::recursive`]).
     pub fn recursive(self) -> Self {
         Self {

@@ -194,7 +194,7 @@ impl AiToolAdapter for CodexAdapter {
     /// role, is the user's own.
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
-            ManagedDir::subdirs(project_root.join(".agents").join("skills")),
+            ManagedDir::subdirs(project_root.join(".agents").join("skills")).recursive(),
             ManagedDir::files_except(
                 project_root.join(".codex").join("agents"),
                 ".toml",
