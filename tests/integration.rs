@@ -5260,7 +5260,23 @@ fn test_sync_never_rewrites_a_source_file_that_is_itself_a_link() {
         root.join(".claude/rules/ts.md"),
     )
     .unwrap();
-    let sources = [".agents/skills/deploy/SKILL.md", ".kiro/steering/ts.md"];
+    // A nested rule, which Claude Code reads and conforme writes back flat.
+    fs::create_dir_all(root.join(".claude/rules/fe")).unwrap();
+    fs::write(
+        root.join(".kiro/steering/css.md"),
+        "---\npaths:\n  - \"**/*.css\"\n---\nUse CSS.\n",
+    )
+    .unwrap();
+    link(
+        "../../../.kiro/steering/css.md",
+        root.join(".claude/rules/fe/css.md"),
+    )
+    .unwrap();
+    let sources = [
+        ".agents/skills/deploy/SKILL.md",
+        ".kiro/steering/ts.md",
+        ".kiro/steering/css.md",
+    ];
     let before: Vec<String> = sources
         .iter()
         .map(|p| fs::read_to_string(root.join(p)).unwrap())

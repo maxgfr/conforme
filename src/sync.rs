@@ -225,34 +225,43 @@ pub(crate) fn source_files(project_root: &Path, source_id: &str) -> Vec<std::pat
     files
 }
 
-/// [`source_files`], plus the files the source holds for `config` behind a
-/// symbolic link of its own (a skill folder or a rule file of the source that
-/// lives in another tool's directory), named where they really are: those
-/// are the source's too, and the tool whose directory they sit in must not
-/// rewrite them.
+/// [`source_files`], plus the files the source reads through a symbolic link
+/// of its own (a skill folder or a rule file of the source that lives in
+/// another tool's directory), named where they really are: those are the
+/// source's too, and the tool whose directory they sit in must not rewrite
+/// them. They are the links found in the source's managed directories (a
+/// nested rule is read where it is, though written back flat) and the files
+/// it holds for `config` that go through a link (a settings file).
 fn source_files_for(
     project_root: &Path,
     source_id: &str,
     config: &NormalizedConfig,
 ) -> Vec<std::path::PathBuf> {
     let mut files = source_files(project_root, source_id);
-    let Some(Ok(generated)) = find_adapter(source_id).map(|a| a.generate(project_root, config))
-    else {
+    let Some(source) = find_adapter(source_id) else {
         return files;
     };
+    let mut linked = Vec::new();
+    for dir in source.managed_directories(project_root) {
+        links_in(&dir.path, &mut linked);
+    }
     let mut walk = LinkWalk::new(project_root);
-    let mut root = None;
-    for (path, _) in generated {
-        if walk.first_link(&path).is_none() {
-            continue;
-        }
-        let Some(root) = root
-            .get_or_insert_with(|| std::fs::canonicalize(project_root).ok())
-            .as_ref()
-        else {
-            break;
-        };
-        if let Ok(relative) = adapters::resolved_path(&path).strip_prefix(root) {
+    if let Ok(generated) = source.generate(project_root, config) {
+        linked.extend(
+            generated
+                .into_iter()
+                .map(|(path, _)| path)
+                .filter(|path| walk.first_link(path).is_some()),
+        );
+    }
+    if linked.is_empty() {
+        return files;
+    }
+    let Ok(root) = std::fs::canonicalize(project_root) else {
+        return files;
+    };
+    for path in linked {
+        if let Ok(relative) = adapters::resolved_path(&path).strip_prefix(&root) {
             let real = project_root.join(relative);
             if !files.contains(&real) {
                 files.push(real);
@@ -260,6 +269,20 @@ fn source_files_for(
         }
     }
     files
+}
+
+/// The symbolic links in `dir`, at any depth, without following any.
+fn links_in(dir: &Path, found: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        match entry.file_type() {
+            Ok(kind) if kind.is_symlink() => found.push(entry.path()),
+            Ok(kind) if kind.is_dir() => links_in(&entry.path(), found),
+            _ => {}
+        }
+    }
 }
 
 /// The file of the project a symbolic link resolves to, spelled under
