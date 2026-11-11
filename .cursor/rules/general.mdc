@@ -180,12 +180,17 @@ AGENTS.md`, `.cursor/skills -> ../.claude/skills`, a single skill folder or
 settings file linked likewise), so paths are compared where they really are
 (`sync::is_source_file`, `is_one_of`, `LinkWalk`, `is_beneath` against
 `source_read_paths`; `source_files_for` names the source's linked files
-where they are). sync never writes a target file that really is one the
+where they are; `sync::TargetGuard` holds the checks for one target). sync
+never writes, nor cleans as an orphan, a target file that really is one the
 source reads, in either direction of the link, nor generates an `AGENTS.md`
-over it; `remove` keeps it, and keeps a file a staying tool reaches through
-its own link; `gitignore install` does not ignore it; `migrate` replaces the
+over it; a target whose directory is a link into another detected tool's
+yields to that tool; nothing reached through a link out of the project is
+ever deleted. `remove` keeps such a file, and one a staying tool reaches
+through its own link; `gitignore install` does not ignore a link to a source
+file; `migrate` replaces the
 output link that leads into the source with a file or directory of its own
-(`--dry-run` says so), and keeps a source file that really is a staying tool's.
+(`--dry-run` says so), keeps a source file that really is a staying tool's,
+and removes a link at the project root it left pointing at nothing.
 
 `reads_agents_md(project_root)` is true for Codex, OpenCode, DeepSeek, Vibe, Kilo and Antigravity CLI;
 for Claude Code when the project has no `CLAUDE.md` nor `.claude/CLAUDE.md` but

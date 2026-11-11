@@ -4,7 +4,7 @@ use similar::{ChangeTag, TextDiff};
 use std::path::Path;
 
 use crate::adapters::contents_match;
-use crate::adapters::{self, clean_orphans, AiToolAdapter};
+use crate::adapters::{self, AiToolAdapter};
 use crate::cli::AddTarget;
 use crate::config::NormalizedConfig;
 use crate::detect;
@@ -271,6 +271,24 @@ fn source_files_for(
     files
 }
 
+/// The symbolic links directly in `project_root`, each with the file it
+/// resolves to.
+fn root_links(project_root: &Path) -> Vec<(std::path::PathBuf, std::path::PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(project_root) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_symlink()))
+        .filter_map(|entry| {
+            let link = entry.path();
+            std::fs::canonicalize(&link)
+                .ok()
+                .map(|target| (link, target))
+        })
+        .collect()
+}
+
 /// The symbolic links in `dir`, at any depth, without following any.
 fn links_in(dir: &Path, found: &mut Vec<std::path::PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -358,6 +376,96 @@ struct TargetOutput {
     /// Kilo Code source reading `CLAUDE.md` keeps it out of the Claude Code
     /// target's reach).
     files: Vec<(std::path::PathBuf, String)>,
+    /// What the target must leave alone, written or deleted.
+    guard: TargetGuard,
+}
+
+/// The files a target must neither write nor delete as an orphan: those that
+/// really are the source's — read by it outside its directories, reached
+/// through a link into what it reads, or read by it through a link of its
+/// own — and those reached through a link into another detected tool's
+/// directory (`.kiro/steering -> ../.claude/rules`: the link's owner yields,
+/// or the two would rewrite each other). It never deletes a file a link
+/// leads out of the project to, either. Without any link in the target's
+/// reach, only the first check applies.
+struct TargetGuard {
+    project_root: std::path::PathBuf,
+    source_files: Vec<std::path::PathBuf>,
+    linked_sources: Vec<std::path::PathBuf>,
+    /// Empty unless a link is in the target's reach.
+    source_paths: Vec<std::path::PathBuf>,
+    other_tools: Vec<std::path::PathBuf>,
+    canonical_root: Option<std::path::PathBuf>,
+    any_link: bool,
+}
+
+impl TargetGuard {
+    fn new(
+        project_root: &Path,
+        source_id: &str,
+        source_config: &NormalizedConfig,
+        target: &dyn AiToolAdapter,
+        source_files: &[std::path::PathBuf],
+        expected: &[(std::path::PathBuf, String)],
+    ) -> Self {
+        let mut walk = LinkWalk::new(project_root);
+        let linked_sources = walk.linked(source_locations(project_root, source_id).iter());
+        let managed = target.managed_directories(project_root);
+        let mut links = Vec::new();
+        for dir in &managed {
+            if walk.first_link(&dir.path).is_some() {
+                links.push(dir.path.clone());
+            }
+            links_in(&dir.path, &mut links);
+        }
+        let any_link =
+            !links.is_empty() || expected.iter().any(|(p, _)| walk.first_link(p).is_some());
+        let (source_paths, other_tools) = if any_link {
+            let others = adapters::all_adapters()
+                .into_iter()
+                .filter(|a| a.id() != target.id() && a.id() != source_id && a.detect(project_root))
+                .flat_map(|a| a.managed_directories(project_root))
+                .map(|dir| adapters::resolved_path(&dir.path))
+                .collect();
+            (
+                source_read_paths(project_root, source_id, source_config),
+                others,
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        Self {
+            project_root: project_root.to_path_buf(),
+            source_files: source_files.to_vec(),
+            linked_sources,
+            source_paths,
+            other_tools,
+            canonical_root: std::fs::canonicalize(project_root).ok(),
+            any_link,
+        }
+    }
+
+    fn through_link(&self, path: &Path) -> bool {
+        self.any_link && LinkWalk::new(&self.project_root).first_link(path).is_some()
+    }
+
+    /// Whether the target must not write `path`.
+    fn keeps(&self, path: &Path) -> bool {
+        is_source_file(path, &self.source_files)
+            || is_beneath(path, &self.linked_sources)
+            || (self.through_link(path)
+                && (is_beneath(path, &self.source_paths) || is_beneath(path, &self.other_tools)))
+    }
+
+    /// Whether orphan cleanup may delete `path`.
+    fn may_delete(&self, path: &Path) -> bool {
+        !self.keeps(path)
+            && !(self.through_link(path)
+                && self
+                    .canonical_root
+                    .as_ref()
+                    .is_some_and(|root| !adapters::resolved_path(path).starts_with(root)))
+    }
 }
 
 fn target_output(
@@ -370,29 +478,28 @@ fn target_output(
     let source_config = config;
     let config = target_config(project_root, source_id, target, config);
     let expected = target.generate(project_root, &config)?;
-    // A file of the target that really is one of the source's is not
-    // written: one reached through a link into what the source reads
-    // (`.kiro/steering -> ../.claude/rules`, `.cursor/mcp.json ->
-    // ../.mcp.json`), or one the source reads through a link of its own
-    // (`.claude/rules -> ../.kiro/steering`, Claude Code the source).
-    let mut walk = LinkWalk::new(project_root);
-    let linked_sources = walk.linked(source_locations(project_root, source_id).iter());
-    let mut source_paths = None;
+    // A file of the target that really is one of the source's (reached
+    // through a link into what the source reads, `.cursor/mcp.json ->
+    // ../.mcp.json`, or read by the source through a link of its own) or
+    // another tool's is not written (see [`TargetGuard`]).
+    let guard = TargetGuard::new(
+        project_root,
+        source_id,
+        source_config,
+        target,
+        source_files,
+        &expected,
+    );
     let files = expected
         .iter()
-        .filter(|(path, _)| {
-            !is_source_file(path, source_files)
-                && !is_beneath(path, &linked_sources)
-                && (walk.first_link(path).is_none() || {
-                    let sources = source_paths.get_or_insert_with(|| {
-                        source_read_paths(project_root, source_id, source_config)
-                    });
-                    !is_beneath(path, sources)
-                })
-        })
+        .filter(|(path, _)| !guard.keeps(path))
         .cloned()
         .collect();
-    Ok(TargetOutput { expected, files })
+    Ok(TargetOutput {
+        expected,
+        files,
+        guard,
+    })
 }
 
 /// The AGENTS.md sync generates, when it does: a tool is the source, the
@@ -1087,13 +1194,11 @@ fn report_pending_orphans(project_root: &Path) -> Result<()> {
         return Ok(());
     }
     let adapters = adapters::all_adapters();
+    let source_files = source_files_for(project_root, &source_id, &config);
     let mut pending = Vec::new();
     for target in selected_targets(&adapters, project_root, &source_id, None, &project_cfg) {
-        let config = target_config(project_root, &source_id, target, &config);
-        pending.extend(adapters::find_orphans(
-            &target_managed_dirs(project_root, &source_id, target),
-            &target.generate(project_root, &config)?,
-        )?);
+        let output = target_output(project_root, &source_id, target, &config, &source_files)?;
+        pending.extend(target_orphans(project_root, &source_id, target, &output)?);
     }
     if pending.is_empty() {
         return Ok(());
@@ -1365,7 +1470,10 @@ fn write_and_clean_target(
     }
     if clean {
         let managed_dirs = target_managed_dirs(project_root, source_id, target);
-        for path in clean_orphans(&managed_dirs, &output.expected)? {
+        let cleaned = adapters::clean_orphans_where(&managed_dirs, &output.expected, |path| {
+            output.guard.may_delete(path)
+        })?;
+        for path in cleaned {
             changed = true;
             println!(
                 "    {} {}",
@@ -1515,6 +1623,8 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
     let mut protected = None;
     let source_dirs = source_locations(project_root, &source_id);
     let linked_owners = walk.linked(kept.iter().chain(&kept_dirs).chain(&source_dirs));
+    // A link out of the project leads to files that are not its to delete.
+    let canonical_root = std::fs::canonicalize(project_root).ok();
 
     for adapter in &adapters {
         if !tools.iter().any(|t| t == adapter.id()) {
@@ -1537,6 +1647,9 @@ pub fn run_remove(project_root: &Path, tools: &[String], verbose: bool) -> Resul
                         paths
                     });
                     is_beneath(path, protected)
+                        || canonical_root
+                            .as_ref()
+                            .is_some_and(|root| !adapters::resolved_path(path).starts_with(root))
                 });
             if adapter.is_shared_file(path)
                 || kept.contains(path)
@@ -1896,10 +2009,13 @@ fn target_orphans(
     target: &dyn AiToolAdapter,
     output: &TargetOutput,
 ) -> Result<Vec<std::path::PathBuf>> {
-    adapters::find_orphans(
+    Ok(adapters::find_orphans(
         &target_managed_dirs(project_root, source_id, target),
         &output.expected,
-    )
+    )?
+    .into_iter()
+    .filter(|path| output.guard.may_delete(path))
+    .collect())
 }
 
 /// The generated files whose content on disk differs (or that are missing).
@@ -2201,6 +2317,7 @@ pub fn run_migrate(
     let staying_linked = LinkWalk::new(project_root).linked(staying_owned());
     let walk = std::cell::RefCell::new(LinkWalk::new(project_root));
     let staying_resolved = std::cell::OnceCell::new();
+    let canonical_root = std::fs::canonicalize(project_root).ok();
     let is_kept = |path: &std::path::PathBuf| {
         if kept_paths.contains(path)
             || staying_dirs.iter().any(|dir| path.starts_with(dir))
@@ -2216,7 +2333,12 @@ pub fn run_migrate(
                     .map(|p| adapters::resolved_path(p))
                     .collect::<Vec<_>>()
             });
+            // A link out of the project (a skills folder shared between
+            // projects) leads to files that are not this project's to delete.
             is_beneath(path, staying)
+                || canonical_root
+                    .as_ref()
+                    .is_some_and(|root| !adapters::resolved_path(path).starts_with(root))
         }
     };
     let managed_files = |dir: &adapters::ManagedDir| -> Result<Vec<std::path::PathBuf>> {
@@ -2275,14 +2397,32 @@ pub fn run_migrate(
             }
         }
         // Also show managed directory contents (recursive)
+        let mut removed: Vec<std::path::PathBuf> = source_files
+            .iter()
+            .map(|(path, _)| path)
+            .filter(|path| path.exists() && !is_kept(path) && !source_adapter.is_shared_file(path))
+            .map(|path| adapters::resolved_path(path))
+            .collect();
         for dir in &source_managed_dirs {
             for path in managed_files(dir)? {
+                removed.push(adapters::resolved_path(&path));
                 if source_files.iter().any(|(p, _)| *p == path) {
                     continue;
                 }
                 let rel = path.strip_prefix(project_root).unwrap_or(&path);
                 println!("    {} {}", "would remove".red(), rel.display());
             }
+        }
+        for (link, _) in root_links(project_root)
+            .into_iter()
+            .filter(|(_, target)| removed.contains(target))
+        {
+            let rel = link.strip_prefix(project_root).unwrap_or(&link);
+            println!(
+                "    {} {} (a link to a removed file)",
+                "would remove".red(),
+                rel.display()
+            );
         }
     } else {
         for link in &replaced_links {
@@ -2314,12 +2454,18 @@ pub fn run_migrate(
         }
         let mut any_removed = false;
         let mut removed_paths = Vec::new();
+        // A link at the project root to a file removed below
+        // (`AGENTS.md -> CLAUDE.md`) would be left dangling, and a later
+        // sync would write through it, bringing the old source back.
+        let links = root_links(project_root);
+        let mut removed_targets = Vec::new();
 
         for (path, _) in &source_files {
             if source_adapter.is_shared_file(path) || is_kept(path) {
                 continue;
             }
             if path.exists() {
+                removed_targets.push(adapters::resolved_path(path));
                 std::fs::remove_file(path)?;
                 removed_paths.push(path.clone());
             }
@@ -2328,8 +2474,15 @@ pub fn run_migrate(
         // Also clean managed directories (recursive)
         for path in managed {
             if path.exists() {
+                removed_targets.push(adapters::resolved_path(&path));
                 std::fs::remove_file(&path)?;
                 removed_paths.push(path);
+            }
+        }
+        for (link, target) in links {
+            if removed_targets.contains(&target) && !kept_paths.contains(&link) {
+                std::fs::remove_file(&link)?;
+                removed_paths.push(link);
             }
         }
 

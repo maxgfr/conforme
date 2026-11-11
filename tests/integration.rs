@@ -5329,6 +5329,171 @@ fn test_migrate_replaces_the_link_that_leads_into_the_source_not_an_outer_one() 
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn test_orphan_cleanup_never_deletes_a_file_the_source_reads_through_a_link() {
+    let link = std::os::unix::fs::symlink::<&str, std::path::PathBuf>;
+
+    // Kiro is the source and one of its steering files is a link to a
+    // Claude Code rule, which Claude Code does not generate under that name.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".kiro/steering")).unwrap();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    let shared = "---\ninclusion: always\n---\n\nShared security rule.\n";
+    fs::write(root.join(".claude/rules/security-team.md"), shared).unwrap();
+    link(
+        "../../.claude/rules/security-team.md",
+        root.join(".kiro/steering/security.md"),
+    )
+    .unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"kiro\"\n").unwrap();
+    for _ in 0..2 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+        assert_eq!(
+            fs::read_to_string(root.join(".claude/rules/security-team.md")).unwrap(),
+            shared
+        );
+    }
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+
+    // A target's rules directory is a link to a sub-folder of the source's.
+    let dir = claude_source_project();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/rules/frontend")).unwrap();
+    let react = "---\npaths:\n  - \"**/*.tsx\"\n---\nUse hooks.\n";
+    fs::write(root.join(".claude/rules/frontend/react.md"), react).unwrap();
+    fs::create_dir_all(root.join(".roo")).unwrap();
+    link("../.claude/rules/frontend", root.join(".roo/rules")).unwrap();
+    for _ in 0..2 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+        assert_eq!(
+            fs::read_to_string(root.join(".claude/rules/frontend/react.md")).unwrap(),
+            react
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn test_two_targets_sharing_a_directory_through_a_link_converge() {
+    // `.kiro/steering` is a link to Claude Code's rules, Cursor the source:
+    // the link's owner yields, so the two tools do not rewrite each other.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    fs::write(
+        root.join(".cursor/rules/ts.mdc"),
+        "---\nglobs: \"**/*.ts\"\nalwaysApply: false\n---\n\nUse TS.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::create_dir_all(root.join(".kiro")).unwrap();
+    std::os::unix::fs::symlink("../.claude/rules", root.join(".kiro/steering")).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"cursor\"\n").unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("All configs already in sync."));
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+    let rule = fs::read_to_string(root.join(".claude/rules/ts.md")).unwrap();
+    assert!(rule.contains("paths:"), "{rule}");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_migrate_never_deletes_outside_the_project_through_a_link() {
+    let outside = TempDir::new().unwrap();
+    let shared = outside.path().join("skills");
+    fs::create_dir_all(shared.join("deploy")).unwrap();
+    let skill = "---\nname: deploy\ndescription: Deploy\n---\n\nRun deploy.\n";
+    fs::write(shared.join("deploy/SKILL.md"), skill).unwrap();
+
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    std::os::unix::fs::symlink(&shared, root.join(".claude/skills")).unwrap();
+
+    migrate(root, "claude", "cursor");
+
+    assert!(root.join(".cursor/skills/deploy/SKILL.md").exists());
+    assert_eq!(
+        fs::read_to_string(shared.join("deploy/SKILL.md")).unwrap(),
+        skill
+    );
+
+    // `remove` too: the skills Cursor generated in a shared folder outside
+    // the project are that folder's, not the project's.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    fs::write(
+        root.join("AGENTS.md"),
+        "# Instructions\nBe helpful.\n\n## Skill: deploy\n<!-- description: Deploy -->\nRun deploy.\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&shared, root.join(".cursor/skills")).unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "remove", "cursor"])
+        .assert()
+        .success();
+    assert!(shared.join("deploy/SKILL.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_migrate_removes_an_agents_md_link_left_dangling() {
+    // `AGENTS.md -> CLAUDE.md`: once CLAUDE.md is migrated away, the link
+    // points at nothing, and the next sync would recreate CLAUDE.md through it.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    std::os::unix::fs::symlink("CLAUDE.md", root.join("AGENTS.md")).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+
+    migrate(root, "claude", "cursor");
+
+    assert!(fs::symlink_metadata(root.join("AGENTS.md")).is_err());
+    for _ in 0..2 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+    }
+    assert!(!root.join("CLAUDE.md").exists());
+    assert!(!root.join(".claude").exists());
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}
+
 #[test]
 fn test_migrate_to_a_tool_without_agents_keeps_them_in_agents_md() {
     // Codex reads AGENTS.md; Zed has no agents. After the switch the agent

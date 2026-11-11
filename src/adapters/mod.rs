@@ -272,6 +272,16 @@ pub fn clean_orphans(
     managed_dirs: &[ManagedDir],
     expected_files: &[(PathBuf, String)],
 ) -> Result<Vec<PathBuf>> {
+    clean_orphans_where(managed_dirs, expected_files, |_| true)
+}
+
+/// [`clean_orphans`], deleting only the orphans `may_delete` accepts (sync
+/// leaves a file that really is the source's, reached through a link).
+pub fn clean_orphans_where(
+    managed_dirs: &[ManagedDir],
+    expected_files: &[(PathBuf, String)],
+    may_delete: impl Fn(&Path) -> bool,
+) -> Result<Vec<PathBuf>> {
     let expected_set: std::collections::HashSet<_> =
         expected_files.iter().map(|(p, _)| p.clone()).collect();
 
@@ -289,6 +299,9 @@ pub fn clean_orphans(
         });
     }
     for path in find_orphans(managed_dirs, expected_files)? {
+        if !may_delete(&path) {
+            continue;
+        }
         std::fs::remove_file(&path)
             .with_context(|| format!("failed to remove {}", path.display()))?;
         remove_emptied_dirs(&path, managed_dirs);
