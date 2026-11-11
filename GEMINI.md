@@ -182,8 +182,8 @@ source reads, in either direction of the link, nor generates an `AGENTS.md`
 over it; a target whose directory is a link into another detected tool's
 yields to that tool; nothing reached through a link out of the project is
 ever deleted. `remove` keeps such a file, and one a staying tool reaches
-through its own link; `gitignore install` does not ignore a link to a source
-file; `migrate` replaces the
+through its own link; `gitignore install` keeps such links tracked (`!` lines,
+a directory pattern turned into one on its entries); `migrate` replaces the
 output link that leads into the source with a file or directory of its own
 (`--dry-run` says so), keeps a source file that really is a staying tool's,
 and removes a link at the project root it left pointing at nothing.

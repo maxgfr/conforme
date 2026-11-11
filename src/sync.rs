@@ -323,6 +323,13 @@ pub(crate) fn is_source_file(path: &Path, source_files: &[std::path::PathBuf]) -
     source_files.iter().any(|p| path.starts_with(p)) || is_link_into(path, source_files)
 }
 
+/// Whether `path` is a symbolic link into what `source_id` reads: one of its
+/// files or its managed directories (`gitignore install` keeps such a link
+/// tracked).
+pub(crate) fn is_link_into_source(project_root: &Path, source_id: &str, path: &Path) -> bool {
+    is_link_into(path, &source_locations(project_root, source_id))
+}
+
 /// Whether `path` is a symbolic link that resolves to one of `locations`, or
 /// beneath one that is a directory.
 fn is_link_into(path: &Path, locations: &[std::path::PathBuf]) -> bool {

@@ -73,6 +73,47 @@ fn static_patterns(id: &str) -> Vec<&'static str> {
     }
 }
 
+/// The symbolic links a gitignore pattern covers (a `dir/*.ext` file pattern
+/// or a `dir/` directory pattern) that lead into what the source reads,
+/// relative to the project root.
+fn links_into_source(project_root: &Path, source_id: &str, pattern: &str) -> Vec<String> {
+    let pattern = pattern.trim_start_matches('/');
+    let (dir, name_glob) = match pattern.strip_suffix('/') {
+        Some(dir) => (dir, None),
+        None => match pattern.rsplit_once('/') {
+            Some((dir, name)) if name.contains('*') => (dir, Some(name)),
+            _ => return Vec::new(),
+        },
+    };
+    let matcher = match name_glob.map(|glob| globset::Glob::new(glob).map(|g| g.compile_matcher()))
+    {
+        Some(Ok(matcher)) => Some(matcher),
+        Some(Err(_)) => return Vec::new(),
+        None => None,
+    };
+    let Ok(entries) = std::fs::read_dir(project_root.join(dir)) else {
+        return Vec::new();
+    };
+    let mut links: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_symlink()))
+        .filter(|entry| {
+            matcher
+                .as_ref()
+                .is_none_or(|m| m.is_match(entry.file_name().to_string_lossy().as_ref()))
+        })
+        .map(|entry| entry.path())
+        .filter(|path| crate::sync::is_link_into_source(project_root, source_id, path))
+        .filter_map(|path| {
+            path.strip_prefix(project_root)
+                .ok()
+                .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        })
+        .collect();
+    links.sort();
+    links
+}
+
 /// Whether sync writes to `id`: `only` and `exclude` respected.
 fn is_selected(config: &project_config::ProjectConfig, id: &str) -> bool {
     config
@@ -139,7 +180,18 @@ fn build_gitignore_block(project_root: &Path, config: &project_config::ProjectCo
 
         lines.push(format!("# {}", adapter.name()));
         for pat in patterns {
-            lines.push(pat.clone());
+            // A link the pattern covers that leads into the source
+            // (`.kiro/steering/security.md -> ../../.claude/rules/security.md`)
+            // is the user's: it is re-included. Git cannot re-include a file
+            // below an ignored directory, so a directory pattern becomes one
+            // on its entries.
+            let links = links_into_source(project_root, source_id, &pat);
+            let ignored = match pat.strip_suffix('/') {
+                Some(dir) if !links.is_empty() => format!("{dir}/*"),
+                _ => pat.clone(),
+            };
+            lines.push(ignored);
+            lines.extend(links.iter().map(|link| format!("!/{link}")));
             listed.push(pat);
         }
     }
@@ -485,6 +537,44 @@ mod tests {
         };
         let block = build_gitignore_block(dir.path(), &config);
         assert!(!block.contains("\n/AGENTS.md\n"), "{block}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_block_re_includes_a_link_into_the_source_a_pattern_covers() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".claude/rules")).unwrap();
+        std::fs::create_dir_all(root.join(".claude/skills/deploy")).unwrap();
+        std::fs::create_dir_all(root.join(".kiro/steering")).unwrap();
+        std::fs::create_dir_all(root.join(".cursor/skills")).unwrap();
+        std::fs::write(root.join("CLAUDE.md"), "# A\n").unwrap();
+        std::fs::write(root.join(".claude/rules/security.md"), "Rule.\n").unwrap();
+        std::os::unix::fs::symlink(
+            "../../.claude/rules/security.md",
+            root.join(".kiro/steering/security.md"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            "../../.claude/skills/deploy",
+            root.join(".cursor/skills/deploy"),
+        )
+        .unwrap();
+        let config = project_config::ProjectConfig {
+            source: Some("claude".to_string()),
+            ..Default::default()
+        };
+        let block = build_gitignore_block(root, &config);
+        assert!(
+            block.contains(".kiro/steering/*.md\n!/.kiro/steering/security.md\n"),
+            "{block}"
+        );
+        assert!(
+            block.contains(".cursor/skills/*\n!/.cursor/skills/deploy\n"),
+            "{block}"
+        );
+        // Without such a link the patterns are unchanged.
+        assert!(block.contains("\n.devin/skills/\n"), "{block}");
     }
 
     #[test]
