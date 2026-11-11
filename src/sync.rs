@@ -429,8 +429,17 @@ fn project_has_links(project_root: &Path) -> bool {
         }
     }
     let mut walk = LinkWalk::new(project_root);
+    let adapters = adapters::all_adapters();
+    // Every location a tool reads (`watch` follows the same list), its
+    // single files included (`.github/copilot-instructions.md`), then what
+    // its directories hold.
     let found = !root_links(project_root).is_empty()
-        || adapters::all_adapters().iter().any(|adapter| {
+        || adapters.iter().any(|adapter| {
+            crate::watch::source_locations(adapter.id())
+                .iter()
+                .any(|location| walk.first_link(&project_root.join(location)).is_some())
+        })
+        || adapters.iter().any(|adapter| {
             adapter.managed_directories(project_root).iter().any(|dir| {
                 let mut links = Vec::new();
                 links_in(&dir.path, &mut links);

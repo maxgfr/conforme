@@ -5860,3 +5860,44 @@ fn test_a_settings_file_linked_to_the_sources_is_never_rewritten() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn test_a_tool_file_linked_into_another_tools_directory_converges() {
+    // `.github/copilot-instructions.md -> ../.claude/rules/main.md`, Cursor the
+    // source: Claude Code must not clean `main.md`, which Copilot writes
+    // through its link.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    fs::write(
+        root.join(".cursor/rules/general.mdc"),
+        "---\nalwaysApply: true\n---\n\nBe helpful.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::create_dir_all(root.join(".github")).unwrap();
+    fs::write(root.join(".claude/rules/main.md"), "Old.\n").unwrap();
+    std::os::unix::fs::symlink(
+        "../.claude/rules/main.md",
+        root.join(".github/copilot-instructions.md"),
+    )
+    .unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"cursor\"\n").unwrap();
+
+    for _ in 0..3 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+    }
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+    assert!(
+        fs::read_to_string(root.join(".github/copilot-instructions.md"))
+            .unwrap()
+            .contains("Be helpful.")
+    );
+}

@@ -233,7 +233,7 @@ fn is_noise(path: &Path) -> bool {
 
 /// Every location a source tool's `read()` may load, whether or not it exists
 /// yet: a file created later must trigger a sync too.
-fn source_locations(id: &str) -> &'static [&'static str] {
+pub(crate) fn source_locations(id: &str) -> &'static [&'static str] {
     match id {
         "claude" => &[
             "CLAUDE.md",
