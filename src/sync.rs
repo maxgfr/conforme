@@ -1231,6 +1231,11 @@ pub fn run_sync(
 ) -> Result<()> {
     let project_cfg = ProjectConfig::load(project_root)?;
     let (config, source_id) = resolve_config(project_root, from, &project_cfg, verbose)?;
+    if source_id == "opencode" {
+        if let Some(notice) = adapters::opencode::opencode_1_notice(project_root) {
+            eprintln!("  {} OpenCode: {notice}", "!".yellow());
+        }
+    }
     refuse_source_changed_by_hand(project_root, &source_id)?;
 
     if verbose {

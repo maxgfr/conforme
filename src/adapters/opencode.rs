@@ -39,10 +39,46 @@ fn config_path(project_root: &Path) -> PathBuf {
     }
 }
 
+/// A notice naming the project config files that hold OpenCode 1 entries
+/// (`mcp.<name>` servers, an `agent` key), which conforme neither reads nor
+/// writes: OpenCode 2 still loads them, so they act without being synced.
+pub fn opencode_1_notice(project_root: &Path) -> Option<String> {
+    let files: Vec<&str> = CONFIG_FILES
+        .iter()
+        .copied()
+        .filter(|name| {
+            crate::json_settings::load(&project_root.join(name))
+                .ok()
+                .flatten()
+                .is_some_and(|root| {
+                    root.get("agent").is_some_and(|a| a.is_object())
+                        || root
+                            .get("mcp")
+                            .and_then(Value::as_object)
+                            .is_some_and(|mcp| {
+                                mcp.iter().any(|(name, entry)| {
+                                    name != "servers"
+                                        && name != "timeout"
+                                        && crate::json_settings::is_expressible_server(entry)
+                                })
+                            })
+                })
+        })
+        .collect();
+    (!files.is_empty()).then(|| {
+        format!(
+            "{} holds OpenCode 1 entries (`mcp.<name>` servers, `agent`), which conforme neither \
+             reads nor syncs (it targets OpenCode 2): move them to `mcp.servers` / `agents` to sync them",
+            files.join(", ")
+        )
+    })
+}
+
 impl AiToolAdapter for OpenCodeAdapter {
     /// What its variable syntax cannot carry (see [`crate::mcp::env_ref_losses`]),
-    /// and the SSE servers OpenCode 2 cannot reach.
-    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+    /// the SSE servers OpenCode 2 cannot reach, and OpenCode 1 entries left
+    /// in its config files.
+    fn warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
         let mut warnings = crate::mcp::env_ref_losses(
             &config.mcp_servers,
             crate::mcp::EnvRefStyle::OpenCode,
@@ -59,6 +95,7 @@ impl AiToolAdapter for OpenCodeAdapter {
                 ));
             }
         }
+        warnings.extend(opencode_1_notice(project_root));
         warnings
     }
 
