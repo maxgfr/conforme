@@ -5637,3 +5637,52 @@ fn test_a_carried_section_moves_to_the_next_output_that_holds_it() {
     let agent = fs::read_to_string(root.join(".cursor/agents/reviewer.md")).unwrap();
     assert!(agent.contains("Review for bugs."), "{agent}");
 }
+
+#[cfg(unix)]
+#[test]
+fn test_a_target_file_linked_to_another_tools_file_is_left_to_that_tool() {
+    // `GEMINI.md -> CLAUDE.md`, Cursor the source: Claude Code writes the
+    // file, Gemini CLI reads it through the link; the two no longer rewrite
+    // each other on every sync.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    fs::write(
+        root.join(".cursor/rules/general.mdc"),
+        "---\nalwaysApply: true\n---\n\nBe helpful.\n",
+    )
+    .unwrap();
+    // Claude Code writes this one in a rule file, Gemini CLI inline: the two
+    // files differ.
+    fs::write(
+        root.join(".cursor/rules/ts.mdc"),
+        "---\nglobs: \"**/*.ts\"\nalwaysApply: false\n---\n\nUse TS.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::create_dir_all(root.join(".gemini")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Old.\n").unwrap();
+    std::os::unix::fs::symlink("CLAUDE.md", root.join("GEMINI.md")).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"cursor\"\n").unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("All configs already in sync."));
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+    assert!(fs::symlink_metadata(root.join("GEMINI.md"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert!(fs::read_to_string(root.join("CLAUDE.md"))
+        .unwrap()
+        .contains("Be helpful."));
+}

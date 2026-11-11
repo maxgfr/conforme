@@ -179,8 +179,9 @@ settings file linked likewise), so paths are compared where they really are
 where they are; `sync::TargetGuard` holds the checks for one target). sync
 never writes, nor cleans as an orphan, a target file that really is one the
 source reads, in either direction of the link, nor generates an `AGENTS.md`
-over it; a target whose directory is a link into another detected tool's
-yields to that tool; nothing reached through a link out of the project is
+over it; a target whose directory is a link into another tool's that sync
+writes, or whose file is a link to another file of the project
+(`GEMINI.md -> CLAUDE.md`), yields to it; nothing reached through a link out of the project is
 ever deleted. `remove` keeps such a file, and one a staying tool reaches
 through its own link; `gitignore install` keeps such links tracked (`!` lines,
 a directory pattern turned into one on its entries); `migrate` replaces the

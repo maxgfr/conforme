@@ -475,7 +475,21 @@ impl TargetGuard {
         is_source_file(path, &self.source_files)
             || is_beneath(path, &self.linked_sources)
             || (self.through_link(path)
-                && (is_beneath(path, &self.source_paths) || is_beneath(path, &self.other_tools)))
+                && (is_beneath(path, &self.source_paths)
+                    || is_beneath(path, &self.other_tools)
+                    || self.is_link_to_a_project_file(path)))
+    }
+
+    /// Whether `path` is itself a symbolic link to another file of the
+    /// project (`GEMINI.md -> CLAUDE.md`): that file is whoever writes it,
+    /// and the target reads it through the link rather than overwrite it
+    /// with its own version on every sync.
+    fn is_link_to_a_project_file(&self, path: &Path) -> bool {
+        std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+            && self
+                .canonical_root
+                .as_ref()
+                .is_some_and(|root| adapters::resolved_path(path).starts_with(root))
     }
 
     /// Whether orphan cleanup may delete `path`.
@@ -2387,8 +2401,10 @@ pub fn run_migrate(
         if kept_paths.contains(path)
             || staying_dirs.iter().any(|dir| path.starts_with(dir))
             || bundled_skill_dirs.iter().any(|dir| path.starts_with(dir))
-            || is_beneath(path, &staying_linked)
         {
+            return true;
+        }
+        if is_beneath(path, &staying_linked) {
             return true;
         }
         let through_a_link = walk.borrow_mut().first_link(path).is_some();
