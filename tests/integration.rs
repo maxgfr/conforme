@@ -5812,3 +5812,51 @@ fn test_a_file_another_target_reaches_through_its_link_is_not_an_orphan() {
         .assert()
         .success();
 }
+
+#[cfg(unix)]
+#[test]
+fn test_a_settings_file_linked_to_the_sources_is_never_rewritten() {
+    let link = std::os::unix::fs::symlink::<&str, std::path::PathBuf>;
+
+    // The only link: `.cursor/mcp.json -> ../.mcp.json`, Claude Code the
+    // source. Cursor's shape must not replace the source's servers.
+    let dir = claude_source_project();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    link("../.mcp.json", root.join(".cursor/mcp.json")).unwrap();
+    let before = fs::read_to_string(root.join(".mcp.json")).unwrap();
+    for _ in 0..3 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+        assert_eq!(fs::read_to_string(root.join(".mcp.json")).unwrap(), before);
+    }
+
+    // The other way round: Kiro the source, its settings a link to
+    // `.mcp.json`, which Claude Code (a target) would write.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".kiro/steering")).unwrap();
+    fs::create_dir_all(root.join(".kiro/settings")).unwrap();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::write(
+        root.join(".kiro/steering/general.md"),
+        "---\ninclusion: always\n---\n\nBe helpful.\n",
+    )
+    .unwrap();
+    let kiro_mcp = "{\"mcpServers\": {\"fs\": {\"command\": \"npx\", \"args\": [\"fs\"]}}}\n";
+    fs::write(root.join(".mcp.json"), kiro_mcp).unwrap();
+    link("../../.mcp.json", root.join(".kiro/settings/mcp.json")).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"kiro\"\n").unwrap();
+    for _ in 0..2 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+        assert_eq!(
+            fs::read_to_string(root.join(".mcp.json")).unwrap(),
+            kiro_mcp
+        );
+    }
+}

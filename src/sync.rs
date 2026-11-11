@@ -238,15 +238,14 @@ fn source_files_for(
     config: &NormalizedConfig,
 ) -> Vec<std::path::PathBuf> {
     let mut files = source_files(project_root, source_id);
-    if !project_has_links(project_root) {
-        return files;
-    }
     let Some(source) = find_adapter(source_id) else {
         return files;
     };
     let mut linked = Vec::new();
-    for dir in source.managed_directories(project_root) {
-        links_in(&dir.path, &mut linked);
+    if project_has_links(project_root) {
+        for dir in source.managed_directories(project_root) {
+            links_in(&dir.path, &mut linked);
+        }
     }
     let mut walk = LinkWalk::new(project_root);
     if let Ok(generated) = source.generate(project_root, config) {
@@ -478,10 +477,6 @@ impl OtherTargets {
                 generated: Vec::new(),
                 through_links: Vec::new(),
             };
-            // Without a link in the project, no tool reaches another's files.
-            if !project_has_links(project_root) {
-                return files;
-            }
             let project_cfg = ProjectConfig::load(project_root).unwrap_or_default();
             for other in
                 selected_targets(&adapters, project_root, &self.source_id, None, &project_cfg)
@@ -515,9 +510,16 @@ impl TargetGuard {
         source_files: &[std::path::PathBuf],
         expected: &[(std::path::PathBuf, String)],
     ) -> Self {
-        // Without a single link in the project, only the source's own files
-        // need keeping out (the common case, and the cheap one).
-        if !project_has_links(project_root) {
+        // Without a single link in the project, nor on the way to a file the
+        // target writes (a settings file such as `.cursor/mcp.json`), only
+        // the source's own files need keeping out: the common case, and the
+        // cheap one.
+        let mut walk = LinkWalk::new(project_root);
+        if !project_has_links(project_root)
+            && !expected
+                .iter()
+                .any(|(path, _)| walk.first_link(path).is_some())
+        {
             return Self {
                 project_root: project_root.to_path_buf(),
                 source_files: source_files.to_vec(),
@@ -528,7 +530,6 @@ impl TargetGuard {
                 others: None,
             };
         }
-        let mut walk = LinkWalk::new(project_root);
         let linked_sources = walk.linked(source_locations(project_root, source_id).iter());
         let managed = target.managed_directories(project_root);
         let mut links = Vec::new();
