@@ -271,6 +271,13 @@ fn source_files_for(
     files
 }
 
+/// The file whose content goes when `path` is removed: `path` itself, links
+/// resolved, unless `path` is a link (removing it leaves its file in place).
+fn removed_file_target(path: &Path) -> Option<std::path::PathBuf> {
+    let is_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    (!is_link).then(|| adapters::resolved_path(path))
+}
+
 /// The symbolic links directly in `project_root`, each with the file it
 /// resolves to.
 fn root_links(project_root: &Path) -> Vec<(std::path::PathBuf, std::path::PathBuf)> {
@@ -2235,7 +2242,6 @@ pub fn run_migrate(
     output_config.skills.extend(carried.skills);
     output_config.agents.extend(carried.agents);
     output_config.mcp_servers.extend(carried.mcp_servers);
-
     // Collect source files to delete (generated files for the source adapter)
     let source_files = source_adapter.generate(project_root, &config)?;
     // A file a staying tool generates is never deleted, even when it sits in
@@ -2413,11 +2419,19 @@ pub fn run_migrate(
             .iter()
             .map(|(path, _)| path)
             .filter(|path| path.exists() && !is_kept(path) && !source_adapter.is_shared_file(path))
-            .map(|path| adapters::resolved_path(path))
+            .filter_map(|path| removed_file_target(path))
+            .collect();
+        let removed_links: Vec<&std::path::PathBuf> = source_files
+            .iter()
+            .map(|(path, _)| path)
+            .filter(|path| {
+                std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+                    && !is_kept(path)
+            })
             .collect();
         for dir in &source_managed_dirs {
             for path in managed_files(dir)? {
-                removed.push(adapters::resolved_path(&path));
+                removed.extend(removed_file_target(&path));
                 if source_files.iter().any(|(p, _)| *p == path) {
                     continue;
                 }
@@ -2427,7 +2441,7 @@ pub fn run_migrate(
         }
         for (link, _) in root_links(project_root)
             .into_iter()
-            .filter(|(_, target)| removed.contains(target))
+            .filter(|(link, target)| removed.contains(target) && !removed_links.contains(&link))
         {
             let rel = link.strip_prefix(project_root).unwrap_or(&link);
             println!(
@@ -2477,7 +2491,7 @@ pub fn run_migrate(
                 continue;
             }
             if path.exists() {
-                removed_targets.push(adapters::resolved_path(path));
+                removed_targets.extend(removed_file_target(path));
                 std::fs::remove_file(path)?;
                 removed_paths.push(path.clone());
             }
@@ -2486,13 +2500,17 @@ pub fn run_migrate(
         // Also clean managed directories (recursive)
         for path in managed {
             if path.exists() {
-                removed_targets.push(adapters::resolved_path(&path));
+                removed_targets.extend(removed_file_target(&path));
                 std::fs::remove_file(&path)?;
                 removed_paths.push(path);
             }
         }
         for (link, target) in links {
-            if removed_targets.contains(&target) && !kept_paths.contains(&link) {
+            // Only a link that now points at nothing, because its file was
+            // removed above (not one removed itself, nor one whose file is
+            // still there).
+            let dangling = std::fs::symlink_metadata(&link).is_ok() && !link.exists();
+            if dangling && removed_targets.contains(&target) && !kept_paths.contains(&link) {
                 std::fs::remove_file(&link)?;
                 removed_paths.push(link);
             }

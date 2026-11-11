@@ -5529,3 +5529,36 @@ fn test_migrate_to_a_tool_without_agents_keeps_them_in_agents_md() {
     assert!(agents.contains("Review for bugs."), "{agents}");
     assert!(agents.contains("Be helpful."), "{agents}");
 }
+
+#[cfg(unix)]
+#[test]
+fn test_migrate_with_a_source_file_that_is_a_link_keeps_other_links() {
+    // `CLAUDE.md -> AGENTS.md`: CLAUDE.md is the source's file and a link;
+    // removing it leaves AGENTS.md, so the other links to AGENTS.md stay.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    fs::write(root.join("AGENTS.md"), "Be helpful.\n").unwrap();
+    fs::write(root.join(".claude/rules/ts.md"), "Use TS.\n").unwrap();
+    std::os::unix::fs::symlink("AGENTS.md", root.join("CLAUDE.md")).unwrap();
+    std::os::unix::fs::symlink("AGENTS.md", root.join("NOTES.md")).unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+
+    migrate(root, "claude", "cursor");
+
+    assert!(root.join(".cursor/rules/ts.mdc").exists());
+    assert_eq!(
+        fs::read_to_string(root.join("NOTES.md")).unwrap(),
+        "Be helpful.\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+        "Be helpful.\n"
+    );
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert!(root.join(".cursor/rules/ts.mdc").exists());
+}
