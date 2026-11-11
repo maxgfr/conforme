@@ -238,6 +238,9 @@ fn source_files_for(
     config: &NormalizedConfig,
 ) -> Vec<std::path::PathBuf> {
     let mut files = source_files(project_root, source_id);
+    if !project_has_links(project_root) {
+        return files;
+    }
     let Some(source) = find_adapter(source_id) else {
         return files;
     };
@@ -408,9 +411,99 @@ struct TargetGuard {
     linked_sources: Vec<std::path::PathBuf>,
     /// Empty unless a link is in the target's reach.
     source_paths: Vec<std::path::PathBuf>,
-    other_tools: Vec<std::path::PathBuf>,
     canonical_root: Option<std::path::PathBuf>,
     any_link: bool,
+    /// What the other targets write, worked out only when needed (a path
+    /// through a link, an orphan to clean), and only in a project holding a
+    /// link.
+    others: Option<OtherTargets>,
+}
+
+/// Whether the project holds a symbolic link at its root or in any tool's
+/// directory, looked up once per project and command (see
+/// [`forget_project_links`]).
+fn project_has_links(project_root: &Path) -> bool {
+    let mut memo = PROJECT_LINKS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((root, found)) = memo.as_ref() {
+        if root == project_root {
+            return *found;
+        }
+    }
+    let mut walk = LinkWalk::new(project_root);
+    let found = !root_links(project_root).is_empty()
+        || adapters::all_adapters().iter().any(|adapter| {
+            adapter.managed_directories(project_root).iter().any(|dir| {
+                let mut links = Vec::new();
+                links_in(&dir.path, &mut links);
+                walk.first_link(&dir.path).is_some() || !links.is_empty()
+            })
+        });
+    *memo = Some((project_root.to_path_buf(), found));
+    found
+}
+
+static PROJECT_LINKS: std::sync::Mutex<Option<(std::path::PathBuf, bool)>> =
+    std::sync::Mutex::new(None);
+
+/// Forget what [`project_has_links`] found: `watch` syncs the same project
+/// again and again, links may come and go in between.
+fn forget_project_links() {
+    *PROJECT_LINKS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// The other targets of a command, to tell what they write from a link.
+struct OtherTargets {
+    source_id: String,
+    target_id: String,
+    config: NormalizedConfig,
+    /// The target's own files as spelled: a file both write (Codex's and
+    /// Zed's `.agents/skills`) is no other tool's.
+    own: Vec<std::path::PathBuf>,
+    files: std::cell::OnceCell<OtherFiles>,
+}
+
+/// The files the other targets generate, links resolved, and those of them
+/// they reach through a link.
+struct OtherFiles {
+    generated: Vec<std::path::PathBuf>,
+    through_links: Vec<std::path::PathBuf>,
+}
+
+impl OtherTargets {
+    fn files(&self, project_root: &Path) -> &OtherFiles {
+        self.files.get_or_init(|| {
+            let adapters = adapters::all_adapters();
+            let mut walk = LinkWalk::new(project_root);
+            let mut files = OtherFiles {
+                generated: Vec::new(),
+                through_links: Vec::new(),
+            };
+            // Without a link in the project, no tool reaches another's files.
+            if !project_has_links(project_root) {
+                return files;
+            }
+            let project_cfg = ProjectConfig::load(project_root).unwrap_or_default();
+            for other in
+                selected_targets(&adapters, project_root, &self.source_id, None, &project_cfg)
+            {
+                if other.id() == self.target_id {
+                    continue;
+                }
+                let config = target_config(project_root, &self.source_id, other, &self.config);
+                for (path, _) in other.generate(project_root, &config).unwrap_or_default() {
+                    if self.own.contains(&path) {
+                        continue;
+                    }
+                    let resolved = adapters::resolved_path(&path);
+                    if walk.first_link(&path).is_some() {
+                        files.through_links.push(resolved.clone());
+                    }
+                    files.generated.push(resolved);
+                }
+            }
+            files
+        })
+    }
 }
 
 impl TargetGuard {
@@ -422,6 +515,19 @@ impl TargetGuard {
         source_files: &[std::path::PathBuf],
         expected: &[(std::path::PathBuf, String)],
     ) -> Self {
+        // Without a single link in the project, only the source's own files
+        // need keeping out (the common case, and the cheap one).
+        if !project_has_links(project_root) {
+            return Self {
+                project_root: project_root.to_path_buf(),
+                source_files: source_files.to_vec(),
+                linked_sources: Vec::new(),
+                source_paths: Vec::new(),
+                canonical_root: None,
+                any_link: false,
+                others: None,
+            };
+        }
         let mut walk = LinkWalk::new(project_root);
         let linked_sources = walk.linked(source_locations(project_root, source_id).iter());
         let managed = target.managed_directories(project_root);
@@ -434,35 +540,25 @@ impl TargetGuard {
         }
         let any_link =
             !links.is_empty() || expected.iter().any(|(p, _)| walk.first_link(p).is_some());
-        let (source_paths, other_tools) = if any_link {
-            // The directories of the other tools sync writes (detected, not
-            // excluded), except one the target manages too (`.agents/skills`
-            // is Codex's and Zed's): there neither yields.
-            let own: Vec<&std::path::PathBuf> = managed.iter().map(|dir| &dir.path).collect();
-            let project_cfg = ProjectConfig::load(project_root).unwrap_or_default();
-            let adapters = adapters::all_adapters();
-            let others = selected_targets(&adapters, project_root, source_id, None, &project_cfg)
-                .into_iter()
-                .filter(|a| a.id() != target.id())
-                .flat_map(|a| a.managed_directories(project_root))
-                .filter(|dir| !own.contains(&&dir.path))
-                .map(|dir| adapters::resolved_path(&dir.path))
-                .collect();
-            (
-                source_read_paths(project_root, source_id, source_config),
-                others,
-            )
+        let source_paths = if any_link {
+            source_read_paths(project_root, source_id, source_config)
         } else {
-            (Vec::new(), Vec::new())
+            Vec::new()
         };
         Self {
             project_root: project_root.to_path_buf(),
             source_files: source_files.to_vec(),
             linked_sources,
             source_paths,
-            other_tools,
             canonical_root: std::fs::canonicalize(project_root).ok(),
             any_link,
+            others: Some(OtherTargets {
+                source_id: source_id.to_string(),
+                target_id: target.id().to_string(),
+                config: source_config.clone(),
+                own: expected.iter().map(|(path, _)| path.clone()).collect(),
+                files: std::cell::OnceCell::new(),
+            }),
         }
     }
 
@@ -475,26 +571,29 @@ impl TargetGuard {
         is_source_file(path, &self.source_files)
             || is_beneath(path, &self.linked_sources)
             || (self.through_link(path)
-                && (is_beneath(path, &self.source_paths)
-                    || is_beneath(path, &self.other_tools)
-                    || self.is_link_to_a_project_file(path)))
+                && (is_beneath(path, &self.source_paths) || self.is_another_targets_file(path)))
     }
 
-    /// Whether `path` is itself a symbolic link to another file of the
-    /// project (`GEMINI.md -> CLAUDE.md`): that file is whoever writes it,
-    /// and the target reads it through the link rather than overwrite it
-    /// with its own version on every sync.
-    fn is_link_to_a_project_file(&self, path: &Path) -> bool {
-        std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
-            && self
-                .canonical_root
-                .as_ref()
-                .is_some_and(|root| adapters::resolved_path(path).starts_with(root))
+    /// Whether `path`, reached through a link, really is a file another
+    /// target writes (`GEMINI.md -> CLAUDE.md`, `.kiro/steering ->
+    /// ../.claude/rules`): that target writes it, and this one reads it
+    /// through the link rather than overwrite it with its own version on
+    /// every sync. A file no other tool writes is written through.
+    fn is_another_targets_file(&self, path: &Path) -> bool {
+        self.others.as_ref().is_some_and(|others| {
+            let real = adapters::resolved_path(path);
+            others.files(&self.project_root).generated.contains(&real)
+        })
     }
 
-    /// Whether orphan cleanup may delete `path`.
+    /// Whether orphan cleanup may delete `path`: not when it is a file
+    /// another target writes through a link of its own
+    /// (`.kiro/steering/security.md -> ../../.claude/rules/security.md`).
     fn may_delete(&self, path: &Path) -> bool {
         !self.keeps(path)
+            && !self.others.as_ref().is_some_and(|others| {
+                is_beneath(path, &others.files(&self.project_root).through_links)
+            })
             && !(self.through_link(path)
                 && self
                     .canonical_root
@@ -1264,6 +1363,7 @@ pub fn run_sync(
     no_clean: bool,
     verbose: bool,
 ) -> Result<()> {
+    forget_project_links();
     let project_cfg = ProjectConfig::load(project_root)?;
     let (config, source_id) = resolve_config(project_root, from, &project_cfg, verbose)?;
     if source_id == "opencode" {

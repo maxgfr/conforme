@@ -5727,3 +5727,88 @@ fn test_migrate_removes_a_source_rule_link_into_a_staying_tool() {
         .assert()
         .success();
 }
+
+#[cfg(unix)]
+#[test]
+fn test_a_target_file_linked_to_a_file_no_tool_writes_is_written_through() {
+    let link = std::os::unix::fs::symlink::<&str, std::path::PathBuf>;
+
+    // `GEMINI.md -> docs/ai.md`: no other tool writes docs/ai.md, so Gemini
+    // CLI writes its instructions there, as before.
+    let dir = claude_source_project();
+    let root = dir.path();
+    fs::create_dir_all(root.join("docs")).unwrap();
+    fs::create_dir_all(root.join(".gemini")).unwrap();
+    fs::write(root.join("docs/ai.md"), "Old.\n").unwrap();
+    link("docs/ai.md", root.join("GEMINI.md")).unwrap();
+    for _ in 0..2 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+    }
+    assert!(fs::read_to_string(root.join("docs/ai.md"))
+        .unwrap()
+        .contains("Be helpful."));
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+
+    // `.cursor/mcp.json -> ../.mcp.json` with Claude Code not in use: Cursor
+    // gets its servers through the link.
+    let dir = create_project_with_tools(
+        "# Instructions\nBe helpful.\n\n## MCP: fs\n<!-- command: npx -->\n",
+        &["cursor"],
+    );
+    let root = dir.path();
+    fs::write(root.join(".mcp.json"), "{ \"mcpServers\": {} }\n").unwrap();
+    link("../.mcp.json", root.join(".cursor/mcp.json")).unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert!(fs::read_to_string(root.join(".mcp.json"))
+        .unwrap()
+        .contains("\"fs\""));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_a_file_another_target_reaches_through_its_link_is_not_an_orphan() {
+    // `.kiro/steering/security.md -> ../../.claude/rules/security.md`, Cursor
+    // the source: Claude Code does not generate that rule file (it writes the
+    // always-on rule in CLAUDE.md), but Kiro writes through its link, so
+    // Claude Code must not clean it as an orphan.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+    fs::write(
+        root.join(".cursor/rules/security.mdc"),
+        "---\nalwaysApply: true\n---\n\nCheck inputs.\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::create_dir_all(root.join(".kiro/steering")).unwrap();
+    fs::write(root.join(".claude/rules/security.md"), "Old.\n").unwrap();
+    std::os::unix::fs::symlink(
+        "../../.claude/rules/security.md",
+        root.join(".kiro/steering/security.md"),
+    )
+    .unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"cursor\"\n").unwrap();
+
+    for _ in 0..3 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+    }
+    assert!(fs::read_to_string(root.join(".kiro/steering/security.md"))
+        .unwrap()
+        .contains("Check inputs."));
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}
