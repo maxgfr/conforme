@@ -5607,3 +5607,33 @@ fn test_two_tools_managing_the_same_linked_directory_still_write_it() {
         .unwrap()
         .contains("inclusion: fileMatch"));
 }
+
+#[test]
+fn test_a_carried_section_moves_to_the_next_output_that_holds_it() {
+    // An agent kept in AGENTS.md while Zed was the source (Zed has no
+    // agents) goes to Cursor's agents when the project moves to Cursor.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::write(
+        root.join("AGENTS.md"),
+        "# Instructions\nBe helpful.\n\n## Agent: reviewer\n<!-- description: Review -->\nReview for bugs.\n",
+    )
+    .unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"codex\"\n").unwrap();
+    migrate(root, "codex", "zed");
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+
+    migrate(root, "zed", "cursor");
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let agent = fs::read_to_string(root.join(".cursor/agents/reviewer.md")).unwrap();
+    assert!(agent.contains("Review for bugs."), "{agent}");
+}

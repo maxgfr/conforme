@@ -1171,7 +1171,18 @@ fn test_opencode_1_entries_are_named_when_left_unsynced() {
         r#"{"agent": {"reviewer": {"description": "Review", "prompt": "Review."}}}"#,
     )
     .unwrap();
-    for args in [&["sync", "--from", "opencode"][..], &["sync"][..]] {
+    for args in [
+        &["sync", "--from", "opencode"][..],
+        &["sync"][..],
+        &[
+            "migrate",
+            "--dry-run",
+            "--source",
+            "opencode",
+            "--output",
+            "cursor",
+        ][..],
+    ] {
         conforme()
             .args(["-C", root.to_str().unwrap()])
             .args(args)

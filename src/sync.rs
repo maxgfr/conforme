@@ -2191,6 +2191,11 @@ pub fn run_migrate(
     let config = source_adapter
         .read(project_root)
         .with_context(|| format!("failed to read config from {}", source_adapter.name()))?;
+    if source == "opencode" {
+        if let Some(notice) = adapters::opencode::opencode_1_notice(project_root) {
+            eprintln!("  {} OpenCode: {notice}", "!".yellow());
+        }
+    }
 
     if verbose {
         println!(
@@ -2249,6 +2254,41 @@ pub fn run_migrate(
     output_config.skills.extend(carried.skills);
     output_config.agents.extend(carried.agents);
     output_config.mcp_servers.extend(carried.mcp_servers);
+    // So are the sections the generated AGENTS.md kept because the source
+    // could not hold them (an agent, with Zed as the source): the output
+    // writes those it holds, the next AGENTS.md keeps the others.
+    let kept_in_agents_md =
+        carried_agents_md_sections(&project_root.join("AGENTS.md"), source, &config);
+    let same =
+        |a: &str, b: &str| crate::config::sanitize_name(a) == crate::config::sanitize_name(b);
+    for skill in kept_in_agents_md.skills {
+        if !output_config
+            .skills
+            .iter()
+            .any(|s| same(&s.name, &skill.name))
+        {
+            output_config.skills.push(skill);
+        }
+    }
+    for agent in kept_in_agents_md.agents {
+        if !output_config
+            .agents
+            .iter()
+            .any(|a| same(&a.name, &agent.name))
+        {
+            output_config.agents.push(agent);
+        }
+    }
+    for server in kept_in_agents_md.mcp_servers {
+        if !output_config
+            .mcp_servers
+            .iter()
+            .any(|s| s.name == server.name)
+        {
+            output_config.mcp_servers.push(server);
+        }
+    }
+
     // Collect source files to delete (generated files for the source adapter)
     let source_files = source_adapter.generate(project_root, &config)?;
     // A file a staying tool generates is never deleted, even when it sits in
