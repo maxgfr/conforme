@@ -435,10 +435,17 @@ impl TargetGuard {
         let any_link =
             !links.is_empty() || expected.iter().any(|(p, _)| walk.first_link(p).is_some());
         let (source_paths, other_tools) = if any_link {
-            let others = adapters::all_adapters()
+            // The directories of the other tools sync writes (detected, not
+            // excluded), except one the target manages too (`.agents/skills`
+            // is Codex's and Zed's): there neither yields.
+            let own: Vec<&std::path::PathBuf> = managed.iter().map(|dir| &dir.path).collect();
+            let project_cfg = ProjectConfig::load(project_root).unwrap_or_default();
+            let adapters = adapters::all_adapters();
+            let others = selected_targets(&adapters, project_root, source_id, None, &project_cfg)
                 .into_iter()
-                .filter(|a| a.id() != target.id() && a.id() != source_id && a.detect(project_root))
+                .filter(|a| a.id() != target.id())
                 .flat_map(|a| a.managed_directories(project_root))
+                .filter(|dir| !own.contains(&&dir.path))
                 .map(|dir| adapters::resolved_path(&dir.path))
                 .collect();
             (

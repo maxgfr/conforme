@@ -5562,3 +5562,48 @@ fn test_migrate_with_a_source_file_that_is_a_link_keeps_other_links() {
         .success();
     assert!(root.join(".cursor/rules/ts.mdc").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn test_two_tools_managing_the_same_linked_directory_still_write_it() {
+    // `.agents/skills` is both Codex's and Zed's, and a link: it is no
+    // other tool's directory, so neither yields and the skills are written.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("team-skills")).unwrap();
+    fs::create_dir_all(root.join(".agents")).unwrap();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    std::os::unix::fs::symlink("../team-skills", root.join(".agents/skills")).unwrap();
+    fs::write(root.join(".rules"), "").unwrap();
+    fs::write(
+        root.join("AGENTS.md"),
+        "# Instructions\nBe helpful.\n\n## Skill: deploy\n<!-- description: Deploy -->\nRun deploy.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert!(root.join("team-skills/deploy/SKILL.md").exists());
+
+    // A tool the project excludes is not one to yield to.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::create_dir_all(root.join(".kiro")).unwrap();
+    std::os::unix::fs::symlink("../.claude/rules", root.join(".kiro/steering")).unwrap();
+    fs::write(
+        root.join("AGENTS.md"),
+        "# Instructions\nBe helpful.\n\n## Rule: TS\n<!-- activation: glob **/*.ts -->\nUse TS.\n",
+    )
+    .unwrap();
+    fs::write(root.join(".conformerc.toml"), "exclude = [\"claude\"]\n").unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert!(fs::read_to_string(root.join(".kiro/steering/ts.md"))
+        .unwrap()
+        .contains("inclusion: fileMatch"));
+}
