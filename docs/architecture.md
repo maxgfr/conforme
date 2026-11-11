@@ -40,8 +40,9 @@ src/
                        orphan cleanup); one target that fails does not stop the others, the command fails at the end;
                        init never cleans and lists what the next sync would remove (so does migrate, naming what it
                        kept that the output cannot hold); sync refuses to replace a
-                       hand-written AGENTS.md whose text, skills, agents or MCP servers the source lacks, or that it cannot
-                       read (not UTF-8); sync -n lists orphans and AGENTS.md;
+                       hand-written AGENTS.md whose text, or a skill, agent or MCP section it could hold, the source lacks,
+                       or that it cannot read (not UTF-8); the generated AGENTS.md keeps the sections the source
+                       cannot hold at all (carried_agents_md_sections); sync -n lists orphans and AGENTS.md;
                        check and diff refuse what sync refuses (checked_source); status shows read errors;
                        migrate prunes emptied directories and points `.conformerc.toml` `source` at its output;
                        add validates the resulting AGENTS.md before writing; Held memoizes what a tool holds)

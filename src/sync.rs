@@ -418,15 +418,58 @@ fn generated_agents_md(
         && project_cfg.generate_agents_md
         && !is_the_source())
     .then(|| {
+        let path = project_root.join("AGENTS.md");
+        let mut content = instructions_and_rules(config);
+        let carried = carried_agents_md_sections(&path, source_id, config);
+        content.skills = carried.skills;
+        content.agents = carried.agents;
+        content.mcp_servers = carried.mcp_servers;
         (
-            project_root.join("AGENTS.md"),
+            path,
             format!(
                 "{}\n\n{}",
                 markdown::generated_marker(source_id),
-                markdown::export_as_agents_md(&instructions_and_rules(config))
+                markdown::export_as_agents_md(&content)
             ),
         )
     })
+}
+
+/// The `## Skill:`, `## Agent:` and `## MCP:` sections of the existing
+/// AGENTS.md (hand-written, or generated from this source) that the source
+/// lacks and cannot hold at all (Zed, Devin and Zoo Code have no agents):
+/// the generated AGENTS.md keeps them, or the next sync would delete the
+/// only copy. A section the source could hold but lacks is not carried: it
+/// belongs in the source (see [`refuse_hand_written_agents_md`]).
+fn carried_agents_md_sections(
+    path: &Path,
+    source_id: &str,
+    config: &NormalizedConfig,
+) -> NormalizedConfig {
+    let Some(source) = find_adapter(source_id) else {
+        return NormalizedConfig::default();
+    };
+    let Ok(existing) = std::fs::read_to_string(path) else {
+        return NormalizedConfig::default();
+    };
+    if markdown::generated_from(&existing).is_some_and(|id| id != source_id) {
+        return NormalizedConfig::default();
+    }
+    let Ok(old) = markdown::parse_agents_md(&existing) else {
+        return NormalizedConfig::default();
+    };
+    let caps = source.capabilities();
+    let mut missing = sections_missing_from(config, &old);
+    if caps.skills {
+        missing.skills.clear();
+    }
+    if caps.agents {
+        missing.agents.clear();
+    }
+    if caps.mcp {
+        missing.mcp_servers.clear();
+    }
+    missing
 }
 
 /// Refuse to replace an AGENTS.md conforme did not generate (no marker on its
@@ -466,9 +509,27 @@ fn refuse_hand_written_agents_md(
     // agents and MCP servers of the hand-written one must be in the source
     // too, or replacing it loses them.
     let old = markdown::parse_agents_md(&existing).ok();
+    // Sections the source cannot hold are carried into the generated file
+    // (see [`carried_agents_md_sections`]): only those it could hold count.
+    let carried = carried_agents_md_sections(&path, source_id, config);
     let missing = old
         .as_ref()
         .map(|old| sections_missing_from(config, old))
+        .map(|mut missing| {
+            let same = |a: &str, b: &str| {
+                crate::config::sanitize_name(a) == crate::config::sanitize_name(b)
+            };
+            missing
+                .skills
+                .retain(|s| !carried.skills.iter().any(|c| same(&c.name, &s.name)));
+            missing
+                .agents
+                .retain(|a| !carried.agents.iter().any(|c| same(&c.name, &a.name)));
+            missing
+                .mcp_servers
+                .retain(|m| !carried.mcp_servers.iter().any(|c| c.name == m.name));
+            missing
+        })
         .unwrap_or_default();
     let lost: Vec<String> = (missing.skills.iter().map(|s| format!("skill {}", s.name)))
         .chain(missing.agents.iter().map(|a| format!("agent {}", a.name)))
