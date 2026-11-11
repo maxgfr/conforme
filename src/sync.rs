@@ -2404,6 +2404,12 @@ pub fn run_migrate(
         {
             return true;
         }
+        // A source file that is itself a link goes: removing it leaves the
+        // file it points to (a staying tool's, or outside the project) as it
+        // is, and a link left behind would dangle once that file moves.
+        if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return false;
+        }
         if is_beneath(path, &staying_linked) {
             return true;
         }

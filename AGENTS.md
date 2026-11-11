@@ -188,8 +188,9 @@ ever deleted. `remove` keeps such a file, and one a staying tool reaches
 through its own link; `gitignore install` keeps such links tracked (`!` lines,
 a directory pattern turned into one on its entries); `migrate` replaces the
 output link that leads into the source with a file or directory of its own
-(`--dry-run` says so), keeps a source file that really is a staying tool's,
-and removes a link at the project root it left pointing at nothing.
+(`--dry-run` says so), keeps a source file that really is a staying tool's
+(a source file that is itself a link goes, its target staying), and removes a
+link at the project root it left pointing at nothing.
 
 `reads_agents_md(project_root)` is true for Codex, OpenCode, DeepSeek, Vibe, Kilo and Antigravity CLI;
 for Claude Code when the project has no `CLAUDE.md` nor `.claude/CLAUDE.md` but

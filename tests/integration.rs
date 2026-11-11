@@ -5686,3 +5686,44 @@ fn test_a_target_file_linked_to_another_tools_file_is_left_to_that_tool() {
         .unwrap()
         .contains("Be helpful."));
 }
+
+#[cfg(unix)]
+#[test]
+fn test_migrate_removes_a_source_rule_link_into_a_staying_tool() {
+    // A Claude Code rule that is a link to a Kiro steering file: migrating
+    // away from Claude Code removes the link (the file stays Kiro's), so no
+    // dangling link is left once Kiro's next sync renames that file.
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::create_dir_all(root.join(".kiro/steering")).unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Be helpful.\n").unwrap();
+    fs::write(root.join(".kiro/steering/team-shared.md"), "Shared rule.\n").unwrap();
+    std::os::unix::fs::symlink(
+        "../../.kiro/steering/team-shared.md",
+        root.join(".claude/rules/shared.md"),
+    )
+    .unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+
+    migrate(root, "claude", "cursor");
+    for _ in 0..2 {
+        conforme()
+            .args(["-C", root.to_str().unwrap(), "sync"])
+            .assert()
+            .success();
+    }
+
+    assert!(fs::symlink_metadata(root.join(".claude/rules/shared.md")).is_err());
+    assert!(fs::read_to_string(root.join(".cursor/rules/shared.mdc"))
+        .unwrap()
+        .contains("Shared rule."));
+    assert!(fs::read_to_string(root.join(".kiro/steering/shared.md"))
+        .unwrap()
+        .contains("Shared rule."));
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}
