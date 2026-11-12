@@ -123,9 +123,11 @@ impl PluginShape {
         self.format != BundleFormat::Codex
     }
 
-    /// Whether a bundle holds the plugin's hooks; Codex's does not (its
-    /// `plugin_hooks` feature is `removed` in Codex CLI 0.167.2, `codex
-    /// features list`).
+    /// Whether a bundle holds the plugin's hooks; Codex's does not: Codex
+    /// loads no hooks from a plugin with an Agent Plugins manifest (a root
+    /// `plugin.json`, the one conforme writes: `if loaded_manifest.format ==
+    /// PluginManifestFormat::AgentPlugin { (Vec::new(), Vec::new()) }`,
+    /// `codex-rs/core-plugins/src/loader.rs`, Codex CLI 0.167.2).
     pub fn holds_hooks(&self) -> bool {
         self.format != BundleFormat::Codex
     }
@@ -359,7 +361,9 @@ fn manifest_metadata(
     };
     text("description", Some(&plugin.description));
     text("version", plugin.version.as_ref());
-    text("homepage", plugin.homepage.as_ref());
+    // Claude Code's `homepage` "Must parse as a URL, or the plugin fails to
+    // load" (https://code.claude.com/docs/en/plugins/manifest-reference.md).
+    text("homepage", plugin.homepage.as_ref().filter(|h| is_url(h)));
     text("repository", plugin.repository.as_ref());
     text("license", plugin.license.as_ref());
     if let Some(author) = plugin.author.as_ref().filter(|a| !a.is_empty()) {
@@ -374,6 +378,21 @@ fn manifest_metadata(
         manifest.insert("keywords".into(), serde_json::json!(plugin.keywords));
     }
     manifest
+}
+
+/// Whether `text` is an absolute URL (`<scheme>://<rest>`, no whitespace).
+fn is_url(text: &str) -> bool {
+    text.split_once("://").is_some_and(|(scheme, rest)| {
+        scheme
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+            && !rest.is_empty()
+            && !text.chars().any(char::is_whitespace)
+    })
 }
 
 fn json_file(value: &serde_json::Value) -> Result<String> {
@@ -547,10 +566,17 @@ pub fn generate_plugins(
                         )?,
                     ));
                 }
-                if let (Some(hooks), _) = crate::hooks::antigravity_json(
-                    &plugin.hooks,
-                    &format!("plugin {}", plugin.name),
-                ) {
+                let relative: Vec<crate::config::NormalizedHook> = plugin
+                    .hooks
+                    .iter()
+                    .map(|h| crate::config::NormalizedHook {
+                        command: crate::hooks::plugin_relative(&h.command),
+                        ..h.clone()
+                    })
+                    .collect();
+                if let (Some(hooks), _) =
+                    crate::hooks::antigravity_json(&relative, &format!("plugin {}", plugin.name))
+                {
                     files.push((bundle.join("hooks.json"), json_file(&hooks)?));
                 }
             }
@@ -601,6 +627,18 @@ pub fn bundle_warnings(
             )
         })
         .collect();
+    for plugin in &config.plugins {
+        if let Some(homepage) = plugin
+            .homepage
+            .as_ref()
+            .filter(|h| !h.is_empty() && !is_url(h))
+        {
+            warnings.push(format!(
+                "plugin {}: homepage {homepage} is not a URL, so its manifest leaves it out",
+                plugin.name
+            ));
+        }
+    }
     for plugin in config.plugins.iter().filter(|p| !p.hooks.is_empty()) {
         match shape.format {
             BundleFormat::Vibe => {
@@ -655,7 +693,13 @@ fn read_bundle_hooks(bundle: &Path, format: BundleFormat) -> Vec<crate::config::
         }
         BundleFormat::Antigravity => json("hooks.json")
             .map(|doc| crate::hooks::read_antigravity(&doc))
-            .unwrap_or_default(),
+            .unwrap_or_default()
+            .into_iter()
+            .map(|h| crate::config::NormalizedHook {
+                command: crate::hooks::plugin_rooted(&h.command),
+                ..h
+            })
+            .collect(),
         BundleFormat::Codex => Vec::new(),
     }
 }
@@ -760,7 +804,10 @@ pub fn read_plugins(
                     &plugin.skills,
                 )?;
                 plugin.skills.extend(commands);
-                plugin.agents = crate::adapters::claude::read_agents_in(&bundle.join("agents"))?;
+                plugin.agents = crate::adapters::claude::read_plugin_agents_in(
+                    &bundle.join("agents"),
+                    &plugin.name,
+                )?;
                 Some((bundle.join(".mcp.json"), &crate::mcp::CLAUDE_SHAPE))
             }
             BundleFormat::Vibe => {
@@ -1102,6 +1149,64 @@ mod tests {
             name: name.to_string(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn test_a_homepage_that_is_not_a_url_is_left_out_with_a_warning() {
+        let mut kit = plugin("kit");
+        kit.description = "Kit".to_string();
+        kit.homepage = Some("our wiki".to_string());
+        let manifest = manifest_metadata(&kit, true);
+        assert!(manifest.get("homepage").is_none(), "{manifest:?}");
+        kit.homepage = Some("https://example.com/kit".to_string());
+        assert_eq!(
+            manifest_metadata(&kit, true)["homepage"],
+            "https://example.com/kit"
+        );
+        kit.homepage = Some("our wiki".to_string());
+        let config = NormalizedConfig {
+            plugins: vec![kit],
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let warnings = bundle_warnings(tmp.path(), &config, &CLAUDE_PLUGINS);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("homepage our wiki is not a URL")),
+            "{warnings:?}"
+        );
+        assert!(!is_url("mailto:me@example.com"));
+        assert!(is_url("git+https://example.com/x"));
+    }
+
+    #[test]
+    fn test_claude_plugin_agents_load_like_claude_code_loads_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agents = tmp.path().join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        // No `name`: named after the file. Frontmatter that does not parse:
+        // still loaded, named after the file, with Claude Code's description.
+        std::fs::write(
+            agents.join("reviewer.md"),
+            "---\ndescription: Review.\npermissionMode: plan\n---\nReview the diff.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            agents.join("broken.md"),
+            "---\ndescription: [unclosed\n---\nFix it.\n",
+        )
+        .unwrap();
+        let mut read = crate::adapters::claude::read_plugin_agents_in(&agents, "kit").unwrap();
+        read.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(read.len(), 2, "{read:?}");
+        assert_eq!(read[0].name, "broken");
+        assert_eq!(read[0].description, "Agent from kit plugin");
+        assert_eq!(read[0].content, "Fix it.");
+        assert_eq!(read[1].name, "reviewer");
+        assert_eq!(read[1].description, "Review.");
+        // Plugin agents ignore `permissionMode`.
+        assert_eq!(read[1].permission_mode, None);
     }
 
     #[test]

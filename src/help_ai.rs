@@ -277,8 +277,10 @@ pub fn print_help_ai() {
     );
     println!(
         "  Project hooks (`## Hook:` with event/matcher/timeout, or the source's own), only with \
-         `hooks = true`: .claude/settings.json and .github/copilot/settings.json `hooks`, \
-         .codex/hooks.json, .agents/hooks.json (`conforme` group), .vibe/hooks.toml (`conforme-…`)."
+         `hooks = true`: .claude/settings.json `hooks`, .github/copilot/settings.json `hooks` \
+         (flat entries), .codex/hooks.json, .agents/hooks.json (`conforme` group), \
+         .vibe/hooks.toml (`conforme-…`); a hook on an event a tool lacks is left out with a \
+         warning."
     );
     println!();
     println!(

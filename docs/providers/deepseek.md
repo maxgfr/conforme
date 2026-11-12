@@ -2,7 +2,7 @@
 
 > DeepSeek's open-source agent harness (`dsh`), in preview. Source: `--from deepseek`
 
-**Last verified online:** 2026-11-09, against DeepSeek Harness v0.2.2-rc.1 (https://github.com/deepseek-ai/deepseek-harness/releases)
+**Last verified online:** 2026-11-12, against DeepSeek Harness v0.2.2-rc.2 (https://github.com/deepseek-ai/deepseek-harness/releases)
 
 ## Official docs
 
@@ -95,6 +95,18 @@ directory), for example:
 (`url`, `headers`). Tools are exposed as `mcp__<serverName>__<rawName>`.
 Because this configuration is user-level and not project-scoped, conforme does
 **not** generate an MCP file for this tool.
+
+Since v0.2.2-rc.2, MCP servers can also be one `@deepseek-ai/dsh-mcp-manager`
+row holding a `config.servers.<name>` map (`transport`, `enabled`, values as
+`${credential:REF}` templates); "the manager governs the global plane only"
+(https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-manager/README.md).
+It is user- and profile-level too, so conforme still writes nothing for it.
+
+Hooks: DeepSeek Harness has no hooks file of its own. Two experimental bridges,
+`@deepseek-ai/dsh-hooks-claude-code` and `dsh-hooks-codex`, run the hooks of a
+Claude Code or Codex hooks file named by their required `configPath`
+(https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/experimental/hooks-claude-code/README.md);
+no default composition mounts them, so conforme writes no hooks for it.
 
 ## conforme adapter
 

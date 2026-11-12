@@ -6186,7 +6186,10 @@ fn test_claude_bundle_reaches_bundle_tools_and_flat_tools() {
         agy_hooks.contains("\"matcher\": \"run_command\""),
         "{agy_hooks}"
     );
-    assert!(agy_hooks.contains("${PLUGIN_ROOT}/guard.sh"), "{agy_hooks}");
+    // Antigravity runs a plugin hook in the plugin root and asks for a
+    // relative path: `agy plugin validate --strict` fails on `${PLUGIN_ROOT}`.
+    assert!(agy_hooks.contains("\"./guard.sh\""), "{agy_hooks}");
+    assert!(!agy_hooks.contains("PLUGIN_ROOT"), "{agy_hooks}");
     assert!(fs::read_to_string(agy.join("plugin.json"))
         .unwrap()
         .contains("antigravity.google/schemas/v1/plugin.json"));
@@ -6650,26 +6653,63 @@ fn test_project_hooks_reach_each_tool() {
 }
 
 /// From an AGENTS.md source with `hooks = true`, Claude Code and Copilot
-/// both get the hook in their settings.
+/// both get the hook in their settings, each in its own shape: Claude Code's
+/// matcher groups, Copilot's flat entries ("the same schema as
+/// `.github/hooks/*.json`", where a matcher group is an invalid item that
+/// rejects the whole `hooks` field). Copilot has no `Notification` event
+/// under a Claude Code name, so that hook is left out of its file; Codex has
+/// none at all, and gets the guard alone.
 #[test]
 fn test_agents_md_hooks_reach_claude_and_copilot() {
     let agents_md = "# Instructions\nHi.\n\n## Hook: guard\n<!-- event: PreToolUse -->\n\
-                     <!-- matcher: Bash -->\n\n```sh\n./guard.sh\n```\n";
-    let dir = create_project_with_tools(agents_md, &["claude", "copilot"]);
+                     <!-- matcher: Bash -->\n<!-- timeout: 20 -->\n\n```sh\n./guard.sh\n```\n\n\
+                     ## Hook: ping\n<!-- event: Notification -->\n\n```sh\n./ping.sh\n```\n";
+    let dir = create_project_with_tools(agents_md, &["claude", "copilot", "codex"]);
     let root = dir.path();
     fs::write(root.join(".conformerc.toml"), "hooks = true\n").unwrap();
-    conforme()
+    let out = conforme()
         .args(["-C", root.to_str().unwrap(), "sync"])
         .assert()
-        .success();
-    for settings in [".claude/settings.json", ".github/copilot/settings.json"] {
-        let value: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(root.join(settings)).unwrap()).unwrap();
-        assert_eq!(
-            value["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "./guard.sh",
-            "{settings}"
-        );
-    }
+        .success()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("hook ping is not written: Copilot has no Notification event"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("hook ping is not written: Codex has no Notification event"),
+        "{stderr}"
+    );
+    let read = |path: &str| -> serde_json::Value {
+        serde_json::from_str(&fs::read_to_string(root.join(path)).unwrap()).unwrap()
+    };
+    let claude = read(".claude/settings.json");
+    assert_eq!(
+        claude["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+        "./guard.sh"
+    );
+    assert_eq!(
+        claude["hooks"]["Notification"][0]["hooks"][0]["command"],
+        "./ping.sh"
+    );
+    let copilot = read(".github/copilot/settings.json");
+    assert_eq!(
+        copilot["hooks"],
+        serde_json::json!({ "PreToolUse": [{
+            "type": "command",
+            "command": "./guard.sh",
+            "matcher": "Bash",
+            "timeoutSec": 20
+        }] })
+    );
+    let codex = read(".codex/hooks.json");
+    assert_eq!(
+        codex["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+        "./guard.sh"
+    );
+    assert!(codex["hooks"].get("Notification").is_none(), "{codex}");
     conforme()
         .args(["-C", root.to_str().unwrap(), "check"])
         .assert()
@@ -6715,4 +6755,51 @@ fn test_tools_sharing_a_skills_dir_keep_each_others_plugin_skills() {
         .success()
         .stdout(predicate::str::contains("wrote").not());
     assert!(root.join(".agents/skills/lint/SKILL.md").is_file());
+}
+
+/// Migrating to a tool without agents (Devin) keeps them in the generated
+/// AGENTS.md: the next sync would otherwise delete every tool's copy as an
+/// orphan, and a later migrate to a tool with agents gets them back.
+#[test]
+fn test_migrate_keeps_agents_the_output_cannot_hold() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    let cli = |args: &[&str]| {
+        conforme()
+            .args(["-C", root.to_str().unwrap()])
+            .args(args)
+            .assert()
+            .success()
+    };
+    fs::create_dir_all(root.join(".claude/agents")).unwrap();
+    for tool in [".cursor", ".devin", ".github"] {
+        fs::create_dir_all(root.join(tool)).unwrap();
+    }
+    fs::write(root.join(".github/copilot-instructions.md"), "").unwrap();
+    fs::write(root.join("CLAUDE.md"), "# Project\nUse TypeScript.\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    fs::write(
+        root.join(".claude/agents/reviewer.md"),
+        "---\nname: reviewer\ndescription: Reviews code\n---\nReview the diff.\n",
+    )
+    .unwrap();
+    cli(&["sync"]);
+    cli(&["migrate", "--source", "claude", "--output", "cursor"]);
+    cli(&["sync"]);
+
+    cli(&["migrate", "--source", "cursor", "--output", "devin"])
+        .stdout(predicate::str::contains("AGENTS.md: kept agent reviewer"));
+    cli(&["sync"]);
+    let agents_md = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+    assert!(agents_md.contains("## Agent: reviewer"), "{agents_md}");
+    assert!(agents_md.contains("Review the diff."), "{agents_md}");
+    cli(&["check"]);
+
+    cli(&["migrate", "--source", "devin", "--output", "copilot"]);
+    cli(&["sync"]);
+    assert!(
+        fs::read_to_string(root.join(".github/agents/reviewer.agent.md"))
+            .unwrap()
+            .contains("Review the diff.")
+    );
 }

@@ -26,11 +26,14 @@ src/
                        trait marks the three tools, sync warns for the others
   hooks.rs          — Hooks (NormalizedHook: Claude Code's events and tool names) in each bundle format, and the
                        project's own (merge_vibe_project_toml: `conforme-` names; antigravity_group: the `conforme`
-                       group; Claude, Copilot and Codex take claude_json; sync gates them on `hooks = true`): read_claude /
+                       group; Claude takes claude_json, Codex codex_json (CODEX_EVENTS), Copilot copilot_json /
+                       read_copilot (flat entries, COPILOT_EVENTS); sync gates them on `hooks = true`): read_claude /
                        claude_json, vibe_toml / read_vibe (pre_tool, post_tool, post_agent; tool names through
                        skills::vibe_tool), antigravity_json / read_antigravity (a `conforme` group; ANTIGRAVITY_TOOLS,
-                       the names `agy plugin validate` gives); `${CLAUDE_PLUGIN_ROOT}` ⇄ `${PLUGIN_ROOT}`; what a format
-                       lacks is left out and warned, and payload_warning names the protocol a script must handle
+                       the names `agy plugin validate` gives); matchers split on `|` and `,` (matcher_names);
+                       `${CLAUDE_PLUGIN_ROOT}` ⇄ `${PLUGIN_ROOT}`, and `./` in an Antigravity bundle (plugin_relative /
+                       plugin_rooted); what a format lacks is left out and warned, and payload_warning names the
+                       protocol a script must handle
   plugins.rs        — Plugin bundles: flatten moves a plugin's content into the top-level config for a tool
                        that cannot hold a bundle (instructions → always-on rule, `<plugin>-<name>` on a name
                        clash, items using ${PLUGIN_ROOT}-style variables and disabled plugins left out, each
@@ -51,7 +54,8 @@ src/
   lib.rs            — Library crate: declares every module (compiled and unit-tested once)
   sync.rs           — Core sync engine: init, sync, check, status, remove, diff, migrate commands
                        (target_config, renamed-id check, AGENTS.md output unless the source reads it, holding only
-                       instructions and rules (migrate adds what the output cannot hold); a Codex
+                       instructions and rules (migrate adds what the output cannot hold, and keep_unheld_in_agents_md the skills and
+                       agents it cannot); a Codex
                        warning past its 32 KiB AGENTS.md budget; generated AGENTS.md names its source on
                        line 1 and sync/check refuse a source changed by hand since (migrate moves it); remove prunes emptied directories, is not blocked by another tool's unreadable settings file,
                        and says how to exclude a tool still detected;

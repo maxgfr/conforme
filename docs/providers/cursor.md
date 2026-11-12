@@ -2,7 +2,7 @@
 
 > AI code editor with .mdc rule files. Source: `--from cursor`
 
-**Last verified online:** 2026-11-09, against Cursor 3.29.9 and Cursor CLI 2026.11.05 (https://cursor.com/changelog, https://cursor.com/docs/cli/changelog)
+**Last verified online:** 2026-11-12, against Cursor 3.29.15 and Cursor CLI 2026.11.11 (https://cursor.com/changelog, https://cursor.com/docs/cli/changelog)
 
 ## Official docs
 
@@ -20,6 +20,10 @@
 - Security and workspace trust: https://cursor.com/docs/agent/security
 - CLI changelog (`user-invocable: false` in v2026.07.06; skill and subagent scans skip hidden dot-directories since v2026.08.11): https://cursor.com/docs/cli/changelog
 - Customizing Cursor (index of rules, skills, subagents, hooks, plugins): https://cursor.com/docs/customize-cursor
+- Plugins: https://cursor.com/docs/plugins
+- Plugins reference: https://cursor.com/docs/reference/plugins
+- Plugins help: https://cursor.com/help/customization/plugins
+- Hooks: https://cursor.com/docs/hooks
 
 ## Config files
 
