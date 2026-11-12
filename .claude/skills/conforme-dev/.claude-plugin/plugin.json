@@ -1,0 +1,11 @@
+{
+  "name": "conforme-dev",
+  "version": "1.0.0",
+  "description": "Checks and reviews for working on conforme: the pre-push checks, and a reviewer for the docs every behaviour change must keep in step.",
+  "author": {
+    "name": "Maxime Golfier"
+  },
+  "repository": "https://github.com/maxgfr/conforme",
+  "license": "MIT",
+  "keywords": ["conforme", "rust", "review"]
+}

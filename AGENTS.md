@@ -283,6 +283,13 @@ This project uses Claude Code skills in `.claude/skills/`:
 
 - **verify-providers** — Verify all 14 provider adapters online, with a proof URL for every fact, the tools' own CLIs and every command; fix drift with regression tests (see its `SKILL.md`)
 
+And one plugin, the example of plugin sync: **conforme-dev**
+(`.claude/skills/conforme-dev/`, loaded as `conforme-dev@skills-dir`) holds the
+`pre-push` skill (the checks CI runs) and the `docs-sync-reviewer` subagent
+(the "Keeping docs in sync" list applied to a change). `conforme sync` writes it
+as a bundle for Vibe and Codex (`.agents/plugins/marketplace.json`,
+`[plugins."conforme-dev@conforme"]`) and as plain skills and agents elsewhere.
+
 ## Upstream documentation
 
 The project configures no MCP server. Upstream formats are checked online
