@@ -50,6 +50,8 @@ fn rich_config() -> NormalizedConfig {
             },
         ],
         plugins: Vec::new(),
+        plugin_refs: Vec::new(),
+        marketplaces: Vec::new(),
     }
 }
 
@@ -89,6 +91,8 @@ fn roundtrip_config() -> NormalizedConfig {
         mcp_servers: vec![],
         agents: vec![],
         plugins: Vec::new(),
+        plugin_refs: Vec::new(),
+        marketplaces: Vec::new(),
     }
 }
 

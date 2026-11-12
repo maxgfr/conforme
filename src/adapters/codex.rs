@@ -479,6 +479,7 @@ impl AiToolAdapter for CodexAdapter {
         // project; skills are not gated.
         let gated = !config.mcp_servers.is_empty()
             || !config.plugins.is_empty()
+            || !config.plugin_refs.is_empty()
             || config
                 .agents
                 .iter()
@@ -492,8 +493,35 @@ impl AiToolAdapter for CodexAdapter {
                 codex_trust_table(project_root)
             )
         });
-        let bundles =
+        let mut bundles =
             crate::plugins::bundle_warnings(project_root, config, &crate::plugins::CODEX_PLUGINS);
+        // Codex installs an enabled marketplace plugin only from a marketplace
+        // the user added: it clones none a project names.
+        let mut markets: Vec<&str> = config
+            .plugin_refs
+            .iter()
+            .map(|r| r.marketplace.as_str())
+            .filter(|m| *m != marketplace_name(project_root))
+            .collect();
+        markets.sort_unstable();
+        markets.dedup();
+        for market in markets {
+            let add = config
+                .marketplaces
+                .iter()
+                .find(|m| m.name == market)
+                .and_then(|m| crate::marketplaces::codex_add_argument(&m.source));
+            bundles.push(match add {
+                Some(argument) => format!(
+                    "marketplace {market}: Codex installs its plugins once each user adds it, \
+                     with `codex plugin marketplace add {argument}`"
+                ),
+                None => format!(
+                    "marketplace {market}: Codex installs its plugins once each user adds it \
+                     (`codex plugin marketplace add <github repo, git URL or path>`)"
+                ),
+            });
+        }
         let builtin_agents = config
             .agents
             .iter()
@@ -583,8 +611,19 @@ impl AiToolAdapter for CodexAdapter {
                         &|name| switches.get(&crate::config::sanitize_name(name)).copied(),
                     )?
                 },
+                // Codex keeps the marketplaces themselves per user.
+                plugin_refs: crate::config::read_text(&config_path(project_root))
+                    .map(|text| {
+                        crate::marketplaces::read_codex_refs(&text, &marketplace_name(project_root))
+                    })
+                    .unwrap_or_default(),
+                marketplaces: Vec::new(),
             },
         )
+    }
+
+    fn holds_plugin_refs(&self) -> bool {
+        true
     }
 
     fn generate_flat(
@@ -634,7 +673,7 @@ impl AiToolAdapter for CodexAdapter {
         // config. The merge preserves unrelated Codex settings and
         // server-specific options not represented by conforme's normalized
         // model.
-        if !config.mcp_servers.is_empty() || plugin_tables {
+        if !config.mcp_servers.is_empty() || plugin_tables || !config.plugin_refs.is_empty() {
             let path = config_path(project_root);
             let existing = if path.exists() {
                 crate::config::read_text(&path)?
@@ -653,6 +692,11 @@ impl AiToolAdapter for CodexAdapter {
                     &owned,
                 )?;
             }
+            content = crate::marketplaces::merge_codex_refs_toml(
+                &content,
+                &config.plugin_refs,
+                &marketplace_name(project_root),
+            )?;
             if path.exists() || !content.trim().is_empty() {
                 files.push((path, content));
             }

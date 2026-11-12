@@ -10,6 +10,15 @@ use crate::frontmatter;
 
 pub struct CopilotAdapter;
 
+/// The repository settings Copilot CLI reads (`enabledPlugins`,
+/// `extraKnownMarketplaces`).
+fn settings_path(project_root: &Path) -> std::path::PathBuf {
+    project_root
+        .join(".github")
+        .join("copilot")
+        .join("settings.json")
+}
+
 /// Copilot CLI's built-in agents ("Built-in agents",
 /// https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference):
 /// a custom agent of one of these names is not offered to the model, "since
@@ -80,6 +89,7 @@ impl AiToolAdapter for CopilotAdapter {
     fn is_shared_file(&self, path: &Path) -> bool {
         path.ends_with(Path::new(".vscode/mcp.json"))
             || path.ends_with(Path::new(".github/mcp.json"))
+            || path.ends_with(Path::new(".github/copilot/settings.json"))
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
@@ -183,6 +193,9 @@ impl AiToolAdapter for CopilotAdapter {
             }
         }
 
+        // Marketplace plugins the repository enables for Copilot CLI.
+        let (plugin_refs, marketplaces) =
+            crate::marketplaces::read_settings_file(&settings_path(project_root));
         Ok(NormalizedConfig {
             instructions,
             rules,
@@ -190,7 +203,13 @@ impl AiToolAdapter for CopilotAdapter {
             agents,
             mcp_servers,
             plugins: Vec::new(),
+            plugin_refs,
+            marketplaces,
         })
+    }
+
+    fn holds_plugin_refs(&self) -> bool {
+        true
     }
 
     fn generate_flat(
@@ -277,6 +296,14 @@ impl AiToolAdapter for CopilotAdapter {
             &crate::mcp::CLAUDE_SHAPE.owned_keys(),
         )?);
 
+        // Marketplace plugins, merged into .github/copilot/settings.json: "A
+        // plugin enabled only through a repository's `enabledPlugins` ...
+        // auto-installs and activates in the declaring repository".
+        files.extend(crate::marketplaces::settings_file(
+            &settings_path(project_root),
+            config,
+        )?);
+
         Ok(files)
     }
 }
@@ -322,6 +349,8 @@ mod tests {
             mcp_servers: vec![],
             agents: vec![],
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         }
     }
 
@@ -335,6 +364,8 @@ mod tests {
             mcp_servers: vec![],
             agents: vec![],
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -407,6 +438,8 @@ mod tests {
             mcp_servers: vec![],
             agents: vec![],
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -446,6 +479,8 @@ mod tests {
                 ..Default::default()
             }],
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -482,6 +517,8 @@ mod tests {
             }],
             agents: vec![],
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -516,6 +553,8 @@ mod tests {
             mcp_servers: vec![],
             agents: vec![],
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();

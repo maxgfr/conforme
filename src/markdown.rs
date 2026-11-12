@@ -26,7 +26,12 @@ const MCP_KEYS: &[&str] = &[
     "headers",
     "plugin",
 ];
+/// A `## Marketplace:` section's source: `github: owner/repo`, `git: <url>`
+/// or `directory: <path>`, with `ref` and `path` (a sub-folder), or `source:`
+/// the whole source object in JSON (Claude Code's shape).
+const MARKETPLACE_KEYS: &[&str] = &["github", "git", "directory", "ref", "path", "source"];
 const PLUGIN_KEYS: &[&str] = &[
+    "marketplace",
     "description",
     "version",
     "author",
@@ -105,6 +110,9 @@ pub fn parse_agents_md(content: &str) -> Result<NormalizedConfig> {
         } else if let Some(name) = line.strip_prefix("## Plugin: ") {
             flush_section(&mut config, current_section.take(), declared)?;
             current_section = Some(Section::Plugin(name.trim().to_string(), Vec::new()));
+        } else if let Some(name) = line.strip_prefix("## Marketplace: ") {
+            flush_section(&mut config, current_section.take(), declared)?;
+            current_section = Some(Section::Marketplace(name.trim().to_string(), Vec::new()));
         } else if let Some(section) = &mut current_section {
             section.lines_mut().push(line.to_string());
         } else {
@@ -194,6 +202,8 @@ pub fn read_agents_md_files(
         sections.agents.extend(md.agents);
         sections.mcp_servers.extend(md.mcp_servers);
         sections.plugins.extend(md.plugins);
+        sections.plugin_refs.extend(md.plugin_refs);
+        sections.marketplaces.extend(md.marketplaces);
     }
     config.instructions = instructions.join("\n\n");
     config.rules = rules;
@@ -222,6 +232,20 @@ pub fn read_agents_md_files(
             config.plugins.push(plugin);
         }
     }
+    for plugin in md.plugin_refs {
+        if !config.plugin_refs.iter().any(|p| p.id() == plugin.id()) {
+            config.plugin_refs.push(plugin);
+        }
+    }
+    for marketplace in md.marketplaces {
+        if !config
+            .marketplaces
+            .iter()
+            .any(|m| m.name == marketplace.name)
+        {
+            config.marketplaces.push(marketplace);
+        }
+    }
     Ok(config)
 }
 
@@ -231,6 +255,7 @@ enum Section {
     Agent(String, Vec<String>),
     Mcp(String, Vec<String>),
     Plugin(String, Vec<String>),
+    Marketplace(String, Vec<String>),
 }
 
 impl Section {
@@ -240,7 +265,8 @@ impl Section {
             | Section::Skill(_, lines)
             | Section::Agent(_, lines)
             | Section::Mcp(_, lines)
-            | Section::Plugin(_, lines) => lines,
+            | Section::Plugin(_, lines)
+            | Section::Marketplace(_, lines) => lines,
         }
     }
 }
@@ -319,6 +345,19 @@ fn flush_section(
                 bail!("empty plugin name");
             }
             let (meta, instructions) = split_section(&lines, PLUGIN_KEYS);
+            // With a marketplace, the plugin is one the project enables from
+            // there, not a bundle it holds.
+            if let Some((_, market)) = meta.iter().find(|(key, _)| key == "marketplace") {
+                let disabled = meta
+                    .iter()
+                    .any(|(key, value)| key == "disabled" && value.eq_ignore_ascii_case("true"));
+                config.plugin_refs.push(crate::config::NormalizedPluginRef {
+                    plugin: name,
+                    marketplace: decode_text(market),
+                    enabled: !disabled,
+                });
+                return Ok(());
+            }
             let plugin = if declared.insert(crate::config::sanitize_name(&name)) {
                 plugin_named(config, &name)
             } else {
@@ -342,6 +381,51 @@ fn flush_section(
                     _ => plugin.disabled = value.eq_ignore_ascii_case("true"),
                 }
             }
+        }
+        Some(Section::Marketplace(name, lines)) => {
+            if name.is_empty() {
+                bail!("empty marketplace name");
+            }
+            let (meta, _) = split_section(&lines, MARKETPLACE_KEYS);
+            let get = |k: &str| {
+                meta.iter()
+                    .find(|(key, _)| key == k)
+                    .map(|(_, v)| decode_text(v))
+            };
+            let mut source = serde_json::Map::new();
+            if let Some(json) = get("source") {
+                let parsed: serde_json::Value = serde_json::from_str(&json).map_err(|e| {
+                    anyhow::anyhow!("marketplace {name}: `source` is not a JSON object: {e}")
+                })?;
+                let serde_json::Value::Object(object) = parsed else {
+                    bail!("marketplace {name}: `source` is not a JSON object");
+                };
+                source = object;
+            } else if let Some(repo) = get("github") {
+                source.insert("source".into(), "github".into());
+                source.insert("repo".into(), repo.into());
+            } else if let Some(url) = get("git") {
+                source.insert("source".into(), "git".into());
+                source.insert("url".into(), url.into());
+            } else if let Some(path) = get("directory") {
+                source.insert("source".into(), "directory".into());
+                source.insert("path".into(), path.into());
+            } else {
+                bail!("marketplace {name} has no source: add `<!-- github: owner/repo -->`, `<!-- git: <url> -->` or `<!-- directory: <path> -->`");
+            }
+            if get("source").is_none() {
+                for key in ["ref", "path"] {
+                    if let Some(value) = get(key).filter(|_| get("directory").is_none()) {
+                        source.insert(key.into(), value.into());
+                    }
+                }
+            }
+            config
+                .marketplaces
+                .push(crate::config::NormalizedMarketplace {
+                    name,
+                    source: serde_json::Value::Object(source),
+                });
         }
         None => {}
     }
@@ -660,6 +744,19 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
     for plugin in &config.plugins {
         export_plugin(&mut out, plugin);
     }
+    for plugin in &config.plugin_refs {
+        out.push_str(&format!("\n## Plugin: {}\n", plugin.plugin));
+        out.push_str(&format!(
+            "<!-- marketplace: {} -->\n",
+            encode_text(&plugin.marketplace)
+        ));
+        if !plugin.enabled {
+            out.push_str("<!-- disabled: true -->\n");
+        }
+    }
+    for marketplace in &config.marketplaces {
+        export_marketplace(&mut out, marketplace);
+    }
 
     out
 }
@@ -673,6 +770,50 @@ fn push_plugin_comment(out: &mut String, plugin: Option<&str>) {
 
 /// A `## Plugin:` section (manifest metadata, then the plugin's
 /// instructions), followed by its components, each naming the plugin.
+/// A `## Marketplace:` section: a GitHub, Git or directory source in its own
+/// comments when that is all it holds, else the whole source in JSON.
+fn export_marketplace(out: &mut String, marketplace: &crate::config::NormalizedMarketplace) {
+    out.push_str(&format!("\n## Marketplace: {}\n", marketplace.name));
+    let source = marketplace.source.as_object();
+    let field = |k: &str| {
+        source
+            .and_then(|s| s.get(k))
+            .and_then(serde_json::Value::as_str)
+    };
+    let keys: Vec<&str> = source
+        .map(|s| s.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    let fits = |allowed: &[&str]| keys.iter().all(|k| allowed.contains(k));
+    let simple = match field("source") {
+        Some("github") if fits(&["source", "repo", "ref", "path"]) => {
+            field("repo").map(|repo| ("github", repo))
+        }
+        Some("git") if fits(&["source", "url", "ref", "path"]) => {
+            field("url").map(|url| ("git", url))
+        }
+        Some("directory") if fits(&["source", "path"]) => {
+            field("path").map(|path| ("directory", path))
+        }
+        _ => None,
+    };
+    match simple {
+        Some((kind, value)) => {
+            out.push_str(&format!("<!-- {kind}: {} -->\n", encode_text(value)));
+            if kind != "directory" {
+                for key in ["ref", "path"] {
+                    if let Some(value) = field(key) {
+                        out.push_str(&format!("<!-- {key}: {} -->\n", encode_text(value)));
+                    }
+                }
+            }
+        }
+        None => out.push_str(&format!(
+            "<!-- source: {} -->\n",
+            encode_text(&serde_json::to_string(&marketplace.source).unwrap_or_default())
+        )),
+    }
+}
+
 fn export_plugin(out: &mut String, plugin: &NormalizedPlugin) {
     out.push_str(&format!("\n## Plugin: {}\n", plugin.name));
     let text = [
@@ -933,6 +1074,40 @@ mod tests {
     fn test_duplicate_plugin_sections_are_kept_apart() {
         let config = parse_agents_md("## Plugin: kit\nA.\n\n## Plugin: Kit\nB.\n").unwrap();
         assert_eq!(config.plugins.len(), 2);
+    }
+
+    /// A plugin with a marketplace is one the project enables, and a
+    /// `## Marketplace:` section declares where it comes from; both read back
+    /// from an export.
+    #[test]
+    fn test_marketplace_plugins_round_trip() {
+        let text = "# Title\nTop.\n\n\
+                    ## Plugin: formatter\n<!-- marketplace: team -->\n\n\
+                    ## Plugin: legacy\n<!-- marketplace: team -->\n<!-- disabled: true -->\n\n\
+                    ## Marketplace: team\n<!-- github: acme/tools -->\n<!-- ref: v2 -->\n\n\
+                    ## Marketplace: local\n<!-- directory: ./plugins -->\n\n\
+                    ## Marketplace: odd\n<!-- source: {\"source\":\"npm\",\"package\":\"@acme/m\"} -->\n";
+        let config = parse_agents_md(text).unwrap();
+        assert!(config.plugins.is_empty());
+        assert_eq!(config.plugin_refs.len(), 2);
+        assert_eq!(config.plugin_refs[0].id(), "formatter@team");
+        assert!(config.plugin_refs[0].enabled);
+        assert!(!config.plugin_refs[1].enabled);
+        assert_eq!(
+            config.marketplaces[0].source,
+            serde_json::json!({"source": "github", "repo": "acme/tools", "ref": "v2"})
+        );
+        assert_eq!(
+            config.marketplaces[1].source,
+            serde_json::json!({"source": "directory", "path": "./plugins"})
+        );
+        assert_eq!(config.marketplaces[2].source["package"], "@acme/m");
+
+        let exported = export_as_agents_md(&config);
+        let back = parse_agents_md(&exported).unwrap();
+        assert_eq!(back.plugin_refs, config.plugin_refs);
+        assert_eq!(back.marketplaces, config.marketplaces);
+        assert_eq!(export_as_agents_md(&back), exported);
     }
 
     #[test]

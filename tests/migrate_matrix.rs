@@ -76,6 +76,8 @@ fn full_config() -> NormalizedConfig {
             },
         ],
         plugins: Vec::new(),
+        plugin_refs: Vec::new(),
+        marketplaces: Vec::new(),
     }
 }
 

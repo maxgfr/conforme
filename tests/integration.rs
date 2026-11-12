@@ -6435,3 +6435,85 @@ fn test_codex_disabled_plugin_is_switched_off() {
             .contains("\"name\": \"conforme\"")
     );
 }
+
+/// The marketplace plugins Claude Code's project settings enable reach
+/// Copilot's repository settings and Codex's `[plugins]`; a tool with no such
+/// setting is warned about; a bundle's `@skills-dir` switch is not one of
+/// them; a plugin dropped from the source is dropped everywhere.
+#[test]
+fn test_marketplace_plugins_reach_copilot_and_codex() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "# Project\nUse TypeScript.\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    let settings = r#"{
+  "permissions": {"allow": ["Bash(npm test)"]},
+  "enabledPlugins": {"formatter@team": true, "legacy@team": false, "kit@skills-dir": false},
+  "extraKnownMarketplaces": {"team": {"source": {"source": "github", "repo": "acme/tools"}}}
+}
+"#;
+    fs::write(root.join(".claude/settings.json"), settings).unwrap();
+    fs::create_dir_all(root.join(".github")).unwrap();
+    fs::write(root.join(".github/copilot-instructions.md"), "").unwrap();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::write(root.join(".codex/config.toml"), "model = \"gpt-5\"\n").unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "codex plugin marketplace add acme/tools",
+        ))
+        .stderr(predicate::str::contains(
+            "Cursor has no project setting that enables a marketplace plugin",
+        ));
+
+    let copilot: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join(".github/copilot/settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(copilot["enabledPlugins"]["formatter@team"], true);
+    assert_eq!(copilot["enabledPlugins"]["legacy@team"], false);
+    assert!(copilot["enabledPlugins"].get("kit@skills-dir").is_none());
+    assert_eq!(
+        copilot["extraKnownMarketplaces"]["team"]["source"]["repo"],
+        "acme/tools"
+    );
+    let codex = fs::read_to_string(root.join(".codex/config.toml")).unwrap();
+    assert!(codex.contains("model = \"gpt-5\""), "{codex}");
+    assert!(
+        codex.contains("[plugins.\"formatter@team\"]\nenabled = true"),
+        "{codex}"
+    );
+    assert!(
+        codex.contains("[plugins.\"legacy@team\"]\nenabled = false"),
+        "{codex}"
+    );
+    // The source's own file is never rewritten.
+    assert_eq!(
+        fs::read_to_string(root.join(".claude/settings.json")).unwrap(),
+        settings
+    );
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+
+    fs::write(
+        root.join(".claude/settings.json"),
+        r#"{"enabledPlugins": {"formatter@team": true}}"#,
+    )
+    .unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    let copilot = fs::read_to_string(root.join(".github/copilot/settings.json")).unwrap();
+    assert!(!copilot.contains("legacy@team"), "{copilot}");
+    let codex = fs::read_to_string(root.join(".codex/config.toml")).unwrap();
+    assert!(!codex.contains("legacy@team"), "{codex}");
+    assert!(codex.contains("formatter@team"), "{codex}");
+}

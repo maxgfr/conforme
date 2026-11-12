@@ -267,6 +267,12 @@ pub fn print_help_ai() {
          always-on rule named after it, the rest under their names (`<plugin>-<name>` on a \
          clash). Items using ${{PLUGIN_ROOT}} and disabled plugins are left out, with a warning."
     );
+    println!(
+        "  Marketplace plugins (`## Plugin:` with `<!-- marketplace: m -->`, `## Marketplace: m` \
+         with github/git/directory): Claude Code and Copilot `enabledPlugins` + \
+         `extraKnownMarketplaces` (.claude/settings.json, .github/copilot/settings.json), Codex \
+         `[plugins.\"<id>\"]` in .codex/config.toml; other tools are warned about."
+    );
     println!();
     println!(
         "For more info: {}",

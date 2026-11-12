@@ -91,6 +91,39 @@ documented ([config directory](https://docs.github.com/en/copilot/reference/copi
 so conforme does not write one: Copilot gets a plugin's content as its own
 skills, agents and MCP servers, which it loads today.
 
+## Plugins enabled from a marketplace
+
+A project can also enable a plugin it does not hold, from a marketplace
+(`NormalizedPluginRef`, id `<plugin>@<marketplace>`), and declare that
+marketplace (`NormalizedMarketplace`, its source in Claude Code's shape). In
+AGENTS.md:
+
+```markdown
+## Plugin: formatter
+<!-- marketplace: team -->
+
+## Marketplace: team
+<!-- github: acme/tools -->
+<!-- ref: v2 -->
+```
+
+A marketplace is `github: owner/repo`, `git: <url>` or `directory: <path>`
+(`ref` and `path` for a sub-folder of a repository), or `source:` the whole
+source object in JSON. `<!-- disabled: true -->` lists the plugin switched off.
+
+| Tool | Where | Notes |
+|---|---|---|
+| Claude Code | `.claude/settings.json` `enabledPlugins` + `extraKnownMarketplaces` ([settings](https://code.claude.com/docs/en/settings-reference.md), [marketplaces](https://code.claude.com/docs/en/plugins/marketplace-reference.md)) | the `<plugin>@skills-dir` switches of its bundles stay apart: they are bundles', not marketplace plugins |
+| GitHub Copilot | `.github/copilot/settings.json`, same keys ("auto-installs and activates in the declaring repository", [config directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)) | Copilot CLI also reads Claude Code's file; writing its own is harmless, the same plugin is enabled once |
+| Codex | `[plugins."<plugin>@<marketplace>"] enabled` in `.codex/config.toml` | Codex clones no marketplace a project names (only OpenAI's own, `startup_sync.rs`; a configured Git marketplace lives in `$CODEX_HOME/marketplaces/<name>`, `installed_marketplaces.rs`): `sync` warns with the `codex plugin marketplace add` each user runs. The tables of its repository marketplace (conforme's bundles) are left to that |
+| every other tool | none | `sync` names the plugins it does not enable there (Devin's `requiredPlugins` names plugin repositories, not a marketplace's plugins) |
+
+The files are merged: every other key stays, a marketplace entry keeps its own
+keys besides `source` (`autoUpdate`). The source decides the list: a plugin it
+no longer enables is dropped from the targets. A source with no marketplace
+plugin leaves the files untouched, and one with plugins but no marketplace
+(Codex) leaves `extraKnownMarketplaces` alone.
+
 ## Tools without bundles
 
 Every other tool gets a plugin's content as its own configuration

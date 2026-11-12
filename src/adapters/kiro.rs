@@ -125,6 +125,8 @@ impl AiToolAdapter for KiroAdapter {
             agents,
             mcp_servers,
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         })
     }
 
@@ -324,6 +326,8 @@ mod tests {
             mcp_servers: vec![],
             agents: vec![],
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         }
     }
 
@@ -337,6 +341,8 @@ mod tests {
             mcp_servers: vec![],
             agents: vec![],
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -428,6 +434,8 @@ mod tests {
             mcp_servers: vec![],
             agents: vec![],
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -460,6 +468,8 @@ mod tests {
                 ..Default::default()
             }],
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -495,6 +505,8 @@ mod tests {
             }],
             agents: vec![],
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -520,6 +532,8 @@ mod tests {
             mcp_servers: vec![],
             agents: vec![],
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();

@@ -17,6 +17,13 @@ src/
                        metadata and instructions, a `<!-- plugin: x -->` comment places a Rule/Skill/Agent/MCP
                        section in that plugin (declared or not, before or after it), a second `## Plugin:` of
                        the same name stays apart so flattening reports it
+  marketplaces.rs   — Plugins enabled from a marketplace (NormalizedPluginRef, `<plugin>@<marketplace>`) and declared
+                       marketplaces (NormalizedMarketplace, Claude Code's source shape): read_settings / settings_file
+                       for Claude Code and Copilot settings (`enabledPlugins`, `extraKnownMarketplaces`; `@skills-dir`
+                       switches stay apart; merged in place; no ref: untouched), read_codex_refs /
+                       merge_codex_refs_toml for Codex `[plugins]` (its repository marketplace's tables left alone),
+                       codex_add_argument for the `codex plugin marketplace add` warning; holds_plugin_refs on the
+                       trait marks the three tools, sync warns for the others
   plugins.rs        — Plugin bundles: flatten moves a plugin's content into the top-level config for a tool
                        that cannot hold a bundle (instructions → always-on rule, `<plugin>-<name>` on a name
                        clash, items using ${PLUGIN_ROOT}-style variables and disabled plugins left out, each

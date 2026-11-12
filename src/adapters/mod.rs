@@ -100,6 +100,12 @@ pub trait AiToolAdapter: Send + Sync {
         None
     }
 
+    /// Whether the project can enable plugins from a marketplace for this
+    /// tool ([`crate::marketplaces`]): Claude Code, Copilot and Codex.
+    fn holds_plugin_refs(&self) -> bool {
+        false
+    }
+
     /// What the tool will not load as written, for `sync` and `migrate` to
     /// print: a setting it cannot express, or a file in the project it refuses.
     /// Computed from the config as the tool gets it ([`Self::tool_warnings`]

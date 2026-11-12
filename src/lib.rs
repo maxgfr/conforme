@@ -8,6 +8,7 @@ pub mod help_ai;
 pub mod hook;
 pub mod json_settings;
 pub mod markdown;
+pub mod marketplaces;
 pub mod mcp;
 pub mod plugins;
 pub mod project_config;
