@@ -435,6 +435,10 @@ struct TargetGuard {
     /// through a link, an orphan to clean), and only in a project holding a
     /// link.
     others: Option<OtherTargets>,
+    /// The files other selected targets generate in a directory this target
+    /// manages too (`.agents/skills/` of Codex, Zed and Antigravity): never
+    /// this target's orphans (see [`shared_files`]).
+    shared: Vec<std::path::PathBuf>,
 }
 
 /// Whether the project holds a symbolic link at its root or in any tool's
@@ -556,6 +560,7 @@ impl TargetGuard {
                 canonical_root: None,
                 any_link: false,
                 others: None,
+                shared: Vec::new(),
             };
         }
         let linked_sources = walk.linked(source_locations(project_root, source_id).iter());
@@ -588,6 +593,7 @@ impl TargetGuard {
                 own: expected.iter().map(|(path, _)| path.clone()).collect(),
                 files: std::cell::OnceCell::new(),
             }),
+            shared: Vec::new(),
         }
     }
 
@@ -620,6 +626,7 @@ impl TargetGuard {
     /// (`.kiro/steering/security.md -> ../../.claude/rules/security.md`).
     fn may_delete(&self, path: &Path) -> bool {
         !self.keeps(path)
+            && !self.shared.iter().any(|shared| shared == path)
             && !self.others.as_ref().is_some_and(|others| {
                 is_beneath(path, &others.files(&self.project_root).through_links)
             })
@@ -629,6 +636,48 @@ impl TargetGuard {
                     .as_ref()
                     .is_some_and(|root| !adapters::resolved_path(path).starts_with(root)))
     }
+}
+
+/// The files the other selected targets generate in a directory `target`
+/// manages too. Tools sharing a directory may write different things there:
+/// with a plugin in the source, Zed gets its skills in `.agents/skills/`
+/// while Codex and Antigravity hold them in their bundles. Each one's orphan
+/// cleanup would delete the other's, and every sync write them again; so a
+/// file another target writes in the shared directory is never an orphan.
+/// Only the targets that share a directory with `target` are generated.
+fn shared_files(
+    project_root: &Path,
+    source_id: &str,
+    target: &dyn AiToolAdapter,
+    config: &NormalizedConfig,
+) -> Vec<std::path::PathBuf> {
+    let dirs: Vec<std::path::PathBuf> = target_managed_dirs(project_root, source_id, target)
+        .into_iter()
+        .map(|dir| dir.path)
+        .collect();
+    if dirs.is_empty() {
+        return Vec::new();
+    }
+    let adapters = adapters::all_adapters();
+    let project_cfg = ProjectConfig::load(project_root).unwrap_or_default();
+    let mut shared = Vec::new();
+    for other in selected_targets(&adapters, project_root, source_id, None, &project_cfg) {
+        if other.id() == target.id()
+            || !other
+                .managed_directories(project_root)
+                .iter()
+                .any(|dir| dirs.contains(&dir.path))
+        {
+            continue;
+        }
+        let config = target_config(project_root, source_id, other, config);
+        for (path, _) in other.generate(project_root, &config).unwrap_or_default() {
+            if dirs.iter().any(|dir| path.starts_with(dir)) {
+                shared.push(path);
+            }
+        }
+    }
+    shared
 }
 
 fn target_output(
@@ -645,7 +694,7 @@ fn target_output(
     // through a link into what the source reads, `.cursor/mcp.json ->
     // ../.mcp.json`, or read by the source through a link of its own) or
     // another tool's is not written (see [`TargetGuard`]).
-    let guard = TargetGuard::new(
+    let mut guard = TargetGuard::new(
         project_root,
         source_id,
         source_config,
@@ -653,6 +702,7 @@ fn target_output(
         source_files,
         &expected,
     );
+    guard.shared = shared_files(project_root, source_id, target, source_config);
     let files = expected
         .iter()
         .filter(|(path, _)| !guard.keeps(path))
