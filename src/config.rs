@@ -143,6 +143,37 @@ impl NormalizedPlugin {
     }
 }
 
+/// A plugin the project enables from a marketplace, by id
+/// `<plugin>@<marketplace>` (Claude Code and Copilot `enabledPlugins`, Codex
+/// `[plugins."<id>"]`). Unlike a [`NormalizedPlugin`], its content is not in
+/// the project: each tool installs it from the marketplace.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NormalizedPluginRef {
+    pub plugin: String,
+    pub marketplace: String,
+    /// `false`: listed but switched off.
+    pub enabled: bool,
+}
+
+impl NormalizedPluginRef {
+    /// The id tools key it by: `<plugin>@<marketplace>`.
+    pub fn id(&self) -> String {
+        format!("{}@{}", self.plugin, self.marketplace)
+    }
+}
+
+/// A marketplace the project declares, so its plugins can be enabled
+/// (Claude Code and Copilot `extraKnownMarketplaces`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NormalizedMarketplace {
+    pub name: String,
+    /// The source object in Claude Code's shape, the one Copilot reads too:
+    /// `{"source": "github", "repo": "owner/repo", "ref"?, "path"?}`,
+    /// `{"source": "git", "url": …}`, `{"source": "directory", "path": …}`, …
+    /// (https://code.claude.com/docs/en/plugins/marketplace-reference.md).
+    pub source: serde_json::Value,
+}
+
 /// Full normalized configuration: instructions + rules + skills + MCP + agents
 /// + plugins.
 #[derive(Debug, Clone)]
@@ -159,6 +190,10 @@ pub struct NormalizedConfig {
     pub agents: Vec<NormalizedAgent>,
     /// Plugin bundles
     pub plugins: Vec<NormalizedPlugin>,
+    /// Plugins enabled from a marketplace
+    pub plugin_refs: Vec<NormalizedPluginRef>,
+    /// Marketplaces the project declares
+    pub marketplaces: Vec<NormalizedMarketplace>,
 }
 
 impl NormalizedConfig {
@@ -170,6 +205,8 @@ impl NormalizedConfig {
             mcp_servers: Vec::new(),
             agents: Vec::new(),
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         }
     }
 
@@ -181,6 +218,8 @@ impl NormalizedConfig {
             && self.mcp_servers.is_empty()
             && self.agents.is_empty()
             && self.plugins.iter().all(NormalizedPlugin::is_empty)
+            && self.plugin_refs.is_empty()
+            && self.marketplaces.is_empty()
     }
 }
 

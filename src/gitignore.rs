@@ -487,6 +487,8 @@ mod tests {
                 }],
                 ..Default::default()
             }],
+            plugin_refs: Vec::new(),
+            marketplaces: Vec::new(),
         }
     }
 

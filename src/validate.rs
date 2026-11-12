@@ -132,6 +132,21 @@ fn plugin_duplicates(config: &NormalizedConfig) -> Vec<String> {
             plugin.mcp_servers.iter().map(|m| m.name.clone()).collect(),
         );
     }
+    let mut ids = HashSet::new();
+    for plugin in &config.plugin_refs {
+        if !ids.insert(plugin.id()) {
+            errors.push(format!("Plugin '{}' is enabled twice", plugin.id()));
+        }
+    }
+    let mut markets = HashSet::new();
+    for marketplace in &config.marketplaces {
+        if !markets.insert(&marketplace.name) {
+            errors.push(format!(
+                "Marketplace '{}' is declared twice",
+                marketplace.name
+            ));
+        }
+    }
     errors
 }
 

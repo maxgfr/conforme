@@ -87,8 +87,11 @@ shared) hold plugins as
 bundles (`AiToolAdapter::plugin_shape`, a `plugins::PluginShape`; bundle dirs
 are `ManagedKind::Bundles`, owned through the `.conforme-plugin` marker); the
 trait's `generate` / `warnings` flatten what a tool cannot hold
-(`plugins::flatten_for`) before its `generate_flat` / `tool_warnings`; see
-`docs/plugins.md`.
+(`plugins::flatten_for`) before its `generate_flat` / `tool_warnings`. A
+`## Plugin:` with `<!-- marketplace: m -->` is a plugin enabled from a
+marketplace (`## Marketplace: m` declares it), synced between Claude Code and
+Copilot `enabledPlugins` / `extraKnownMarketplaces` and Codex `[plugins]`
+(`src/marketplaces.rs`); see `docs/plugins.md`.
 
 ### Adapter categories
 

@@ -235,6 +235,8 @@ impl AiToolAdapter for OpenCodeAdapter {
                 agents,
                 mcp_servers,
                 plugins: Vec::new(),
+                plugin_refs: Vec::new(),
+                marketplaces: Vec::new(),
             },
         )
     }

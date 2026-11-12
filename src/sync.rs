@@ -1774,6 +1774,17 @@ fn warn_capability_loss(
         );
     }
 
+    if !adapter.holds_plugin_refs() && !config.plugin_refs.is_empty() {
+        let ids: Vec<String> = config.plugin_refs.iter().map(|r| r.id()).collect();
+        eprintln!(
+            "  {} {} has no project setting that enables a marketplace plugin — not enabled \
+             there: {}",
+            "!".yellow(),
+            adapter.name(),
+            ids.join(", ")
+        );
+    }
+
     for warning in warnings {
         eprintln!("  {} {}: {}", "!".yellow(), adapter.name(), warning);
     }
