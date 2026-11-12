@@ -202,6 +202,8 @@ pub(crate) fn stale_bundled_files(
 /// Every file of a skill folder conforme generated but whose skill is no
 /// longer expected: the folder holds conforme's marker, and its `SKILL.md`
 /// is not in `expected`. A folder without the marker is someone's own skill.
+/// A file the current output still expects is never one of them: the folder
+/// may hold something else conforme writes (a plugin bundle beside a skill).
 pub(crate) fn stale_skill_folder_files(
     skill_dir: &Path,
     expected: &std::collections::HashSet<PathBuf>,
@@ -221,7 +223,7 @@ pub(crate) fn stale_skill_folder_files(
                 if crate::adapters::is_real_dir(&path) && !path.join("SKILL.md").exists() {
                     stack.push(path);
                 }
-            } else {
+            } else if !expected.contains(&path) {
                 files.push(path);
             }
         }
@@ -619,6 +621,16 @@ pub fn generate_skills(
         .dir
         .split('/')
         .fold(project_root.to_path_buf(), |dir, part| dir.join(part));
+    generate_skills_in(&skills_dir, skills, shape)
+}
+
+/// [`generate_skills`] into `skills_dir` rather than the shape's own
+/// directory: the `skills/` folder of a plugin bundle.
+pub fn generate_skills_in(
+    skills_dir: &Path,
+    skills: &[NormalizedSkill],
+    shape: &SkillShape,
+) -> Result<Vec<(PathBuf, String)>> {
     let mut files = Vec::new();
 
     for skill in skills {
@@ -704,7 +716,15 @@ pub fn generate_vibe_agents(
     project_root: &Path,
     agents: &[NormalizedAgent],
 ) -> Result<Vec<(PathBuf, String)>> {
-    let agents_dir = project_root.join(".vibe").join("agents");
+    generate_vibe_agents_in(&project_root.join(".vibe").join("agents"), agents)
+}
+
+/// [`generate_vibe_agents`] into `agents_dir` (a plugin bundle's
+/// `ai.mistral.vibe/agents/`).
+pub fn generate_vibe_agents_in(
+    agents_dir: &Path,
+    agents: &[NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
     let mut files = Vec::new();
     for agent in agents {
         let mut document = toml_edit::DocumentMut::new();
@@ -936,7 +956,15 @@ pub fn generate_claude_agents(
     project_root: &Path,
     agents: &[crate::config::NormalizedAgent],
 ) -> Result<Vec<(PathBuf, String)>> {
-    let agents_dir = project_root.join(".claude").join("agents");
+    generate_claude_agents_in(&project_root.join(".claude").join("agents"), agents)
+}
+
+/// [`generate_claude_agents`] into `agents_dir` (a plugin bundle's
+/// `agents/`).
+pub fn generate_claude_agents_in(
+    agents_dir: &Path,
+    agents: &[crate::config::NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
     let mut files = Vec::new();
 
     for agent in agents {
@@ -1907,5 +1935,30 @@ mod tests {
             uncarried_skill_files(&skill).unwrap(),
             vec![skill.join("logo.png")]
         );
+    }
+
+    /// A marked folder whose skill left the source is swept, but never a
+    /// file the current output still writes there.
+    #[test]
+    fn test_stale_skill_folder_keeps_expected_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("demo");
+        std::fs::create_dir_all(folder.join(".claude-plugin")).unwrap();
+        std::fs::write(folder.join(SKILL_MARKER), SKILL_MARKER_CONTENT).unwrap();
+        std::fs::write(folder.join("SKILL.md"), "---\nname: demo\n---\nOld.\n").unwrap();
+        let manifest = folder.join(".claude-plugin/plugin.json");
+        std::fs::write(&manifest, "{\"name\":\"demo\"}\n").unwrap();
+
+        let none = std::collections::HashSet::new();
+        assert_eq!(
+            stale_skill_folder_files(&folder, &none).unwrap().len(),
+            3,
+            "every file of a skill that left the source is stale"
+        );
+
+        let expected: std::collections::HashSet<PathBuf> = [manifest.clone()].into();
+        let stale = stale_skill_folder_files(&folder, &expected).unwrap();
+        assert!(!stale.contains(&manifest), "{stale:?}");
+        assert!(stale.contains(&folder.join("SKILL.md")));
     }
 }

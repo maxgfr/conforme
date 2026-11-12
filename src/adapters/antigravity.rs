@@ -60,8 +60,56 @@ fn agent_file_fields(path: &Path) -> Option<BTreeMap<String, serde_norway::Value
 /// The `tools` value an existing `.agents/agents/<name>.md` holds. conforme
 /// cannot translate tool names into Antigravity's (they are undocumented), so
 /// the user's own restriction there is kept as written.
-fn existing_agent_tools(project_root: &Path, name: &str) -> Option<serde_norway::Value> {
-    agent_file_fields(&agents_dir(project_root).join(format!("{name}.md")))?.remove("tools")
+fn existing_agent_tools(agents_dir: &Path, name: &str) -> Option<serde_norway::Value> {
+    agent_file_fields(&agents_dir.join(format!("{name}.md")))?.remove("tools")
+}
+
+/// Antigravity rule files in `dir` (`.agents/rules/`, or a plugin bundle's
+/// `rules/`): Devin's `trigger` vocabulary.
+pub(crate) fn generate_rules_in(
+    dir: &Path,
+    rules: &[NormalizedRule],
+) -> Result<Vec<(PathBuf, String)>> {
+    let mut files = Vec::new();
+    for rule in rules {
+        let filename = format!("{}.md", rule_file_name(&rule.name));
+        let fields = build_devin_fields(rule);
+        let content = frontmatter::serialize(&fields, &format!("{}\n", rule.content))?;
+        files.push((dir.join(filename), content));
+    }
+    Ok(files)
+}
+
+/// Antigravity subagent files in `agents_dir` (`.agents/agents/`, or a plugin
+/// bundle's `agents/`); built-in names are never written.
+pub(crate) fn generate_agents_in(
+    agents_dir: &Path,
+    agents: &[crate::config::NormalizedAgent],
+) -> Result<Vec<(PathBuf, String)>> {
+    let mut files = Vec::new();
+    for agent in agents.iter().filter(|a| !is_builtin_agent(&a.name)) {
+        let name = sanitize_name(&agent.name);
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "name".to_string(),
+            serde_norway::Value::String(name.clone()),
+        );
+        fields.insert(
+            "description".to_string(),
+            serde_norway::Value::String(description_or_name(&agent.description, &agent.name)),
+        );
+        if let Some(model) = agent.model.as_deref().and_then(antigravity_model) {
+            fields.insert("model".to_string(), serde_norway::Value::String(model));
+        }
+        // Tool names are not translated (Antigravity's are undocumented);
+        // a `tools` the user wrote in the target file is kept as written.
+        if let Some(tools) = existing_agent_tools(agents_dir, &name) {
+            fields.insert("tools".to_string(), tools);
+        }
+        let content = frontmatter::serialize(&fields, &format!("{}\n", agent.content))?;
+        files.push((agents_dir.join(format!("{name}.md")), content));
+    }
+    Ok(files)
 }
 
 impl AiToolAdapter for AntigravityAdapter {
@@ -137,7 +185,7 @@ impl AiToolAdapter for AntigravityAdapter {
             .filter(|a| !is_builtin_agent(&a.name) && !a.tools.is_empty())
         {
             let name = sanitize_name(&agent.name);
-            if existing_agent_tools(project_root, &name).is_none() {
+            if existing_agent_tools(&agents_dir(project_root), &name).is_none() {
                 warnings.push(format!(
                     "agent {name}: Antigravity's tool names are undocumented, so its tools are not \
                      written and it can use every tool; restrict it with `tools:` in \
@@ -239,14 +287,7 @@ impl AiToolAdapter for AntigravityAdapter {
         project_root: &Path,
         config: &NormalizedConfig,
     ) -> Result<Vec<(PathBuf, String)>> {
-        let dir = rules_dir(project_root);
-        let mut files = Vec::new();
-        for rule in &config.rules {
-            let filename = format!("{}.md", rule_file_name(&rule.name));
-            let fields = build_devin_fields(rule);
-            let content = frontmatter::serialize(&fields, &format!("{}\n", rule.content))?;
-            files.push((dir.join(filename), content));
-        }
+        let mut files = generate_rules_in(&rules_dir(project_root), &config.rules)?;
 
         // Skills live in `.agents/skills/`, shared with Codex and Zed.
         if !config.skills.is_empty() {
@@ -257,29 +298,10 @@ impl AiToolAdapter for AntigravityAdapter {
             )?);
         }
 
-        let agents_dir = agents_dir(project_root);
-        for agent in config.agents.iter().filter(|a| !is_builtin_agent(&a.name)) {
-            let name = sanitize_name(&agent.name);
-            let mut fields = BTreeMap::new();
-            fields.insert(
-                "name".to_string(),
-                serde_norway::Value::String(name.clone()),
-            );
-            fields.insert(
-                "description".to_string(),
-                serde_norway::Value::String(description_or_name(&agent.description, &agent.name)),
-            );
-            if let Some(model) = agent.model.as_deref().and_then(antigravity_model) {
-                fields.insert("model".to_string(), serde_norway::Value::String(model));
-            }
-            // Tool names are not translated (Antigravity's are undocumented);
-            // a `tools` the user wrote in the target file is kept as written.
-            if let Some(tools) = existing_agent_tools(project_root, &name) {
-                fields.insert("tools".to_string(), tools);
-            }
-            let content = frontmatter::serialize(&fields, &format!("{}\n", agent.content))?;
-            files.push((agents_dir.join(format!("{name}.md")), content));
-        }
+        files.extend(generate_agents_in(
+            &agents_dir(project_root),
+            &config.agents,
+        )?);
 
         files.extend(crate::json_settings::server_settings_file(
             &mcp_path(project_root),

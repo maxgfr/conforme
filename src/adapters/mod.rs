@@ -59,7 +59,7 @@ pub trait AiToolAdapter: Send + Sync {
 
     /// Directories managed by this adapter (for orphan cleanup, `watch`, and
     /// `migrate`). During `sync`, top-level files in these directories that
-    /// carry the directory's `orphan_suffix` and are not in the generate()
+    /// carry the directory's suffix ([`ManagedKind::Files`]) and are not in the generate()
     /// output are removed.
     fn managed_directories(&self, _project_root: &Path) -> Vec<ManagedDir> {
         Vec::new()
@@ -125,17 +125,26 @@ pub fn first_existing_file(project_root: &Path, candidates: &[&str]) -> Vec<Path
         .collect()
 }
 
+/// What conforme writes in a managed directory, which decides what orphan
+/// cleanup, `target_config` and `migrate` may touch there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedKind {
+    /// Files ending in this suffix, written directly in the directory (`.md`,
+    /// `.mdc`, `.agent.md`, …). Orphan cleanup only deletes top-level files
+    /// with this suffix, so files the tool also accepts but conforme never
+    /// writes (Kiro `.json` agents, dsh flat `<name>.md` skills, hand-written
+    /// Copilot `.md` agents) survive.
+    Files(&'static str),
+    /// Skill folders (`<name>/SKILL.md`) only: no top-level file there is
+    /// ever one of conforme's orphans.
+    Skills,
+}
+
 /// A directory an adapter writes into.
 pub struct ManagedDir {
     pub path: PathBuf,
-    /// File-name suffix of the files conforme writes directly in `path`
-    /// (`.md`, `.mdc`, `.agent.md`, …). Orphan cleanup only deletes top-level
-    /// files with this suffix, so files the tool also accepts but conforme
-    /// never writes (Kiro `.json` agents, dsh flat `<name>.md` skills,
-    /// hand-written Copilot `.md` agents) survive. `None` means conforme only
-    /// writes sub-directories there (skills), so no top-level file is ever
-    /// one of its orphans.
-    pub orphan_suffix: Option<&'static str>,
+    /// What conforme writes there (see [`ManagedKind`]).
+    pub kind: ManagedKind,
     /// For a legacy directory the tool still reads next to the current one
     /// (Devin's `.windsurf/rules/` and `.windsurf/skills/`): the directory
     /// conforme now writes to. Only a legacy copy of something generated
@@ -159,7 +168,7 @@ impl ManagedDir {
     pub fn files(path: PathBuf, suffix: &'static str) -> Self {
         Self {
             path,
-            orphan_suffix: Some(suffix),
+            kind: ManagedKind::Files(suffix),
             superseded_by: None,
             keep: None,
             recursive: false,
@@ -179,7 +188,7 @@ impl ManagedDir {
     pub fn subdirs(path: PathBuf) -> Self {
         Self {
             path,
-            orphan_suffix: None,
+            kind: ManagedKind::Skills,
             superseded_by: None,
             keep: None,
             recursive: false,
@@ -239,15 +248,18 @@ pub fn find_orphans(
             .map(|e| e.path())
             .collect();
         paths.sort();
-        let Some(suffix) = dir.orphan_suffix else {
-            for folder in paths.iter().filter(|p| is_real_dir(p)) {
-                orphans.extend(crate::skills::stale_bundled_files(folder, &expected_set)?);
-                orphans.extend(crate::skills::stale_skill_folder_files(
-                    folder,
-                    &expected_set,
-                )?);
+        let suffix = match dir.kind {
+            ManagedKind::Files(suffix) => suffix,
+            ManagedKind::Skills => {
+                for folder in paths.iter().filter(|p| is_real_dir(p)) {
+                    orphans.extend(crate::skills::stale_bundled_files(folder, &expected_set)?);
+                    orphans.extend(crate::skills::stale_skill_folder_files(
+                        folder,
+                        &expected_set,
+                    )?);
+                }
+                continue;
             }
-            continue;
         };
         for path in paths {
             let generated_kind = path
@@ -293,9 +305,11 @@ pub fn clean_orphans_where(
         if dir.path == *current {
             continue;
         }
-        cleaned.extend(match dir.orphan_suffix {
-            Some(suffix) => clean_superseded_files(&dir.path, current, suffix, &expected_set)?,
-            None => clean_superseded_skills(&dir.path, current, &expected_set)?,
+        cleaned.extend(match dir.kind {
+            ManagedKind::Files(suffix) => {
+                clean_superseded_files(&dir.path, current, suffix, &expected_set)?
+            }
+            ManagedKind::Skills => clean_superseded_skills(&dir.path, current, &expected_set)?,
         });
     }
     for path in find_orphans(managed_dirs, expected_files)? {
