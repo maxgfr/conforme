@@ -13,6 +13,268 @@ pub struct CodexAdapter;
 /// Codex reads the shared `AGENTS.md` (never the personal override).
 const INSTRUCTION_FILES: &[&str] = &["AGENTS.md"];
 
+/// The repository marketplace Codex discovers at the repository root
+/// ("`$REPO_ROOT/.agents/plugins/marketplace.json`",
+/// https://developers.openai.com/plugins/build/plugins; `MARKETPLACE_MANIFEST_RELATIVE_PATHS`
+/// in `codex-rs/core-plugins/src/marketplace.rs`).
+const MARKETPLACE: &str = ".agents/plugins/marketplace.json";
+
+/// The name a marketplace conforme creates gets; an existing one keeps its own.
+const DEFAULT_MARKETPLACE: &str = "conforme";
+
+fn marketplace_path(project_root: &Path) -> PathBuf {
+    project_root
+        .join(".agents")
+        .join("plugins")
+        .join("marketplace.json")
+}
+
+fn config_path(project_root: &Path) -> PathBuf {
+    project_root.join(".codex").join("config.toml")
+}
+
+/// The plugin a marketplace entry installs from `.codex/plugins/<name>`
+/// (`{"source": "local", "path": "./.codex/plugins/<name>"}`, or the path as a
+/// plain string), if that is where it points.
+fn bundle_entry_name(entry: &serde_json::Value) -> Option<String> {
+    let path = match entry.get("source")? {
+        serde_json::Value::String(path) => path.as_str(),
+        serde_json::Value::Object(source)
+            if source.get("source").and_then(serde_json::Value::as_str) == Some("local") =>
+        {
+            source.get("path")?.as_str()?
+        }
+        _ => return None,
+    };
+    let name = path.strip_prefix("./")?.strip_prefix(".codex/plugins/")?;
+    let name = name.trim_end_matches('/');
+    (!name.is_empty() && !name.contains('/')).then(|| name.to_string())
+}
+
+/// Whether the bundle `.codex/plugins/<name>` is conforme's to list and
+/// enable: one it wrote (marked), or one that is gone. A bundle written by
+/// hand, and its entries, are the user's.
+fn owns_bundle(project_root: &Path, name: &str) -> bool {
+    !crate::plugins::is_hand_written_bundle(
+        &crate::plugins::CODEX_PLUGINS.root(project_root).join(name),
+    )
+}
+
+/// The repository marketplace's name: its own, else the one conforme gives a
+/// new one.
+fn marketplace_name(project_root: &Path) -> String {
+    crate::config::read_text(&marketplace_path(project_root))
+        .ok()
+        .and_then(|text| crate::json_settings::parse_jsonc(&text).ok())
+        .and_then(|doc| {
+            doc.get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| DEFAULT_MARKETPLACE.to_string())
+}
+
+/// The repository marketplace after a sync.
+struct MergedMarketplace {
+    /// The file to write; `None` when it is left untouched (no plugin, and no
+    /// entry of conforme's to remove).
+    file: Option<(PathBuf, String)>,
+    /// The plugins it lists from conforme's bundles, by folder name.
+    listed: Vec<String>,
+    /// The plugins whose entries were conforme's before this sync: their
+    /// `[plugins]` tables are conforme's too.
+    owned: Vec<String>,
+}
+
+/// The repository marketplace listing conforme's bundles of `plugins` next to
+/// the user's own entries (see [`MergedMarketplace`]). An entry the user
+/// already gave a plugin's name wins over conforme's.
+fn merged_marketplace(
+    project_root: &Path,
+    plugins: &[crate::config::NormalizedPlugin],
+) -> Result<MergedMarketplace> {
+    use serde_json::{json, Value};
+    let path = marketplace_path(project_root);
+    let existing = if path.is_file() {
+        Some(crate::config::read_text(&path)?)
+    } else {
+        None
+    };
+    let mut doc = match &existing {
+        Some(text) => crate::json_settings::parse_jsonc(text).map_err(|e| {
+            anyhow::anyhow!(
+                "{} does not parse, nothing was changed: {e}",
+                path.display()
+            )
+        })?,
+        None => json!({}),
+    };
+    let Some(object) = doc.as_object_mut() else {
+        anyhow::bail!(
+            "{} is not a JSON object, nothing was changed",
+            path.display()
+        );
+    };
+    let entries = object
+        .get("plugins")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let ours =
+        |entry: &Value| bundle_entry_name(entry).is_some_and(|n| owns_bundle(project_root, &n));
+    // By folder name, as Codex reads the bundles back: the same plugins list
+    // the same way whatever the source's order.
+    let mut wanted: Vec<&crate::config::NormalizedPlugin> = plugins
+        .iter()
+        .filter(|p| owns_bundle(project_root, &crate::config::sanitize_name(&p.name)))
+        .collect();
+    wanted.sort_by_key(|p| crate::config::sanitize_name(&p.name));
+    let owned: Vec<String> = entries
+        .iter()
+        .filter(|e| ours(e))
+        .filter_map(bundle_entry_name)
+        .collect();
+    if wanted.is_empty() && owned.is_empty() {
+        return Ok(MergedMarketplace {
+            file: None,
+            listed: Vec::new(),
+            owned,
+        });
+    }
+    let mut kept: Vec<Value> = entries.into_iter().filter(|e| !ours(e)).collect();
+    let mut listed = Vec::new();
+    for plugin in wanted {
+        let name = crate::config::sanitize_name(&plugin.name);
+        let taken = kept
+            .iter()
+            .any(|e| e.get("name").and_then(Value::as_str) == Some(name.as_str()));
+        if taken {
+            continue;
+        }
+        kept.push(json!({
+            "name": name,
+            "source": { "source": "local", "path": format!("./.codex/plugins/{name}") },
+            "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+            "category": "Productivity",
+        }));
+        listed.push(name);
+    }
+    object
+        .entry("name")
+        .or_insert_with(|| Value::String(DEFAULT_MARKETPLACE.to_string()));
+    object
+        .entry("interface")
+        .or_insert_with(|| json!({ "displayName": "Project plugins" }));
+    object.insert("plugins".to_string(), Value::Array(kept));
+    // An unchanged marketplace keeps the user's own layout.
+    let unchanged = existing
+        .as_deref()
+        .and_then(|text| crate::json_settings::parse_jsonc(text).ok())
+        .is_some_and(|old| old == doc);
+    let content = match existing {
+        Some(text) if unchanged => text,
+        _ => format!("{}\n", serde_json::to_string_pretty(&doc)?),
+    };
+    Ok(MergedMarketplace {
+        file: Some((path, content)),
+        listed,
+        owned,
+    })
+}
+
+/// `config_text` with a `[plugins."<name>@<marketplace>"]` table enabling or
+/// disabling each plugin of `listed`, and without the tables of the plugins
+/// conforme listed before (`owned`) that are no longer listed. Other keys of
+/// those tables, and every other table, are kept.
+fn merge_codex_plugins_toml(
+    config_text: &str,
+    marketplace: &str,
+    listed: &[(String, bool)],
+    owned: &[String],
+) -> Result<String> {
+    let mut document: toml_edit::DocumentMut = config_text.parse().map_err(|e| {
+        anyhow::anyhow!("failed to parse .codex/config.toml, nothing was changed: {e}")
+    })?;
+    let suffix = format!("@{marketplace}");
+    let stale: Vec<String> = document
+        .get("plugins")
+        .and_then(|item| item.as_table_like())
+        .map(|table| {
+            table
+                .iter()
+                .map(|(key, _)| key.to_string())
+                .filter(|key| {
+                    key.strip_suffix(&suffix).is_some_and(|name| {
+                        owned.iter().any(|o| o == name) && !listed.iter().any(|(n, _)| n == name)
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if stale.is_empty() && listed.is_empty() {
+        return Ok(config_text.to_string());
+    }
+    if document.get("plugins").is_none() {
+        let mut table = toml_edit::Table::new();
+        table.set_implicit(true);
+        document.insert("plugins", toml_edit::Item::Table(table));
+    }
+    let Some(table) = document
+        .get_mut("plugins")
+        .and_then(|item| item.as_table_like_mut())
+    else {
+        anyhow::bail!(".codex/config.toml: `plugins` is not a table, nothing was changed");
+    };
+    for key in &stale {
+        table.remove(key);
+    }
+    for (name, enabled) in listed {
+        let key = format!("{name}{suffix}");
+        if table.get(&key).is_none() {
+            table.insert(&key, toml_edit::Item::Table(toml_edit::Table::new()));
+        }
+        if let Some(entry) = table.get_mut(&key).and_then(|i| i.as_table_like_mut()) {
+            if entry.get("enabled").and_then(|v| v.as_bool()) != Some(*enabled) {
+                entry.insert("enabled", toml_edit::value(*enabled));
+            }
+        }
+    }
+    let empty = table.is_empty();
+    if empty {
+        document.remove("plugins");
+    }
+    Ok(document.to_string())
+}
+
+/// The project's `[plugins."<name>@<marketplace>"] enabled` values.
+fn plugin_switches(
+    project_root: &Path,
+    marketplace: &str,
+) -> std::collections::BTreeMap<String, bool> {
+    let suffix = format!("@{marketplace}");
+    crate::config::read_text(&config_path(project_root))
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .and_then(|table| {
+            table
+                .get("plugins")
+                .and_then(toml::Value::as_table)
+                .cloned()
+        })
+        .map(|plugins| {
+            plugins
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    let name = key.strip_suffix(&suffix)?.to_string();
+                    let on = value.get("enabled").and_then(toml::Value::as_bool)?;
+                    Some((name, on))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Whether a `.codex/agents/*.toml` file overrides a built-in role. Codex
 /// names a discovered agent by its `name` key, not its file name, so either
 /// one naming a built-in role makes the file the user's override.
@@ -201,30 +463,37 @@ impl AiToolAdapter for CodexAdapter {
                 |path| !is_conforme_written_agent(path) || is_builtin_agent_override(path),
             )
             .recursive(),
+            ManagedDir::bundles(project_root.join(".codex").join("plugins")),
         ]
     }
 
+    /// `.codex/config.toml` holds the user's settings and the repository
+    /// marketplace lists their own plugins too: both are merged.
     fn is_shared_file(&self, path: &Path) -> bool {
-        path.ends_with(Path::new(".codex/config.toml"))
+        path.ends_with(Path::new(".codex/config.toml")) || path.ends_with(Path::new(MARKETPLACE))
     }
 
     fn tool_warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
         // Codex loads project `.codex/` layers (config.toml, so the MCP
-        // servers, and agents/) only in a trusted project; skills are not gated.
+        // servers and plugin switches, and agents/) only in a trusted
+        // project; skills are not gated.
         let gated = !config.mcp_servers.is_empty()
+            || !config.plugins.is_empty()
             || config
                 .agents
                 .iter()
                 .any(|agent| !crate::skills::is_codex_builtin_agent(&agent.name));
         let untrusted = (gated && !codex_trusts(project_root)).then(|| {
             format!(
-                "Codex loads .codex/config.toml (MCP servers) and .codex/agents/ only in a trusted \
-                 project, and {} is not trusted: accept Codex's trust prompt, or add \
+                "Codex loads .codex/config.toml (MCP servers, plugins) and .codex/agents/ only in \
+                 a trusted project, and {} is not trusted: accept Codex's trust prompt, or add \
                  `{}` with `trust_level = \"trusted\"` to ~/.codex/config.toml",
                 project_root.display(),
                 codex_trust_table(project_root)
             )
         });
+        let bundles =
+            crate::plugins::bundle_warnings(project_root, config, &crate::plugins::CODEX_PLUGINS);
         let builtin_agents = config
             .agents
             .iter()
@@ -278,6 +547,7 @@ impl AiToolAdapter for CodexAdapter {
                     }),
             )
             .chain(untrusted)
+            .chain(bundles)
             .collect()
     }
 
@@ -305,7 +575,14 @@ impl AiToolAdapter for CodexAdapter {
                 skills,
                 agents: crate::skills::read_codex_agents(project_root)?,
                 mcp_servers,
-                plugins: Vec::new(),
+                plugins: {
+                    let switches = plugin_switches(project_root, &marketplace_name(project_root));
+                    crate::plugins::read_plugins(
+                        project_root,
+                        &crate::plugins::CODEX_PLUGINS,
+                        &|name| switches.get(&crate::config::sanitize_name(name)).copied(),
+                    )?
+                },
             },
         )
     }
@@ -328,21 +605,64 @@ impl AiToolAdapter for CodexAdapter {
             &config.agents,
         )?);
 
-        // Merge MCP servers into the project-scoped config. The merge preserves
-        // unrelated Codex settings and server-specific options not represented
-        // by conforme's normalized model.
-        if !config.mcp_servers.is_empty() {
-            let path = project_root.join(".codex").join("config.toml");
+        // Plugin bundles in .codex/plugins/<plugin>/, listed in the repository
+        // marketplace and enabled in .codex/config.toml.
+        files.extend(crate::plugins::generate_plugins(
+            project_root,
+            &config.plugins,
+            &crate::plugins::CODEX_PLUGINS,
+        )?);
+        let MergedMarketplace {
+            file: marketplace,
+            listed,
+            owned,
+        } = merged_marketplace(project_root, &config.plugins)?;
+        let switches: Vec<(String, bool)> = listed
+            .iter()
+            .map(|name| {
+                let disabled = config
+                    .plugins
+                    .iter()
+                    .any(|p| crate::config::sanitize_name(&p.name) == *name && p.disabled);
+                (name.clone(), !disabled)
+            })
+            .collect();
+        let plugin_tables = marketplace.is_some();
+        files.extend(marketplace);
+
+        // Merge MCP servers (and the plugin switches) into the project-scoped
+        // config. The merge preserves unrelated Codex settings and
+        // server-specific options not represented by conforme's normalized
+        // model.
+        if !config.mcp_servers.is_empty() || plugin_tables {
+            let path = config_path(project_root);
             let existing = if path.exists() {
                 crate::config::read_text(&path)?
             } else {
                 String::new()
             };
-            let content = crate::mcp::merge_codex_mcp_toml(&existing, &config.mcp_servers)?;
-            files.push((path, content));
+            let mut content = existing.clone();
+            if !config.mcp_servers.is_empty() {
+                content = crate::mcp::merge_codex_mcp_toml(&content, &config.mcp_servers)?;
+            }
+            if plugin_tables {
+                content = merge_codex_plugins_toml(
+                    &content,
+                    &marketplace_name(project_root),
+                    &switches,
+                    &owned,
+                )?;
+            }
+            if path.exists() || !content.trim().is_empty() {
+                files.push((path, content));
+            }
         }
 
         Ok(files)
+    }
+
+    fn plugin_shape(&self) -> Option<&'static crate::plugins::PluginShape> {
+        Some(&crate::plugins::CODEX_PLUGINS)
     }
 }
 

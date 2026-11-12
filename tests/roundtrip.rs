@@ -2286,8 +2286,15 @@ fn test_roundtrip_plugin_bundles() {
             ".agents/rules",
             true,
         ),
+        (
+            Box::new(conforme::adapters::codex::CodexAdapter),
+            ".codex",
+            false,
+        ),
     ];
     for (adapter, marker_dir, holds_rules) in adapters {
+        // A Codex plugin holds no subagents: Codex gets them as its own.
+        let holds_agents = adapter.id() != "codex";
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join(marker_dir)).unwrap();
         let config = plugin_config();
@@ -2321,8 +2328,14 @@ fn test_roundtrip_plugin_bundles() {
             Some("npm run lint\n"),
             "{name}"
         );
-        assert_eq!(kit.agents.len(), 1, "{name}");
-        assert_eq!(kit.agents[0].content, "Review the diff.", "{name}");
+        let agents = if holds_agents {
+            &kit.agents
+        } else {
+            assert!(kit.agents.is_empty(), "{name}");
+            &read.agents
+        };
+        assert_eq!(agents.len(), 1, "{name}");
+        assert_eq!(agents[0].content, "Review the diff.", "{name}");
         assert_eq!(
             mcp_names(&NormalizedConfig {
                 mcp_servers: kit.mcp_servers.clone(),

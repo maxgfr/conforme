@@ -271,7 +271,12 @@ pub(crate) fn source_locations(id: &str) -> &'static [&'static str] {
             ".github/agents",
             ".vscode/mcp.json",
         ],
-        "codex" => &["AGENTS.md", ".agents/skills", ".codex"],
+        "codex" => &[
+            "AGENTS.md",
+            ".agents/skills",
+            ".agents/plugins/marketplace.json",
+            ".codex",
+        ],
         "opencode" => &[
             "AGENTS.md",
             "opencode.json",

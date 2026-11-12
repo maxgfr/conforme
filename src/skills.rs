@@ -618,9 +618,9 @@ pub const CURSOR_SKILLS: SkillShape = shape(".cursor/skills");
 /// required, `disable-model-invocation: true` keeps a skill out of automatic
 /// use.
 pub const VIBE_SKILLS: SkillShape = shape(".vibe/skills");
-/// The `skills/` of an Antigravity CLI plugin bundle (no Codex policy
-/// sidecar there).
-pub const ANTIGRAVITY_PLUGIN_SKILLS: SkillShape = shape(".agents/plugins");
+/// The `skills/` of an Antigravity CLI or Codex plugin bundle (no Codex
+/// policy sidecar there).
+pub const PLUGIN_SKILLS: SkillShape = shape("skills");
 /// Kiro `.kiro/skills/`.
 pub const KIRO_SKILLS: SkillShape = shape(".kiro/skills");
 /// Zoo Code `.roo/skills/`.

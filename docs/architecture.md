@@ -21,7 +21,8 @@ src/
                        that cannot hold a bundle (instructions → always-on rule, `<plugin>-<name>` on a name
                        clash, items using ${PLUGIN_ROOT}-style variables and disabled plugins left out, each
                        warned; empty or duplicate plugin names an error); flatten_for keeps the plugins a
-                       PluginShape holds (CLAUDE_PLUGINS, VIBE_PLUGINS, ANTIGRAVITY_PLUGINS: dir, BundleFormat)
+                       PluginShape holds (CLAUDE_PLUGINS, VIBE_PLUGINS, ANTIGRAVITY_PLUGINS, CODEX_PLUGINS: dir,
+                       BundleFormat; holds_rules, holds_agents — Codex bundles hold neither)
                        and flattens only the rest (rules of a Claude or Vibe bundle; a Claude plugin named like
                        a skill is left out, warned); generate_plugins / read_plugins write and read bundles
                        (manifest per format, components, loose text files, the PLUGIN_MARKER `.conforme-plugin`;
@@ -177,7 +178,10 @@ src/
     codex.rs        — OpenAI Codex CLI: reads AGENTS.md natively; agents at .codex/agents/*.toml; warns when the
                        source has MCP servers or agents and $CODEX_HOME/config.toml (default ~/.codex) trusts
                        neither the project nor its main repository root (codex_trusts: untrusted .codex/ layers
-                       are ignored)
+                       are ignored); plugin bundles in .codex/plugins/, listed in the merged repository
+                       marketplace .agents/plugins/marketplace.json (merged_marketplace: only entries pointing
+                       at conforme's bundles are its own) and switched by [plugins."<p>@<marketplace>"] in
+                       .codex/config.toml (merge_codex_plugins_toml, composed with the MCP merge)
     opencode.rs     — OpenCode 2 only: reads AGENTS.md natively (no CLAUDE.md / CONTEXT.md fallback); agents
                        written to .opencode/agents/<name>.md only, read from .opencode/agents/, .opencode/agent/
                        and the opencode.json `agents` key together (markdown wins; built-in
