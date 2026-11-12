@@ -6,6 +6,7 @@ pub mod frontmatter;
 pub mod gitignore;
 pub mod help_ai;
 pub mod hook;
+pub mod hooks;
 pub mod json_settings;
 pub mod markdown;
 pub mod marketplaces;

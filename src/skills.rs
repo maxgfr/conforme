@@ -719,6 +719,17 @@ const VIBE_TOOLS: &[(&str, &str)] = &[
     ("ask_user", "ask_user_question"),
 ];
 
+/// One tool name in Vibe's built-in vocabulary, when it has one there (a
+/// hook matcher names one tool; nothing is widened to `read_file`).
+pub(crate) fn vibe_tool(name: &str) -> Option<&'static str> {
+    let gemini = gemini_tools(&[name.to_string()]);
+    let gemini = gemini.first()?;
+    VIBE_TOOLS
+        .iter()
+        .find(|(g, _)| g == gemini)
+        .map(|(_, vibe)| *vibe)
+}
+
 /// Translate a tool list into Vibe's built-in tool names; a restricted list
 /// in which nothing translates becomes read-only access, never every tool.
 fn vibe_tools(tools: &[String]) -> Vec<String> {

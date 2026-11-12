@@ -123,6 +123,13 @@ impl PluginShape {
         self.format != BundleFormat::Codex
     }
 
+    /// Whether a bundle holds the plugin's hooks; Codex's does not (its
+    /// `plugin_hooks` feature is `removed` in Codex CLI 0.167.2, `codex
+    /// features list`).
+    pub fn holds_hooks(&self) -> bool {
+        self.format != BundleFormat::Codex
+    }
+
     /// The manifest conforme writes, relative to the bundle folder.
     fn manifest(&self) -> &'static str {
         match self.format {
@@ -157,6 +164,7 @@ impl PluginShape {
                 "commands",
                 "agents",
                 ".mcp.json",
+                "hooks/hooks.json",
                 // A root skill beside the manifest is a plain skill too.
                 "SKILL.md",
                 crate::skills::SKILL_MARKER,
@@ -166,6 +174,7 @@ impl PluginShape {
                 "skills",
                 "mcp.json",
                 "ai.mistral.vibe/agents",
+                "ai.mistral.vibe/hooks.toml",
             ],
             BundleFormat::Antigravity => &[
                 ".antigravity-plugin",
@@ -175,6 +184,7 @@ impl PluginShape {
                 "agents",
                 "rules",
                 "mcp_config.json",
+                "hooks.json",
             ],
             BundleFormat::Codex => &["plugin.json", ".codex-plugin", "skills", "mcp.json"],
         }
@@ -216,6 +226,7 @@ pub fn flatten_for(
     }
     let holds_rules = shape.holds_rules();
     let holds_agents = shape.holds_agents();
+    let holds_hooks = shape.holds_hooks();
     let unheld = NormalizedConfig {
         plugins: config
             .plugins
@@ -238,6 +249,11 @@ pub fn flatten_for(
                     p.agents.clone()
                 },
                 mcp_servers: Vec::new(),
+                hooks: if holds_hooks {
+                    Vec::new()
+                } else {
+                    p.hooks.clone()
+                },
                 files: BTreeMap::new(),
                 ..p.clone()
             })
@@ -278,6 +294,9 @@ pub fn flatten_for(
             }
             if !holds_agents {
                 held.agents.clear();
+            }
+            if !holds_hooks {
+                held.hooks.clear();
             }
             held
         })
@@ -385,8 +404,9 @@ fn manifest(plugin: &NormalizedPlugin, shape: &PluginShape) -> Result<String> {
         BundleFormat::Vibe => {
             manifest.insert("$schema".into(), Value::String(AGENT_PLUGINS_SCHEMA.into()));
             // "Without the `ai.mistral.vibe` extension, Vibe loads only
-            // `skills/` and `mcp.json`": its subagents need the block.
-            if !plugin.agents.is_empty() {
+            // `skills/` and `mcp.json`": its subagents and hooks need the block.
+            let hooks = crate::hooks::vibe_toml(&plugin.hooks, &plugin.name).0;
+            if !plugin.agents.is_empty() || hooks.is_some() {
                 manifest.insert(
                     "extensions".into(),
                     serde_json::json!({ "ai.mistral.vibe": { "schemaVersion": 1 } }),
@@ -457,6 +477,16 @@ pub fn generate_plugins(
                         mcp_file(crate::mcp::CLAUDE_SHAPE.build(&plugin.mcp_servers), None)?,
                     ));
                 }
+                // `hooks/hooks.json`: "The top-level `hooks` wrapper is
+                // required" (https://code.claude.com/docs/en/plugins/components.md).
+                if !plugin.hooks.is_empty() {
+                    files.push((
+                        join_rel(&bundle, "hooks/hooks.json"),
+                        json_file(
+                            &serde_json::json!({ "hooks": crate::hooks::claude_json(&plugin.hooks) }),
+                        )?,
+                    ));
+                }
             }
             BundleFormat::Vibe => {
                 files.extend(crate::skills::generate_skills_in(
@@ -479,6 +509,9 @@ pub fn generate_plugins(
                             Some(crate::mcp::AGENT_PLUGINS_MCP_SCHEMA),
                         )?,
                     ));
+                }
+                if let (Some(hooks), _) = crate::hooks::vibe_toml(&plugin.hooks, &plugin.name) {
+                    files.push((join_rel(&bundle, "ai.mistral.vibe/hooks.toml"), hooks));
                 }
             }
             BundleFormat::Antigravity => {
@@ -510,6 +543,11 @@ pub fn generate_plugins(
                             None,
                         )?,
                     ));
+                }
+                if let (Some(hooks), _) =
+                    crate::hooks::antigravity_json(&plugin.hooks, &plugin.name)
+                {
+                    files.push((bundle.join("hooks.json"), json_file(&hooks)?));
                 }
             }
             BundleFormat::Codex => {
@@ -545,7 +583,7 @@ pub fn bundle_warnings(
     config: &NormalizedConfig,
     shape: &PluginShape,
 ) -> Vec<String> {
-    config
+    let mut warnings: Vec<String> = config
         .plugins
         .iter()
         .filter(|p| is_hand_written_bundle(&bundle_dir(project_root, shape, &p.name)))
@@ -558,7 +596,56 @@ pub fn bundle_warnings(
                 sanitize_name(&p.name)
             )
         })
-        .collect()
+        .collect();
+    for plugin in config.plugins.iter().filter(|p| !p.hooks.is_empty()) {
+        match shape.format {
+            BundleFormat::Vibe => {
+                warnings.extend(crate::hooks::vibe_toml(&plugin.hooks, &plugin.name).1);
+                warnings.push(crate::hooks::payload_warning(
+                    &plugin.name,
+                    "Vibe",
+                    "a hook blocks only by printing a `deny` decision (a non-zero exit is a \
+                     warning unless `strict`)",
+                ));
+            }
+            BundleFormat::Antigravity => {
+                warnings.extend(crate::hooks::antigravity_json(&plugin.hooks, &plugin.name).1);
+                warnings.push(crate::hooks::payload_warning(
+                    &plugin.name,
+                    "Antigravity",
+                    "a hook blocks only by printing a `decision` (no exit code blocks)",
+                ));
+            }
+            BundleFormat::Claude | BundleFormat::Codex => {}
+        }
+    }
+    warnings
+}
+
+/// The hooks of a bundle, in its format; a hooks file that does not parse is
+/// one the tool skips.
+fn read_bundle_hooks(bundle: &Path, format: BundleFormat) -> Vec<crate::config::NormalizedHook> {
+    let json = |rel: &str| {
+        crate::config::read_text(&join_rel(bundle, rel))
+            .ok()
+            .and_then(|text| crate::json_settings::parse_jsonc(&text).ok())
+    };
+    match format {
+        BundleFormat::Claude => json("hooks/hooks.json")
+            .and_then(|doc| doc.get("hooks").cloned())
+            .map(|hooks| crate::hooks::read_claude(&hooks))
+            .unwrap_or_default(),
+        BundleFormat::Vibe => {
+            crate::config::read_text(&join_rel(bundle, "ai.mistral.vibe/hooks.toml"))
+                .ok()
+                .and_then(|text| crate::hooks::read_vibe(&text).ok())
+                .unwrap_or_default()
+        }
+        BundleFormat::Antigravity => json("hooks.json")
+            .map(|doc| crate::hooks::read_antigravity(&doc))
+            .unwrap_or_default(),
+        BundleFormat::Codex => Vec::new(),
+    }
 }
 
 /// A text field of a manifest.
@@ -696,6 +783,7 @@ pub fn read_plugins(
         if let Some((path, server_shape)) = mcp_file.filter(|(path, _)| path.is_file()) {
             plugin.mcp_servers = server_shape.read_file(&crate::config::read_text(&path)?)?;
         }
+        plugin.hooks = read_bundle_hooks(&bundle, shape.format);
         let components: Vec<PathBuf> = shape
             .component_paths()
             .iter()
@@ -859,6 +947,15 @@ pub fn flatten(config: &NormalizedConfig) -> Result<(NormalizedConfig, Vec<Strin
                 ));
             }
             continue;
+        }
+        if !plugin.hooks.is_empty() {
+            let names: Vec<&str> = plugin.hooks.iter().map(|h| h.name.as_str()).collect();
+            warnings.push(format!(
+                "plugin {}: its hooks ({}) run only in tools that hold plugin bundles with hooks \
+                 (Claude Code, Mistral Vibe, Antigravity CLI)",
+                plugin.name,
+                names.join(", ")
+            ));
         }
         if !plugin.files.is_empty() {
             let files: Vec<&str> = plugin.files.keys().map(String::as_str).collect();

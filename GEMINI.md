@@ -87,7 +87,8 @@ trait's `generate` / `warnings` flatten what a tool cannot hold
 `## Plugin:` with `<!-- marketplace: m -->` is a plugin enabled from a
 marketplace (`## Marketplace: m` declares it), synced between Claude Code and
 Copilot `enabledPlugins` / `extraKnownMarketplaces` and Codex `[plugins]`
-(`src/marketplaces.rs`); see `docs/plugins.md`.
+(`src/marketplaces.rs`). A bundle's hooks are translated between Claude Code,
+Vibe and Antigravity (`src/hooks.rs`); see `docs/plugins.md`.
 
 ### Adapter categories
 

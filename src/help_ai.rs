@@ -260,7 +260,9 @@ pub fn print_help_ai() {
          .vibe/plugins/<plugin>/plugin.json (Agent Plugins 1.0), Antigravity CLI \
          .agents/plugins/<plugin>/plugin.json, Codex .codex/plugins/<plugin>/ listed in \
          .agents/plugins/marketplace.json and enabled in .codex/config.toml (both merged); \
-         conforme's carry a .conforme-plugin marker."
+         conforme's carry a .conforme-plugin marker. A bundle's hooks are translated: Claude \
+         hooks/hooks.json, Vibe ai.mistral.vibe/hooks.toml (pre_tool, post_tool, post_agent), \
+         Antigravity hooks.json (PreToolUse, PostToolUse, SessionStart, Stop)."
     );
     println!(
         "  Every other tool gets the plugin's content as its own: its instructions as an \

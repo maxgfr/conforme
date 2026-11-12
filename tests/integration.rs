@@ -6125,7 +6125,12 @@ fn claude_plugin_project() -> TempDir {
         "---\ndescription: Triage issues\n---\nTriage the open issues.\n",
     )
     .unwrap();
-    fs::write(bundle.join("hooks/hooks.json"), "{\"hooks\": {}}\n").unwrap();
+    fs::write(
+        bundle.join("hooks/hooks.json"),
+        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/guard.sh", "timeout": 10}]}]}}"#,
+    )
+    .unwrap();
+    fs::write(bundle.join("README.md"), "# Review kit\n").unwrap();
     fs::write(root.join("CLAUDE.md"), "# Project\nUse TypeScript.\n").unwrap();
     fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
     for tool in [".cursor", ".vibe", ".agents/rules"] {
@@ -6159,10 +6164,29 @@ fn test_claude_bundle_reaches_bundle_tools_and_flat_tools() {
         .contains("Triage the open issues."));
     // A loose file of the bundle travels with it.
     assert_eq!(
-        fs::read_to_string(vibe.join("hooks/hooks.json")).unwrap(),
-        "{\"hooks\": {}}\n"
+        fs::read_to_string(vibe.join("README.md")).unwrap(),
+        "# Review kit\n"
     );
+    // Its hook is translated: Vibe's event and tool name, the plugin root.
+    let hooks = fs::read_to_string(vibe.join("ai.mistral.vibe/hooks.toml")).unwrap();
+    assert!(hooks.contains("type = \"pre_tool\""), "{hooks}");
+    assert!(hooks.contains("match = \"bash\""), "{hooks}");
+    assert!(
+        hooks.contains("command = \"${PLUGIN_ROOT}/guard.sh\""),
+        "{hooks}"
+    );
+    assert!(fs::read_to_string(vibe.join("plugin.json"))
+        .unwrap()
+        .contains("ai.mistral.vibe"));
     let agy = root.join(".agents/plugins/review-kit");
+    let agy_hooks = fs::read_to_string(agy.join("hooks.json")).unwrap();
+    assert!(agy_hooks.contains("\"PreToolUse\""), "{agy_hooks}");
+    // Antigravity's own name for the shell tool.
+    assert!(
+        agy_hooks.contains("\"matcher\": \"run_command\""),
+        "{agy_hooks}"
+    );
+    assert!(agy_hooks.contains("${PLUGIN_ROOT}/guard.sh"), "{agy_hooks}");
     assert!(fs::read_to_string(agy.join("plugin.json"))
         .unwrap()
         .contains("antigravity.google/schemas/v1/plugin.json"));

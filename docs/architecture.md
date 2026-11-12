@@ -24,6 +24,11 @@ src/
                        merge_codex_refs_toml for Codex `[plugins]` (its repository marketplace's tables left alone),
                        codex_add_argument for the `codex plugin marketplace add` warning; holds_plugin_refs on the
                        trait marks the three tools, sync warns for the others
+  hooks.rs          — Hooks (NormalizedHook: Claude Code's events and tool names) in each bundle format: read_claude /
+                       claude_json, vibe_toml / read_vibe (pre_tool, post_tool, post_agent; tool names through
+                       skills::vibe_tool), antigravity_json / read_antigravity (a `conforme` group; ANTIGRAVITY_TOOLS,
+                       the names `agy plugin validate` gives); `${CLAUDE_PLUGIN_ROOT}` ⇄ `${PLUGIN_ROOT}`; what a format
+                       lacks is left out and warned, and payload_warning names the protocol a script must handle
   plugins.rs        — Plugin bundles: flatten moves a plugin's content into the top-level config for a tool
                        that cannot hold a bundle (instructions → always-on rule, `<plugin>-<name>` on a name
                        clash, items using ${PLUGIN_ROOT}-style variables and disabled plugins left out, each

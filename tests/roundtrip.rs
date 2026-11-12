@@ -2247,6 +2247,13 @@ fn plugin_config() -> NormalizedConfig {
             ..Default::default()
         }],
         mcp_servers: rich_config().mcp_servers,
+        hooks: vec![conforme::config::NormalizedHook {
+            name: "pre-tool-use-1".to_string(),
+            event: "PreToolUse".to_string(),
+            matcher: Some("Bash".to_string()),
+            command: "${PLUGIN_ROOT}/guard.sh".to_string(),
+            timeout: Some(10),
+        }],
         files: [("README.md".to_string(), "# Review kit\n".to_string())].into(),
         ..Default::default()
     };
@@ -2353,6 +2360,16 @@ fn test_roundtrip_plugin_bundles() {
             Some("# Review kit\n"),
             "{name}"
         );
+        // Codex bundles hold no hooks; the others read the hook back whole.
+        if adapter.id() == "codex" {
+            assert!(kit.hooks.is_empty(), "{name}");
+        } else {
+            assert_eq!(kit.hooks.len(), 1, "{name}: {:?}", kit.hooks);
+            assert_eq!(kit.hooks[0].event, "PreToolUse", "{name}");
+            assert_eq!(kit.hooks[0].matcher.as_deref(), Some("Bash"), "{name}");
+            assert_eq!(kit.hooks[0].command, "${PLUGIN_ROOT}/guard.sh", "{name}");
+            assert_eq!(kit.hooks[0].timeout, Some(10), "{name}");
+        }
         if holds_rules {
             assert_eq!(kit.instructions, "Review every change.", "{name}");
             assert_eq!(kit.rules[0].name, "style", "{name}");
