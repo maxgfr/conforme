@@ -2,7 +2,7 @@
 
 > Google's Antigravity command-line agent (`agy`). Source: `--from antigravity`
 
-**Last verified online:** 2026-11-12, against Antigravity CLI 1.5.6 (https://github.com/google-antigravity/antigravity-cli/releases; local `agy` 1.5.3)
+**Last verified online:** 2026-11-12, against Antigravity CLI 1.5.7 (https://github.com/google-antigravity/antigravity-cli/releases; local `agy` 1.5.3)
 
 ## Official docs
 
@@ -89,7 +89,7 @@ Reading: `agy mcp list` and `agy agents` show nothing from the project's `.agent
 
 ## Plugins
 
-Verified 2026-11-12 against Antigravity CLI 1.5.6 (changelog) and 1.5.3 (local `agy plugin validate --strict`). A plugin hook runs with "its working directory (`cwd`) set to `<plugin-root>`" and "should use relative paths (such as `node ./scripts/policy.mjs`) rather than `${PLUGIN_ROOT}`" (https://antigravity.google/docs/build-plugins/); since 1.5.6 `agy plugin validate` warns on `${PLUGIN_ROOT}` in a hook command and fails with `--strict`, so conforme writes `${PLUGIN_ROOT}/` as `./` there and reads `./` back as `${PLUGIN_ROOT}/`. A plugin MCP server's `${VAR}` expands only when declared in its `variables` ("interpolated as `${ACME_API_TOKEN}`", build-plugins); conforme declares none, and `sync` warns about each such server (`agy` 1.5.3: "`${API_TOKEN}` isn't declared in \"variables\", so it's passed as is").
+Verified 2026-11-12 against Antigravity CLI 1.5.7 (changelog) and 1.5.3 (local `agy plugin validate --strict`). A plugin hook runs with "its working directory (`cwd`) set to `<plugin-root>`" and "should use relative paths (such as `node ./scripts/policy.mjs`) rather than `${PLUGIN_ROOT}`" (https://antigravity.google/docs/build-plugins/); since 1.5.6 `agy plugin validate` warns on `${PLUGIN_ROOT}` in a hook command and fails with `--strict`, so conforme writes `${PLUGIN_ROOT}/` as `./` there and reads `./` back as `${PLUGIN_ROOT}/`. A plugin MCP server's `${VAR}` expands only when declared in its `variables` ("interpolated as `${ACME_API_TOKEN}`", build-plugins); conforme declares none, and `sync` warns about each such server (`agy` 1.5.3: "`${API_TOKEN}` isn't declared in \"variables\", so it's passed as is").
 
 - Bundles load from `.agents/plugins/<plugin>/` ("Manifests add to the standard folders; they don't replace them", https://antigravity.google/docs/customization-discovery); conforme reads and writes them (`plugins::ANTIGRAVITY_PLUGINS`, a `ManagedKind::Bundles` directory).
 - Manifest: on read `.antigravity-plugin/plugin.json`, which "takes precedence over root `plugin.json`" (build-plugins), then `.gemini-plugin/plugin.json`, then `plugin.json` (the first found wins); conforme writes `plugin.json` with `$schema` `https://antigravity.google/schemas/v1/plugin.json`, `name` (`^[a-zA-Z0-9_-]+$`), `description`, `version`, `author` (a string), `homepage`, `repository`, `license`, `keywords`, and `disabled: true` for a plugin switched off ("A user's own enable/disable choice takes precedence", https://antigravity.google/schemas/v1/plugin.json).
