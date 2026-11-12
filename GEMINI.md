@@ -75,6 +75,11 @@ Review for bugs.
 <!-- headers: Authorization=Bearer ${GITHUB_TOKEN} -->
 ```
 
+`## Plugin: <name>` declares a plugin (manifest metadata comments, its body
+the plugin's instructions); `<!-- plugin: <name> -->` places a Rule, Skill,
+Agent or MCP section in it. Every tool gets a plugin's content as its own
+(`plugins::flatten`, applied to the source as read); see `docs/plugins.md`.
+
 ### Adapter categories
 
 **Per-rule adapters** (have frontmatter or per-file rules):

@@ -234,6 +234,7 @@ impl AiToolAdapter for OpenCodeAdapter {
                 skills,
                 agents,
                 mcp_servers,
+                plugins: Vec::new(),
             },
         )
     }

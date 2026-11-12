@@ -1191,3 +1191,82 @@ fn test_opencode_1_entries_are_named_when_left_unsynced() {
             .stderr(predicate::str::contains("OpenCode 1 entries"));
     }
 }
+
+// ===== Plugins =====
+
+/// A plugin item whose name the project already uses is written under the
+/// plugin's prefix, and one that reaches into the plugin's own folder is left
+/// out, each with a warning.
+#[test]
+fn test_plugin_items_renamed_or_left_out_with_a_warning() {
+    let agents_md = r#"# Instructions
+Be careful.
+
+## Skill: lint
+<!-- description: Project lint -->
+
+Run eslint.
+
+## Skill: lint
+<!-- plugin: kit -->
+<!-- description: Plugin lint -->
+
+Run the plugin linter.
+
+## Skill: check
+<!-- plugin: kit -->
+<!-- description: Bundled check -->
+
+Run ${CLAUDE_PLUGIN_ROOT}/scripts/check.sh.
+"#;
+    let dir = create_project_with_tools(agents_md, &["claude"]);
+    let root = dir.path();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "skill lint is written as kit-lint",
+        ))
+        .stderr(predicate::str::contains("skill check is left out"));
+
+    assert!(
+        fs::read_to_string(root.join(".claude/skills/lint/SKILL.md"))
+            .unwrap()
+            .contains("Run eslint.")
+    );
+    assert!(
+        fs::read_to_string(root.join(".claude/skills/kit-lint/SKILL.md"))
+            .unwrap()
+            .contains("Run the plugin linter.")
+    );
+    assert!(!root.join(".claude/skills/check").exists());
+}
+
+/// Two `## Plugin:` sections of the same name are refused, not merged.
+#[test]
+fn test_duplicate_plugin_is_refused() {
+    let agents_md = "# Instructions\nHi.\n\n## Plugin: kit\nA.\n\n## Plugin: Kit\nB.\n";
+    let dir = create_project_with_tools(agents_md, &["claude"]);
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("plugin Kit is defined twice"));
+    assert!(!dir.path().join("CLAUDE.md").exists());
+}
+
+/// A disabled plugin is not flattened into tools without a switch for it.
+#[test]
+fn test_disabled_plugin_is_not_flattened() {
+    let agents_md = "# Instructions\nHi.\n\n## Plugin: kit\n<!-- disabled: true -->\n\n\
+                     ## Skill: lint\n<!-- plugin: kit -->\n<!-- description: Lint -->\n\nLint.\n";
+    let dir = create_project_with_tools(agents_md, &["claude"]);
+    conforme()
+        .args(["-C", dir.path().to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("plugin kit is disabled"));
+    assert!(!dir.path().join(".claude/skills/lint").exists());
+}

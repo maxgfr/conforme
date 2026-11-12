@@ -248,6 +248,19 @@ pub fn print_help_ai() {
         "Manual", "alwaysApply:false", "trigger:manual", "(in main file)", "inclusion:manual"
     );
     println!();
+    println!("{}", "Plugins:".bold());
+    println!();
+    println!(
+        "  AGENTS.md declares a plugin with `## Plugin: <name>` (description, version, author, \
+         homepage, repository, license, keywords, disabled) and places a Rule, Skill, Agent or \
+         MCP section in it with `<!-- plugin: <name> -->`."
+    );
+    println!(
+        "  Every tool gets the plugin's content as its own: its instructions as an always-on \
+         rule named after it, the rest under their names (`<plugin>-<name>` on a clash). \
+         Items using ${{PLUGIN_ROOT}} and disabled plugins are left out, with a warning."
+    );
+    println!();
     println!(
         "For more info: {}",
         "https://github.com/maxgfr/conforme".dimmed()

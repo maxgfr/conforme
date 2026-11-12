@@ -75,6 +75,7 @@ fn full_config() -> NormalizedConfig {
                 env: BTreeMap::new(),
             },
         ],
+        plugins: Vec::new(),
     }
 }
 

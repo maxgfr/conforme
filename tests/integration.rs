@@ -5901,3 +5901,189 @@ fn test_a_tool_file_linked_into_another_tools_directory_converges() {
             .contains("Be helpful.")
     );
 }
+
+// ===== Plugins =====
+
+const PLUGIN_AGENTS_MD: &str = r#"# Instructions
+Use TypeScript.
+
+## Plugin: review-kit
+<!-- description: Code review tools -->
+<!-- version: 1.2.0 -->
+
+Review every change before merging.
+
+## Skill: lint
+<!-- plugin: review-kit -->
+<!-- description: Run the linter -->
+
+Run `npm run lint`.
+
+## Agent: reviewer
+<!-- plugin: review-kit -->
+<!-- description: Reviews diffs -->
+
+Review the diff for bugs.
+
+## MCP: docs
+<!-- plugin: review-kit -->
+<!-- url: https://example.com/mcp -->
+"#;
+
+/// A tool that cannot hold a plugin bundle gets the plugin's content as its
+/// own: the instructions as an always-on rule, the skill, agent and server
+/// under their names, and a second sync changes nothing.
+#[test]
+fn test_plugin_content_reaches_every_tool() {
+    let dir = create_project_with_tools(PLUGIN_AGENTS_MD, &["claude", "cursor", "codex"]);
+    let root = dir.path();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let rule = fs::read_to_string(root.join(".cursor/rules/review-kit.mdc")).unwrap();
+    assert!(rule.contains("alwaysApply: true"), "{rule}");
+    assert!(rule.contains("Review every change before merging."));
+    for skill in [
+        ".claude/skills/lint/SKILL.md",
+        ".cursor/skills/lint/SKILL.md",
+        ".agents/skills/lint/SKILL.md",
+    ] {
+        let text = fs::read_to_string(root.join(skill)).unwrap();
+        assert!(text.contains("Run `npm run lint`."), "{skill}: {text}");
+    }
+    assert!(fs::read_to_string(root.join(".claude/agents/reviewer.md"))
+        .unwrap()
+        .contains("Review the diff for bugs."));
+    assert!(fs::read_to_string(root.join(".codex/agents/reviewer.toml"))
+        .unwrap()
+        .contains("Review the diff for bugs."));
+    let mcp = fs::read_to_string(root.join(".mcp.json")).unwrap();
+    assert!(
+        mcp.contains("\"docs\"") && mcp.contains("https://example.com/mcp"),
+        "{mcp}"
+    );
+    // Claude Code keeps an always-on rule in CLAUDE.md.
+    assert!(fs::read_to_string(root.join("CLAUDE.md"))
+        .unwrap()
+        .contains("Review every change before merging."));
+    assert!(!root.join(".claude/rules/review-kit.md").exists());
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+    let before = fs::read_to_string(root.join(".cursor/rules/review-kit.mdc")).unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(root.join(".cursor/rules/review-kit.mdc")).unwrap(),
+        before
+    );
+}
+
+/// `conforme add plugin` and `--plugin` write sections that read back as one
+/// plugin.
+#[test]
+fn test_add_plugin_and_its_components() {
+    let dir = create_project_with_tools("# Instructions\nHi.\n", &["cursor"]);
+    let root = dir.path().to_str().unwrap();
+    conforme()
+        .args(["-C", root, "add", "plugin", "kit", "--description", "Kit"])
+        .assert()
+        .success();
+    conforme()
+        .args([
+            "-C",
+            root,
+            "add",
+            "skill",
+            "lint",
+            "--description",
+            "Lint",
+            "--content",
+            "Run lint.",
+            "--plugin",
+            "kit",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("in plugin"));
+    let text = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+    assert!(
+        text.contains("## Plugin: kit\n<!-- description: Kit -->"),
+        "{text}"
+    );
+    assert!(
+        text.contains("## Skill: lint\n<!-- plugin: kit -->"),
+        "{text}"
+    );
+
+    conforme().args(["-C", root, "sync"]).assert().success();
+    assert!(
+        fs::read_to_string(dir.path().join(".cursor/skills/lint/SKILL.md"))
+            .unwrap()
+            .contains("Run lint.")
+    );
+
+    // A second plugin of the same name would break every later sync.
+    conforme()
+        .args(["-C", root, "add", "plugin", "Kit"])
+        .assert()
+        .failure();
+    assert_eq!(
+        fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(),
+        text
+    );
+}
+
+/// A hand-written AGENTS.md whose plugin holds a skill the tool source lacks
+/// is refused, not replaced.
+#[test]
+fn test_hand_written_agents_md_with_a_plugin_is_not_replaced() {
+    let dir = create_project(PLUGIN_AGENTS_MD);
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "# Instructions\nUse TypeScript.\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("skill lint"));
+    assert_eq!(
+        fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+        PLUGIN_AGENTS_MD
+    );
+}
+
+/// A tool that reads AGENTS.md itself (Codex) reads its plugins too: as the
+/// source, it carries them to the other tools.
+#[test]
+fn test_native_agents_md_reader_carries_plugins() {
+    let dir = create_project_with_tools(PLUGIN_AGENTS_MD, &["codex", "cursor"]);
+    let root = dir.path();
+    fs::write(root.join(".conformerc.toml"), "source = \"codex\"\n").unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert!(
+        fs::read_to_string(root.join(".cursor/skills/lint/SKILL.md"))
+            .unwrap()
+            .contains("Run `npm run lint`.")
+    );
+    assert!(fs::read_to_string(root.join(".cursor/agents/reviewer.md"))
+        .unwrap()
+        .contains("Review the diff for bugs."));
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}

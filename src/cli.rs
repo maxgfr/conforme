@@ -24,6 +24,8 @@ use std::path::PathBuf;
         conforme check                       Check if configs are in sync (CI)\n  \
         conforme status                      Show detected tools and sync state\n  \
         conforme add rule \"Name\" --activation \"glob **/*.ts\"\n  \
+        conforme add plugin review-kit --description \"Review tools\"\n  \
+        conforme add skill lint --plugin review-kit\n  \
         conforme remove cursor,devin         Remove generated files for tools\n  \
         conforme hook install                Install git pre-commit hook\n  \
         conforme hook uninstall              Remove git pre-commit hook\n  \
@@ -78,7 +80,7 @@ pub enum Command {
         #[arg(long)]
         from: Option<String>,
     },
-    /// Add a rule, skill, agent, or MCP server to AGENTS.md
+    /// Add a rule, skill, agent, MCP server or plugin to AGENTS.md
     Add {
         #[command(subcommand)]
         what: AddTarget,
@@ -141,6 +143,9 @@ pub enum AddTarget {
         /// Rule content
         #[arg(long, default_value = "")]
         content: String,
+        /// Place the rule in this plugin
+        #[arg(long)]
+        plugin: Option<String>,
     },
     /// Add a new skill
     Skill {
@@ -155,6 +160,9 @@ pub enum AddTarget {
         /// Skill content
         #[arg(long, default_value = "")]
         content: String,
+        /// Place the skill in this plugin
+        #[arg(long)]
+        plugin: Option<String>,
     },
     /// Add a new agent
     Agent {
@@ -172,6 +180,9 @@ pub enum AddTarget {
         /// Agent content
         #[arg(long, default_value = "")]
         content: String,
+        /// Place the agent in this plugin
+        #[arg(long)]
+        plugin: Option<String>,
     },
     /// Add a new MCP server
     Mcp {
@@ -186,6 +197,23 @@ pub enum AddTarget {
         /// URL for HTTP transport
         #[arg(long)]
         url: Option<String>,
+        /// Place the server in this plugin
+        #[arg(long)]
+        plugin: Option<String>,
+    },
+    /// Add a new plugin (then add its components with `--plugin <name>`)
+    Plugin {
+        /// Plugin name
+        name: String,
+        /// Description
+        #[arg(long, default_value = "")]
+        description: String,
+        /// Version (semver)
+        #[arg(long)]
+        version: Option<String>,
+        /// Instructions the plugin always adds
+        #[arg(long, default_value = "")]
+        content: String,
     },
 }
 

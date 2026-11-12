@@ -101,7 +101,50 @@ pub struct NormalizedAgent {
     pub permission_mode: Option<String>,
 }
 
-/// Full normalized configuration: instructions + rules + skills + MCP + agents.
+/// A plugin bundle: a named, versioned package of rules, skills, agents and
+/// MCP servers that a tool loads together (Claude Code
+/// `.claude-plugin/plugin.json`, an Agent Plugins `plugin.json`). A tool that
+/// cannot hold a bundle gets its content as its own items (see
+/// [`crate::plugins::flatten`]).
+#[derive(Debug, Clone, Default)]
+pub struct NormalizedPlugin {
+    pub name: String,
+    pub description: String,
+    pub version: Option<String>,
+    /// The author's name.
+    pub author: Option<String>,
+    pub homepage: Option<String>,
+    pub repository: Option<String>,
+    pub license: Option<String>,
+    pub keywords: Vec<String>,
+    /// The plugin is installed but switched off (Claude Code `enabledPlugins`
+    /// set to `false`, Vibe `disabled_plugins`, Antigravity `disabled`).
+    pub disabled: bool,
+    /// Instructions the plugin always adds (Antigravity `rules/AGENTS.md`).
+    pub instructions: String,
+    pub rules: Vec<NormalizedRule>,
+    pub skills: Vec<NormalizedSkill>,
+    pub agents: Vec<NormalizedAgent>,
+    pub mcp_servers: Vec<NormalizedMcpServer>,
+    /// Files of the bundle outside its components (scripts, assets), by
+    /// `/`-separated path relative to the bundle root.
+    pub files: BTreeMap<String, String>,
+}
+
+impl NormalizedPlugin {
+    /// Whether the plugin holds no component at all.
+    pub fn is_empty(&self) -> bool {
+        self.instructions.trim().is_empty()
+            && self.rules.is_empty()
+            && self.skills.is_empty()
+            && self.agents.is_empty()
+            && self.mcp_servers.is_empty()
+            && self.files.is_empty()
+    }
+}
+
+/// Full normalized configuration: instructions + rules + skills + MCP + agents
+/// + plugins.
 #[derive(Debug, Clone)]
 pub struct NormalizedConfig {
     /// Main instruction content (text before any ## headings)
@@ -114,6 +157,8 @@ pub struct NormalizedConfig {
     pub mcp_servers: Vec<NormalizedMcpServer>,
     /// Custom agent definitions
     pub agents: Vec<NormalizedAgent>,
+    /// Plugin bundles
+    pub plugins: Vec<NormalizedPlugin>,
 }
 
 impl NormalizedConfig {
@@ -124,6 +169,7 @@ impl NormalizedConfig {
             skills: Vec::new(),
             mcp_servers: Vec::new(),
             agents: Vec::new(),
+            plugins: Vec::new(),
         }
     }
 
@@ -134,6 +180,7 @@ impl NormalizedConfig {
             && self.skills.is_empty()
             && self.mcp_servers.is_empty()
             && self.agents.is_empty()
+            && self.plugins.iter().all(NormalizedPlugin::is_empty)
     }
 }
 
