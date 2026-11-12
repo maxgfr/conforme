@@ -88,7 +88,10 @@ trait's `generate` / `warnings` flatten what a tool cannot hold
 marketplace (`## Marketplace: m` declares it), synced between Claude Code and
 Copilot `enabledPlugins` / `extraKnownMarketplaces` and Codex `[plugins]`
 (`src/marketplaces.rs`). A bundle's hooks are translated between Claude Code,
-Vibe and Antigravity (`src/hooks.rs`); see `docs/plugins.md`.
+Vibe and Antigravity (`src/hooks.rs`); the project's own hooks (`## Hook:`,
+`.claude/settings.json` `hooks`, …) only with `hooks = true`, into Claude
+Code, Copilot, Codex, Antigravity and Vibe (`AiToolAdapter::holds_hooks`);
+see `docs/plugins.md`.
 
 ### Adapter categories
 
@@ -257,6 +260,7 @@ only = ["cursor", "copilot"]
 exclude = ["zed"]
 generate_agents_md = true
 clean = true
+hooks = false   # true: sync the project's own hooks
 ```
 
 ### Pre-commit hook

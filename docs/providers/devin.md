@@ -69,6 +69,7 @@ conforme's tool id was `windsurf` until 4.0.0 and is now `devin`.
 
 ## Notes
 
+- Project hooks: not written. Devin CLI reads Claude Code's `.claude/settings.json` hooks by default (https://docs.devin.ai/cli/extensibility/hooks/overview), so with Claude Code in the project it already runs them; `sync` says so when the source has hooks (`hooks = true`)
 - The character limits (12,000 per rule file, 6,000 for global rules) are Cascade-only, so they no longer apply to Devin Local
 - Rules: "Rule files in `.devin/rules/` and `.windsurf/rules/` are both loaded"; discovery is recursive since Devin CLI v3000.11.1 (2026-09-21)
 - Manual-only skills are `triggers: [user]` (default `[user, model]`); conforme writes that, and reads a `triggers` list without `model` as manual. Devin documents no `disable-model-invocation`, so conforme does not write it here

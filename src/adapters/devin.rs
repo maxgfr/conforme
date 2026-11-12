@@ -55,6 +55,12 @@ impl AiToolAdapter for DevinAdapter {
             || project_root.join(".windsurfrules").exists()
     }
 
+    /// Devin CLI reads Claude Code's `.claude/settings.json` hooks by default
+    /// (https://docs.devin.ai/cli/extensibility/hooks/overview).
+    fn holds_hooks(&self) -> Result<(), &'static str> {
+        Err("it loads Claude Code's .claude/settings.json hooks itself; its own .devin/hooks.v1.json is not written")
+    }
+
     fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
         crate::adapters::AdapterCapabilities {
             activation_modes: true,

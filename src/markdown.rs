@@ -30,6 +30,9 @@ const MCP_KEYS: &[&str] = &[
 /// or `directory: <path>`, with `ref` and `path` (a sub-folder), or `source:`
 /// the whole source object in JSON (Claude Code's shape).
 const MARKETPLACE_KEYS: &[&str] = &["github", "git", "directory", "ref", "path", "source"];
+/// A `## Hook:` section: Claude Code's event and tool names; its body is the
+/// command (a code block around it is taken off).
+const HOOK_KEYS: &[&str] = &["event", "matcher", "timeout", "plugin"];
 const PLUGIN_KEYS: &[&str] = &[
     "marketplace",
     "description",
@@ -113,6 +116,9 @@ pub fn parse_agents_md(content: &str) -> Result<NormalizedConfig> {
         } else if let Some(name) = line.strip_prefix("## Marketplace: ") {
             flush_section(&mut config, current_section.take(), declared)?;
             current_section = Some(Section::Marketplace(name.trim().to_string(), Vec::new()));
+        } else if let Some(name) = line.strip_prefix("## Hook: ") {
+            flush_section(&mut config, current_section.take(), declared)?;
+            current_section = Some(Section::Hook(name.trim().to_string(), Vec::new()));
         } else if let Some(section) = &mut current_section {
             section.lines_mut().push(line.to_string());
         } else {
@@ -204,6 +210,7 @@ pub fn read_agents_md_files(
         sections.plugins.extend(md.plugins);
         sections.plugin_refs.extend(md.plugin_refs);
         sections.marketplaces.extend(md.marketplaces);
+        sections.hooks.extend(md.hooks);
     }
     config.instructions = instructions.join("\n\n");
     config.rules = rules;
@@ -246,6 +253,10 @@ pub fn read_agents_md_files(
             config.marketplaces.push(marketplace);
         }
     }
+    // The tool's own hooks win over the AGENTS.md ones.
+    if config.hooks.is_empty() {
+        config.hooks = md.hooks;
+    }
     Ok(config)
 }
 
@@ -256,6 +267,7 @@ enum Section {
     Mcp(String, Vec<String>),
     Plugin(String, Vec<String>),
     Marketplace(String, Vec<String>),
+    Hook(String, Vec<String>),
 }
 
 impl Section {
@@ -266,7 +278,8 @@ impl Section {
             | Section::Agent(_, lines)
             | Section::Mcp(_, lines)
             | Section::Plugin(_, lines)
-            | Section::Marketplace(_, lines) => lines,
+            | Section::Marketplace(_, lines)
+            | Section::Hook(_, lines) => lines,
         }
     }
 }
@@ -380,6 +393,39 @@ fn flush_section(
                     "keywords" => plugin.keywords = decode_list(value),
                     _ => plugin.disabled = value.eq_ignore_ascii_case("true"),
                 }
+            }
+        }
+        Some(Section::Hook(name, lines)) => {
+            let (meta, body) = split_section(&lines, HOOK_KEYS);
+            let get = |k: &str| {
+                meta.iter()
+                    .find(|(key, _)| key == k)
+                    .map(|(_, v)| decode_text(v))
+            };
+            let Some(event) = get("event") else {
+                bail!("hook {name} has no event: add `<!-- event: PreToolUse -->`");
+            };
+            // The command, inside a code block or not.
+            let command = body
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("```"))
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim()
+                .to_string();
+            if command.is_empty() {
+                bail!("hook {name} has no command");
+            }
+            let hook = crate::config::NormalizedHook {
+                name,
+                event,
+                matcher: get("matcher").filter(|m| !m.is_empty() && m != "*"),
+                command,
+                timeout: get("timeout").and_then(|t| t.parse().ok()),
+            };
+            match section_plugin(&lines, HOOK_KEYS) {
+                Some(plugin) => plugin_named(config, &plugin).hooks.push(hook),
+                None => config.hooks.push(hook),
             }
         }
         Some(Section::Marketplace(name, lines)) => {
@@ -757,6 +803,9 @@ pub fn export_as_agents_md(config: &NormalizedConfig) -> String {
     for marketplace in &config.marketplaces {
         export_marketplace(&mut out, marketplace);
     }
+    for hook in &config.hooks {
+        export_hook(&mut out, hook, None);
+    }
 
     out
 }
@@ -770,6 +819,20 @@ fn push_plugin_comment(out: &mut String, plugin: Option<&str>) {
 
 /// A `## Plugin:` section (manifest metadata, then the plugin's
 /// instructions), followed by its components, each naming the plugin.
+/// A `## Hook:` section, its command in a code block.
+fn export_hook(out: &mut String, hook: &crate::config::NormalizedHook, plugin: Option<&str>) {
+    out.push_str(&format!("\n## Hook: {}\n", hook.name));
+    push_plugin_comment(out, plugin);
+    out.push_str(&format!("<!-- event: {} -->\n", encode_text(&hook.event)));
+    if let Some(matcher) = &hook.matcher {
+        out.push_str(&format!("<!-- matcher: {} -->\n", encode_text(matcher)));
+    }
+    if let Some(timeout) = hook.timeout {
+        out.push_str(&format!("<!-- timeout: {timeout} -->\n"));
+    }
+    out.push_str(&format!("\n```sh\n{}\n```\n", hook.command));
+}
+
 /// A `## Marketplace:` section: a GitHub, Git or directory source in its own
 /// comments when that is all it holds, else the whole source in JSON.
 fn export_marketplace(out: &mut String, marketplace: &crate::config::NormalizedMarketplace) {
@@ -857,6 +920,9 @@ fn export_plugin(out: &mut String, plugin: &NormalizedPlugin) {
     }
     for mcp in &plugin.mcp_servers {
         export_mcp(out, mcp, name);
+    }
+    for hook in &plugin.hooks {
+        export_hook(out, hook, name);
     }
 }
 
@@ -1079,6 +1145,25 @@ mod tests {
     /// A plugin with a marketplace is one the project enables, and a
     /// `## Marketplace:` section declares where it comes from; both read back
     /// from an export.
+    #[test]
+    fn test_hook_sections_round_trip() {
+        let text = "# Title\nTop.\n\n\
+                    ## Hook: guard\n<!-- event: PreToolUse -->\n<!-- matcher: Bash -->\n<!-- timeout: 10 -->\n\n\
+                    ```sh\n./scripts/guard.sh\n```\n\n\
+                    ## Hook: start\n<!-- plugin: kit -->\n<!-- event: SessionStart -->\n\necho hi\n";
+        let config = parse_agents_md(text).unwrap();
+        assert_eq!(config.hooks.len(), 1);
+        assert_eq!(config.hooks[0].command, "./scripts/guard.sh");
+        assert_eq!(config.hooks[0].matcher.as_deref(), Some("Bash"));
+        assert_eq!(config.hooks[0].timeout, Some(10));
+        assert_eq!(config.plugins[0].hooks[0].command, "echo hi");
+        let exported = export_as_agents_md(&config);
+        let back = parse_agents_md(&exported).unwrap();
+        assert_eq!(back.hooks, config.hooks);
+        assert_eq!(back.plugins[0].hooks, config.plugins[0].hooks);
+        assert!(parse_agents_md("## Hook: x\necho\n").is_err(), "no event");
+    }
+
     #[test]
     fn test_marketplace_plugins_round_trip() {
         let text = "# Title\nTop.\n\n\

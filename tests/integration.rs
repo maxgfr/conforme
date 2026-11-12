@@ -6541,3 +6541,137 @@ fn test_marketplace_plugins_reach_copilot_and_codex() {
     assert!(!codex.contains("legacy@team"), "{codex}");
     assert!(codex.contains("formatter@team"), "{codex}");
 }
+
+/// A Claude Code project whose settings hold a project hook, with Codex,
+/// Vibe, Antigravity, Copilot and Cursor detected; Vibe and Antigravity
+/// already hold a hook of the user's.
+fn claude_hooks_project() -> TempDir {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "# Project\nUse TypeScript.\n").unwrap();
+    fs::write(
+        root.join(".claude/settings.json"),
+        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "./scripts/guard.sh", "timeout": 10}]}]}}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::create_dir_all(root.join(".vibe")).unwrap();
+    fs::write(
+        root.join(".vibe/hooks.toml"),
+        "[[hooks]]\nname = \"mine\"\ntype = \"post_agent\"\ncommand = \"echo mine\"\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".agents/rules")).unwrap();
+    fs::write(
+        root.join(".agents/hooks.json"),
+        r#"{"mine": {"Stop": [{"type": "command", "command": "echo mine"}]}}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".github")).unwrap();
+    fs::write(root.join(".github/copilot-instructions.md"), "").unwrap();
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    dir
+}
+
+/// Without `hooks = true`, the project's hooks are left where they are and
+/// `sync` says why.
+#[test]
+fn test_project_hooks_are_opt_in() {
+    let dir = claude_hooks_project();
+    let root = dir.path();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("set `hooks = true`"));
+    assert!(!root.join(".codex/hooks.json").exists());
+    assert!(!fs::read_to_string(root.join(".vibe/hooks.toml"))
+        .unwrap()
+        .contains("conforme-"));
+}
+
+/// With `hooks = true`, the hook reaches Codex, Vibe and Antigravity next to
+/// the user's own hooks; Copilot and Cursor, which read Claude Code's hooks
+/// themselves, get no copy.
+#[test]
+fn test_project_hooks_reach_each_tool() {
+    let dir = claude_hooks_project();
+    let root = dir.path();
+    fs::write(
+        root.join(".conformerc.toml"),
+        "source = \"claude\"\nhooks = true\n",
+    )
+    .unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Cursor does not get the project's hooks: it loads Claude Code's",
+        ))
+        .stderr(predicate::str::contains("its hooks run in Vibe"));
+
+    let codex: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(".codex/hooks.json")).unwrap()).unwrap();
+    assert_eq!(
+        codex["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+        "./scripts/guard.sh"
+    );
+    assert_eq!(codex["hooks"]["PreToolUse"][0]["matcher"], "Bash");
+    let vibe = fs::read_to_string(root.join(".vibe/hooks.toml")).unwrap();
+    assert!(vibe.contains("name = \"mine\""), "{vibe}");
+    assert!(
+        vibe.contains("name = \"conforme-pre-tool-use-1\""),
+        "{vibe}"
+    );
+    assert!(vibe.contains("match = \"bash\""), "{vibe}");
+    let agy: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(".agents/hooks.json")).unwrap())
+            .unwrap();
+    assert_eq!(agy["mine"]["Stop"][0]["command"], "echo mine");
+    assert_eq!(agy["conforme"]["PreToolUse"][0]["matcher"], "run_command");
+    assert!(!root.join(".github/copilot/settings.json").exists());
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+    let before = fs::read_to_string(root.join(".vibe/hooks.toml")).unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(root.join(".vibe/hooks.toml")).unwrap(),
+        before
+    );
+}
+
+/// From an AGENTS.md source with `hooks = true`, Claude Code and Copilot
+/// both get the hook in their settings.
+#[test]
+fn test_agents_md_hooks_reach_claude_and_copilot() {
+    let agents_md = "# Instructions\nHi.\n\n## Hook: guard\n<!-- event: PreToolUse -->\n\
+                     <!-- matcher: Bash -->\n\n```sh\n./guard.sh\n```\n";
+    let dir = create_project_with_tools(agents_md, &["claude", "copilot"]);
+    let root = dir.path();
+    fs::write(root.join(".conformerc.toml"), "hooks = true\n").unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    for settings in [".claude/settings.json", ".github/copilot/settings.json"] {
+        let value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join(settings)).unwrap()).unwrap();
+        assert_eq!(
+            value["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "./guard.sh",
+            "{settings}"
+        );
+    }
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}

@@ -205,7 +205,12 @@ impl AiToolAdapter for CopilotAdapter {
             plugins: Vec::new(),
             plugin_refs,
             marketplaces,
+            hooks: crate::marketplaces::read_settings_hooks(&settings_path(project_root)),
         })
+    }
+
+    fn holds_hooks(&self) -> Result<(), &'static str> {
+        Ok(())
     }
 
     fn holds_plugin_refs(&self) -> bool {
@@ -351,6 +356,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         }
     }
 
@@ -366,6 +372,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -440,6 +447,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -481,6 +489,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -519,6 +528,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -555,6 +565,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();

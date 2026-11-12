@@ -198,13 +198,13 @@ fn claude_matcher(vibe: &str) -> String {
 /// A Vibe `hooks.toml` (`[[hooks]]` with `name`, `type`, `match`, `command`,
 /// `timeout`) for the hooks it can express, and a warning for each one it
 /// cannot: another event, or a matcher naming a tool Vibe does not have.
-pub fn vibe_toml(hooks: &[NormalizedHook], plugin: &str) -> (Option<String>, Vec<String>) {
+pub fn vibe_toml(hooks: &[NormalizedHook], owner: &str) -> (Option<String>, Vec<String>) {
     let mut warnings = Vec::new();
     let mut array = toml_edit::ArrayOfTables::new();
     for hook in hooks {
         let Some((_, kind)) = VIBE_EVENTS.iter().find(|(e, _)| *e == hook.event) else {
             warnings.push(format!(
-                "plugin {plugin}: hook {} is not written: Vibe has no {} event",
+                "{owner}: hook {} is not written: Vibe has no {} event",
                 hook.name, hook.event
             ));
             continue;
@@ -214,7 +214,7 @@ pub fn vibe_toml(hooks: &[NormalizedHook], plugin: &str) -> (Option<String>, Vec
                 Some(vibe) => Some(vibe),
                 None => {
                     warnings.push(format!(
-                        "plugin {plugin}: hook {} is not written: Vibe has no tool matching {m}",
+                        "{owner}: hook {} is not written: Vibe has no tool matching {m}",
                         hook.name
                     ));
                     continue;
@@ -340,13 +340,13 @@ fn claude_from_antigravity(matcher: &str) -> String {
 /// An Antigravity `hooks.json` (`{"<group>": {"PreToolUse": [{matcher,
 /// hooks: [...]}], "SessionStart": [{type, command, timeout}]}}`) for the
 /// hooks it can express, and a warning for the others.
-pub fn antigravity_json(hooks: &[NormalizedHook], plugin: &str) -> (Option<Value>, Vec<String>) {
+pub fn antigravity_json(hooks: &[NormalizedHook], owner: &str) -> (Option<Value>, Vec<String>) {
     let mut warnings = Vec::new();
     let mut events: Map<String, Value> = Map::new();
     for hook in hooks {
         if !ANTIGRAVITY_EVENTS.contains(&hook.event.as_str()) {
             warnings.push(format!(
-                "plugin {plugin}: hook {} is not written: Antigravity has no {} event",
+                "{owner}: hook {} is not written: Antigravity has no {} event",
                 hook.name, hook.event
             ));
             continue;
@@ -362,7 +362,7 @@ pub fn antigravity_json(hooks: &[NormalizedHook], plugin: &str) -> (Option<Value
                     Some(agy) => agy,
                     None => {
                         warnings.push(format!(
-                            "plugin {plugin}: hook {} is not written: Antigravity has no tool \
+                            "{owner}: hook {} is not written: Antigravity has no tool \
                              matching {m}",
                             hook.name
                         ));
@@ -441,10 +441,91 @@ pub fn read_antigravity(doc: &Value) -> Vec<NormalizedHook> {
     out
 }
 
+/// The prefix of the project hooks conforme writes in Vibe's `.vibe/hooks.toml`:
+/// any other hook there is the user's.
+pub const VIBE_PREFIX: &str = "conforme-";
+
+/// `existing` (a `.vibe/hooks.toml`) with conforme's hooks (named
+/// `conforme-…`) replaced by `hooks`, the user's own kept as they are, and a
+/// warning for each hook Vibe cannot express.
+pub fn merge_vibe_project_toml(
+    existing: &str,
+    hooks: &[NormalizedHook],
+) -> Result<(String, Vec<String>)> {
+    let mut document: toml_edit::DocumentMut = existing.parse().map_err(|e| {
+        anyhow::anyhow!("failed to parse .vibe/hooks.toml, nothing was changed: {e}")
+    })?;
+    let prefixed: Vec<NormalizedHook> = hooks
+        .iter()
+        .map(|h| NormalizedHook {
+            name: format!("{VIBE_PREFIX}{}", h.name),
+            ..h.clone()
+        })
+        .collect();
+    let (ours, warnings) = vibe_toml(&prefixed, "project");
+    let mut tables = toml_edit::ArrayOfTables::new();
+    if let Some(array) = document.get("hooks").and_then(|i| i.as_array_of_tables()) {
+        for table in array.iter() {
+            let theirs = !table
+                .get("name")
+                .and_then(|n| n.as_str())
+                .is_some_and(|n| n.starts_with(VIBE_PREFIX));
+            if theirs {
+                tables.push(table.clone());
+            }
+        }
+    }
+    if let Some(ours) = ours {
+        let parsed: toml_edit::DocumentMut = ours.parse()?;
+        if let Some(array) = parsed.get("hooks").and_then(|i| i.as_array_of_tables()) {
+            for table in array.iter() {
+                tables.push(table.clone());
+            }
+        }
+    }
+    if tables.is_empty() {
+        document.remove("hooks");
+    } else {
+        document.insert("hooks", toml_edit::Item::ArrayOfTables(tables));
+    }
+    Ok((document.to_string(), warnings))
+}
+
+/// The project hooks of a Vibe `.vibe/hooks.toml`, conforme's prefix taken
+/// off their names.
+pub fn read_vibe_project(text: &str) -> Result<Vec<NormalizedHook>> {
+    Ok(read_vibe(text)?
+        .into_iter()
+        .map(|h| NormalizedHook {
+            name: h
+                .name
+                .strip_prefix(VIBE_PREFIX)
+                .map_or_else(|| h.name.clone(), str::to_string),
+            ..h
+        })
+        .collect())
+}
+
+/// The `conforme` group of an Antigravity `hooks.json` for `hooks`: the
+/// value to set under that key, and a warning for each hook it cannot
+/// express. Other groups are the user's.
+pub fn antigravity_group(hooks: &[NormalizedHook], owner: &str) -> (Option<Value>, Vec<String>) {
+    let (doc, warnings) = antigravity_json(hooks, owner);
+    (
+        doc.and_then(|d| d.get(ANTIGRAVITY_GROUP).cloned()),
+        warnings,
+    )
+}
+
+/// The key of conforme's group in an Antigravity `hooks.json`.
+pub fn antigravity_group_key() -> &'static str {
+    ANTIGRAVITY_GROUP
+}
+
 /// The warning for a tool that runs a plugin's hooks under its own protocol.
-pub fn payload_warning(plugin: &str, tool: &str, blocks: &str) -> String {
+pub fn payload_warning(owner: &str, tool: &str, blocks: &str) -> String {
     format!(
-        "plugin {plugin}: its hooks run in {tool} with {tool}'s own JSON on stdin, and \
+        "{owner}: its hooks run in {tool} with {tool}'s own JSON on stdin, and \
          {blocks}; check each script handles that before relying on it as a guard"
     )
 }
@@ -491,7 +572,7 @@ mod tests {
             hook("PreToolUse", Some("mcp__.*"), "./mcp.sh"),
         ];
         name_hooks(&mut hooks);
-        let (text, warnings) = vibe_toml(&hooks, "kit");
+        let (text, warnings) = vibe_toml(&hooks, "plugin kit");
         let text = text.unwrap();
         assert!(
             text.contains("type = \"pre_tool\"") && text.contains("match = \"bash\""),
@@ -520,7 +601,7 @@ mod tests {
             hook("PreToolUse", Some("TodoWrite"), "./todo.sh"),
         ];
         name_hooks(&mut hooks);
-        let (doc, warnings) = antigravity_json(&hooks, "kit");
+        let (doc, warnings) = antigravity_json(&hooks, "plugin kit");
         let doc = doc.unwrap();
         assert_eq!(doc["conforme"]["PreToolUse"][0]["matcher"], "run_command");
         assert_eq!(

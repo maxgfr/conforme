@@ -166,12 +166,24 @@ impl AiToolAdapter for VibeAdapter {
     /// `.vibe/config.toml` holds the user's models, providers, tools and
     /// theme; conforme only merges `[[mcp_servers]]` into it.
     fn is_shared_file(&self, path: &Path) -> bool {
-        path.ends_with(Path::new(".vibe/config.toml"))
+        path.ends_with(Path::new(".vibe/hooks.toml"))
+            || path.ends_with(Path::new(".vibe/config.toml"))
     }
 
     fn tool_warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
         let mut warnings =
             crate::plugins::bundle_warnings(project_root, config, &crate::plugins::VIBE_PLUGINS);
+        if !config.hooks.is_empty() {
+            if let Ok((_, lost)) = crate::hooks::merge_vibe_project_toml("", &config.hooks) {
+                warnings.extend(lost);
+            }
+            warnings.push(crate::hooks::payload_warning(
+                "project",
+                "Vibe",
+                "a hook blocks only by printing a `deny` decision (a non-zero exit is a warning \
+                 unless `strict`)",
+            ));
+        }
         for plugin in &config.plugins {
             if plugin.disabled {
                 warnings.push(format!(
@@ -307,9 +319,17 @@ impl AiToolAdapter for VibeAdapter {
                     .collect(),
                 mcp_servers,
                 plugins,
+                hooks: crate::config::read_text(&hooks_path(project_root))
+                    .ok()
+                    .and_then(|text| crate::hooks::read_vibe_project(&text).ok())
+                    .unwrap_or_default(),
                 ..Default::default()
             },
         )
+    }
+
+    fn holds_hooks(&self) -> Result<(), &'static str> {
+        Ok(())
     }
 
     fn plugin_shape(&self) -> Option<&'static crate::plugins::PluginShape> {
@@ -358,8 +378,28 @@ impl AiToolAdapter for VibeAdapter {
                 files.push((path, text));
             }
         }
+        // Project hooks (`hooks = true`) in .vibe/hooks.toml, named
+        // `conforme-…`; the user's own hooks there stay.
+        if !config.hooks.is_empty() {
+            let path = hooks_path(project_root);
+            let existing = if path.exists() {
+                crate::config::read_text(&path)?
+            } else {
+                String::new()
+            };
+            let (text, _) = crate::hooks::merge_vibe_project_toml(&existing, &config.hooks)?;
+            if path.exists() || !text.trim().is_empty() {
+                files.push((path, text));
+            }
+        }
         Ok(files)
     }
+}
+
+/// Vibe's project hooks file (https://docs.mistral.ai/vibe/code/cli/hooks),
+/// loaded in a trusted folder.
+fn hooks_path(project_root: &Path) -> PathBuf {
+    project_root.join(".vibe").join("hooks.toml")
 }
 
 #[cfg(test)]

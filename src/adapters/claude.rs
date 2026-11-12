@@ -306,6 +306,10 @@ impl AiToolAdapter for ClaudeAdapter {
         path.ends_with(Path::new(".mcp.json")) || path.ends_with(Path::new(".claude/settings.json"))
     }
 
+    fn holds_hooks(&self) -> Result<(), &'static str> {
+        Ok(())
+    }
+
     fn holds_plugin_refs(&self) -> bool {
         true
     }
@@ -438,6 +442,9 @@ impl AiToolAdapter for ClaudeAdapter {
             plugins,
             plugin_refs,
             marketplaces,
+            hooks: crate::marketplaces::read_settings_hooks(
+                &project_root.join(".claude").join("settings.json"),
+            ),
         };
         if !reads_agents_md_fallback(project_root) {
             return Ok(config);
@@ -594,6 +601,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         }
     }
 
@@ -609,6 +617,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -674,6 +683,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -709,6 +719,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -883,6 +894,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -909,6 +921,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();

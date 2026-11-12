@@ -405,7 +405,8 @@ fn manifest(plugin: &NormalizedPlugin, shape: &PluginShape) -> Result<String> {
             manifest.insert("$schema".into(), Value::String(AGENT_PLUGINS_SCHEMA.into()));
             // "Without the `ai.mistral.vibe` extension, Vibe loads only
             // `skills/` and `mcp.json`": its subagents and hooks need the block.
-            let hooks = crate::hooks::vibe_toml(&plugin.hooks, &plugin.name).0;
+            let hooks =
+                crate::hooks::vibe_toml(&plugin.hooks, &format!("plugin {}", plugin.name)).0;
             if !plugin.agents.is_empty() || hooks.is_some() {
                 manifest.insert(
                     "extensions".into(),
@@ -510,7 +511,9 @@ pub fn generate_plugins(
                         )?,
                     ));
                 }
-                if let (Some(hooks), _) = crate::hooks::vibe_toml(&plugin.hooks, &plugin.name) {
+                if let (Some(hooks), _) =
+                    crate::hooks::vibe_toml(&plugin.hooks, &format!("plugin {}", plugin.name))
+                {
                     files.push((join_rel(&bundle, "ai.mistral.vibe/hooks.toml"), hooks));
                 }
             }
@@ -544,9 +547,10 @@ pub fn generate_plugins(
                         )?,
                     ));
                 }
-                if let (Some(hooks), _) =
-                    crate::hooks::antigravity_json(&plugin.hooks, &plugin.name)
-                {
+                if let (Some(hooks), _) = crate::hooks::antigravity_json(
+                    &plugin.hooks,
+                    &format!("plugin {}", plugin.name),
+                ) {
                     files.push((bundle.join("hooks.json"), json_file(&hooks)?));
                 }
             }
@@ -600,18 +604,26 @@ pub fn bundle_warnings(
     for plugin in config.plugins.iter().filter(|p| !p.hooks.is_empty()) {
         match shape.format {
             BundleFormat::Vibe => {
-                warnings.extend(crate::hooks::vibe_toml(&plugin.hooks, &plugin.name).1);
+                warnings.extend(
+                    crate::hooks::vibe_toml(&plugin.hooks, &format!("plugin {}", plugin.name)).1,
+                );
                 warnings.push(crate::hooks::payload_warning(
-                    &plugin.name,
+                    &format!("plugin {}", plugin.name),
                     "Vibe",
                     "a hook blocks only by printing a `deny` decision (a non-zero exit is a \
                      warning unless `strict`)",
                 ));
             }
             BundleFormat::Antigravity => {
-                warnings.extend(crate::hooks::antigravity_json(&plugin.hooks, &plugin.name).1);
+                warnings.extend(
+                    crate::hooks::antigravity_json(
+                        &plugin.hooks,
+                        &format!("plugin {}", plugin.name),
+                    )
+                    .1,
+                );
                 warnings.push(crate::hooks::payload_warning(
-                    &plugin.name,
+                    &format!("plugin {}", plugin.name),
                     "Antigravity",
                     "a hook blocks only by printing a `decision` (no exit code blocks)",
                 ));

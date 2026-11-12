@@ -127,6 +127,7 @@ impl AiToolAdapter for KiroAdapter {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         })
     }
 
@@ -328,6 +329,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         }
     }
 
@@ -343,6 +345,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -436,6 +439,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -470,6 +474,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -507,6 +512,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -534,6 +540,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();

@@ -237,6 +237,7 @@ impl AiToolAdapter for OpenCodeAdapter {
                 plugins: Vec::new(),
                 plugin_refs: Vec::new(),
                 marketplaces: Vec::new(),
+                hooks: Vec::new(),
             },
         )
     }

@@ -58,6 +58,15 @@ fn target_config<'a>(
             Err(_) => std::borrow::Cow::Borrowed(config),
         }
     };
+    // Copilot CLI reads Claude Code's `.claude/settings.json` hooks itself:
+    // a copy in its own settings would run each hook twice.
+    let config = if source_id == "claude" && target.id() == "copilot" && !config.hooks.is_empty() {
+        let mut without = config.into_owned();
+        without.hooks.clear();
+        std::borrow::Cow::Owned(without)
+    } else {
+        config
+    };
     let Some(source) = find_adapter(source_id) else {
         return config;
     };
@@ -1215,6 +1224,19 @@ fn instructions_rules_and_unheld(
 /// The source config, its plugins checked: each target gets them as bundles
 /// or as its own items (see [`crate::plugins::flatten_for`]); what the tools
 /// without bundles lose is warned about here, once.
+fn gated_hooks(mut config: NormalizedConfig, project_cfg: &ProjectConfig) -> NormalizedConfig {
+    if !project_cfg.hooks && !config.hooks.is_empty() {
+        eprintln!(
+            "  {} the project's {} hook(s) are not synced: a hook script receives each tool's own \
+             payload, so set `hooks = true` in .conformerc.toml once they handle it",
+            "!".yellow(),
+            config.hooks.len()
+        );
+        config.hooks.clear();
+    }
+    config
+}
+
 fn checked_plugins(config: NormalizedConfig) -> Result<NormalizedConfig> {
     if config.plugins.is_empty() {
         return Ok(config);
@@ -1296,7 +1318,10 @@ fn resolve_config(
             .read(project_root)
             .with_context(|| format!("failed to read config from {}", adapter.name()))?;
 
-        return Ok((checked_plugins(config)?, id.clone()));
+        return Ok((
+            gated_hooks(checked_plugins(config)?, project_cfg),
+            id.clone(),
+        ));
     }
 
     // Fallback: read AGENTS.md
@@ -1304,7 +1329,10 @@ fn resolve_config(
     if agents_md.exists() {
         let content = std::fs::read_to_string(&agents_md).context("failed to read AGENTS.md")?;
         let config = markdown::parse_agents_md(&content)?;
-        return Ok((checked_plugins(config)?, "agents.md".to_string()));
+        return Ok((
+            gated_hooks(checked_plugins(config)?, project_cfg),
+            "agents.md".to_string(),
+        ));
     }
 
     bail!(
@@ -1771,6 +1799,14 @@ fn warn_capability_loss(
             "!".yellow(),
             adapter.name(),
             config.mcp_servers.len()
+        );
+    }
+
+    if let (Err(reason), false) = (adapter.holds_hooks(), config.hooks.is_empty()) {
+        eprintln!(
+            "  {} {} does not get the project's hooks: {reason}",
+            "!".yellow(),
+            adapter.name()
         );
     }
 
@@ -2394,11 +2430,13 @@ pub fn run_migrate(
     }
 
     // Read config from source
-    let config = flattened_source(
-        source_adapter
-            .read(project_root)
-            .with_context(|| format!("failed to read config from {}", source_adapter.name()))?,
-    )?;
+    let config =
+        gated_hooks(
+            flattened_source(source_adapter.read(project_root).with_context(|| {
+                format!("failed to read config from {}", source_adapter.name())
+            })?)?,
+            &ProjectConfig::load(project_root)?,
+        );
     if source == "opencode" {
         if let Some(notice) = adapters::opencode::opencode_1_notice(project_root) {
             eprintln!("  {} OpenCode: {notice}", "!".yellow());

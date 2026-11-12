@@ -68,6 +68,17 @@ pub fn read_settings(settings: &Value) -> (Vec<NormalizedPluginRef>, Vec<Normali
     (refs, marketplaces)
 }
 
+/// The project hooks of a Claude Code or Copilot settings file (its `hooks`
+/// key); an unreadable or unparsable file reads as none.
+pub fn read_settings_hooks(path: &Path) -> Vec<crate::config::NormalizedHook> {
+    crate::config::read_text(path)
+        .ok()
+        .and_then(|text| crate::json_settings::parse_jsonc(&text).ok())
+        .and_then(|settings| settings.get("hooks").cloned())
+        .map(|hooks| crate::hooks::read_claude(&hooks))
+        .unwrap_or_default()
+}
+
 /// [`read_settings`] of a settings file; an unreadable or unparsable file
 /// reads as none.
 pub fn read_settings_file(path: &Path) -> (Vec<NormalizedPluginRef>, Vec<NormalizedMarketplace>) {
@@ -83,12 +94,22 @@ pub fn read_settings_file(path: &Path) -> (Vec<NormalizedPluginRef>, Vec<Normali
 /// Code's bundles) and every other key stay, and a marketplace entry keeps
 /// its own keys besides `source` (`autoUpdate`). A source with no marketplace
 /// plugin leaves the file untouched, and one with plugins but no marketplace
-/// (Codex keeps them per user) leaves `extraKnownMarketplaces` alone.
+/// (Codex keeps them per user) leaves `extraKnownMarketplaces` alone. The
+/// project's hooks, when there are any (`hooks = true`), replace its `hooks`
+/// key (Claude Code's shape, which Copilot reads too).
 pub fn settings_file(path: &Path, config: &NormalizedConfig) -> Result<Option<(PathBuf, String)>> {
-    if config.plugin_refs.is_empty() && config.marketplaces.is_empty() {
+    if config.plugin_refs.is_empty() && config.marketplaces.is_empty() && config.hooks.is_empty() {
         return Ok(None);
     }
     let existing = crate::json_settings::load(path)?;
+    let mut set: Vec<(&str, Value)> = Vec::new();
+    if !config.hooks.is_empty() {
+        set.push(("hooks", crate::hooks::claude_json(&config.hooks)));
+    }
+    if config.plugin_refs.is_empty() && config.marketplaces.is_empty() {
+        let json = crate::json_settings::render(existing.as_ref(), &set, &[])?;
+        return Ok(Some((path.to_path_buf(), json)));
+    }
     let key = |name: &str| existing.as_ref().and_then(|f| f.get(name));
     let mut enabled: Map<String, Value> = key("enabledPlugins")
         .and_then(Value::as_object)
@@ -104,7 +125,7 @@ pub fn settings_file(path: &Path, config: &NormalizedConfig) -> Result<Option<(P
     for plugin in &config.plugin_refs {
         enabled.insert(plugin.id(), Value::Bool(plugin.enabled));
     }
-    let mut set = vec![("enabledPlugins", Value::Object(enabled))];
+    set.push(("enabledPlugins", Value::Object(enabled)));
     if !config.marketplaces.is_empty() {
         let old = key("extraKnownMarketplaces").and_then(Value::as_object);
         let mut known = Map::new();

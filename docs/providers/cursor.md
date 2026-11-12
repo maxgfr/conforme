@@ -56,6 +56,7 @@
 
 ## Notes
 
+- Project hooks: not written. Cursor loads Claude Code's hooks itself ("Include Third-Party Plugins, Skills, and Other Configs", on by default: https://cursor.com/docs/reference/third-party-hooks); `sync` says so when the source has hooks (`hooks = true`)
 - `.mdc` is Cursor's custom markdown format used for **rules only** (same as `.md` with YAML frontmatter). A plain `.md` file in `.cursor/rules/` is ignored by Cursor
 - `.cursor/rules/` may be organised in subdirectories; conforme reads nested `.mdc` rules too (written back flat, one file per rule name)
 - Subagents use plain `.md` (not `.mdc`) — per Cursor's v2.4 docs

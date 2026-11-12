@@ -106,6 +106,13 @@ pub trait AiToolAdapter: Send + Sync {
         false
     }
 
+    /// Whether conforme writes the project's hooks (`hooks = true`) for this
+    /// tool (Claude Code, Copilot, Codex, Antigravity, Vibe), and why not for
+    /// the others.
+    fn holds_hooks(&self) -> Result<(), &'static str> {
+        Err("it has no declarative project hooks file conforme writes")
+    }
+
     /// What the tool will not load as written, for `sync` and `migrate` to
     /// print: a setting it cannot express, or a file in the project it refuses.
     /// Computed from the config as the tool gets it ([`Self::tool_warnings`]

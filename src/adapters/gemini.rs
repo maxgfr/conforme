@@ -175,6 +175,7 @@ impl AiToolAdapter for GeminiAdapter {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         if !self.reads_agents_md(project_root) {
             return Ok(config);

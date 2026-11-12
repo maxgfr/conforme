@@ -489,6 +489,7 @@ mod tests {
             }],
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         }
     }
 

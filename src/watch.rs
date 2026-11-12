@@ -311,6 +311,7 @@ pub(crate) fn source_locations(id: &str) -> &'static [&'static str] {
             ".vibe/prompts",
             ".vibe/plugins",
             ".vibe/config.toml",
+            ".vibe/hooks.toml",
             ".agents/skills",
         ],
         "antigravity" => &[
@@ -320,6 +321,7 @@ pub(crate) fn source_locations(id: &str) -> &'static [&'static str] {
             ".agents/skills",
             ".agents/agents",
             ".agents/plugins",
+            ".agents/hooks.json",
             ".agents/mcp_config.json",
         ],
         "kilo" => &[

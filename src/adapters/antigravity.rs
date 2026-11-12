@@ -24,6 +24,11 @@ fn agents_dir(project_root: &Path) -> PathBuf {
     project_root.join(".agents").join("agents")
 }
 
+/// Antigravity's project hooks file (https://antigravity.google/docs/hooks/).
+fn hooks_path(project_root: &Path) -> PathBuf {
+    project_root.join(".agents").join("hooks.json")
+}
+
 fn mcp_path(project_root: &Path) -> PathBuf {
     project_root.join(".agents").join("mcp_config.json")
 }
@@ -191,7 +196,7 @@ impl AiToolAdapter for AntigravityAdapter {
     }
 
     fn is_shared_file(&self, path: &Path) -> bool {
-        path.ends_with(".agents/mcp_config.json")
+        path.ends_with(".agents/mcp_config.json") || path.ends_with(".agents/hooks.json")
     }
 
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
@@ -216,6 +221,14 @@ impl AiToolAdapter for AntigravityAdapter {
             config,
             &crate::plugins::ANTIGRAVITY_PLUGINS,
         );
+        if !config.hooks.is_empty() {
+            warnings.extend(crate::hooks::antigravity_group(&config.hooks, "project").1);
+            warnings.push(crate::hooks::payload_warning(
+                "project",
+                "Antigravity",
+                "a hook blocks only by printing a `decision` (no exit code blocks)",
+            ));
+        }
         for skill in config.skills.iter().filter(|s| s.manual_invocation) {
             warnings.push(format!(
                 "Antigravity has no manual-only skills: {} can be used automatically there",
@@ -292,6 +305,11 @@ impl AiToolAdapter for AntigravityAdapter {
                     &crate::plugins::ANTIGRAVITY_PLUGINS,
                     &|_| None,
                 )?,
+                hooks: crate::config::read_text(&hooks_path(project_root))
+                    .ok()
+                    .and_then(|text| crate::json_settings::parse_jsonc(&text).ok())
+                    .map(|doc| crate::hooks::read_antigravity(&doc))
+                    .unwrap_or_default(),
                 ..Default::default()
             },
         )?;
@@ -343,7 +361,26 @@ impl AiToolAdapter for AntigravityAdapter {
             &config.plugins,
             &crate::plugins::ANTIGRAVITY_PLUGINS,
         )?);
+
+        // Project hooks (`hooks = true`) in the `conforme` group of
+        // .agents/hooks.json; the user's other groups stay.
+        if let (Some(group), _) = crate::hooks::antigravity_group(&config.hooks, "project") {
+            let path = hooks_path(project_root);
+            let existing = crate::json_settings::load(&path)?;
+            files.push((
+                path,
+                crate::json_settings::render(
+                    existing.as_ref(),
+                    &[(crate::hooks::antigravity_group_key(), group)],
+                    &[],
+                )?,
+            ));
+        }
         Ok(files)
+    }
+
+    fn holds_hooks(&self) -> Result<(), &'static str> {
+        Ok(())
     }
 
     fn plugin_shape(&self) -> Option<&'static crate::plugins::PluginShape> {

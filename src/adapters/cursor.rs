@@ -33,6 +33,12 @@ impl AiToolAdapter for CursorAdapter {
         project_root.join(".cursor").is_dir() || project_root.join(".cursorrules").exists()
     }
 
+    /// Cursor loads Claude Code's hooks itself ("Include Third-Party Plugins, Skills,
+    /// and Other Configs", on by default: https://cursor.com/docs/reference/third-party-hooks).
+    fn holds_hooks(&self) -> Result<(), &'static str> {
+        Err("it loads Claude Code's .claude/settings.json hooks itself; its own .cursor/hooks.json is not written")
+    }
+
     fn capabilities(&self) -> crate::adapters::AdapterCapabilities {
         crate::adapters::AdapterCapabilities {
             activation_modes: true,
@@ -132,6 +138,7 @@ impl AiToolAdapter for CursorAdapter {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         })
     }
 
@@ -316,6 +323,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         }
     }
 
@@ -331,6 +339,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -357,6 +366,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -439,6 +449,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -475,6 +486,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -515,6 +527,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -542,6 +555,7 @@ mod tests {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
