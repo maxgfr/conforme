@@ -44,7 +44,7 @@ fn target_config<'a>(
         adapter
             .managed_directories(project_root)
             .into_iter()
-            .filter(|d| d.orphan_suffix.is_none() && d.superseded_by.is_none())
+            .filter(|d| d.kind == adapters::ManagedKind::Skills && d.superseded_by.is_none())
             .map(|d| d.path)
             .collect()
     };
@@ -2489,7 +2489,7 @@ pub fn run_migrate(
     let bundled_skill_dirs: Vec<std::path::PathBuf> = source_adapter
         .managed_directories(project_root)
         .iter()
-        .filter(|dir| dir.orphan_suffix.is_none())
+        .filter(|dir| dir.kind == adapters::ManagedKind::Skills)
         .flat_map(|dir| bundled_skill_folders(&dir.path))
         .collect();
     // A source file may really be a staying tool's: reached through a link
@@ -3072,10 +3072,10 @@ fn bundled_skill_folders(skills_dir: &Path) -> Vec<std::path::PathBuf> {
 /// flat skill) was not migrated, so it stays.
 fn migrated_files(dir: &adapters::ManagedDir) -> Result<Vec<std::path::PathBuf>> {
     let files = collect_files_recursive(&dir.path)?;
-    Ok(match dir.orphan_suffix {
+    Ok(match dir.kind {
         // A nested file of a directory the tool reads only at its top level
         // was never read: it stays.
-        Some(suffix) => files
+        adapters::ManagedKind::Files(suffix) => files
             .into_iter()
             .filter(|path| {
                 (dir.recursive || path.parent() == Some(dir.path.as_path()))
@@ -3090,7 +3090,7 @@ fn migrated_files(dir: &adapters::ManagedDir) -> Result<Vec<std::path::PathBuf>>
         // when the tool scans it recursively. Any other sub-folder is the
         // user's, and so is a skill nested inside a skill folder: readers
         // stop at the first `SKILL.md` and bundle nothing below another.
-        None => files
+        adapters::ManagedKind::Skills => files
             .into_iter()
             .filter(|path| {
                 // The folders between the skills directory and the file,
