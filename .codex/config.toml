@@ -1,1 +1,4 @@
 # Project-local Codex configuration. MCP servers are managed by conforme.
+
+[plugins."conforme-dev@conforme"]
+enabled = true

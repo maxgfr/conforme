@@ -1,0 +1,16 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "author": {
+    "name": "Maxime Golfier"
+  },
+  "description": "Checks and reviews for working on conforme: the pre-push checks, and a reviewer for the docs every behaviour change must keep in step.",
+  "keywords": [
+    "conforme",
+    "rust",
+    "review"
+  ],
+  "license": "MIT",
+  "name": "conforme-dev",
+  "repository": "https://github.com/maxgfr/conforme",
+  "version": "1.0.0"
+}

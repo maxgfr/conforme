@@ -1,0 +1,20 @@
+{
+  "interface": {
+    "displayName": "Project plugins"
+  },
+  "name": "conforme",
+  "plugins": [
+    {
+      "category": "Productivity",
+      "name": "conforme-dev",
+      "policy": {
+        "authentication": "ON_INSTALL",
+        "installation": "AVAILABLE"
+      },
+      "source": {
+        "path": "./.codex/plugins/conforme-dev",
+        "source": "local"
+      }
+    }
+  ]
+}

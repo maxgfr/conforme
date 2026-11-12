@@ -205,6 +205,26 @@ error, in `sync` and in `conforme add`. A hand-written AGENTS.md is compared
 with the source once flattened, so one whose plugin holds a skill the tool
 source lacks is refused rather than replaced.
 
+## Example: this repository
+
+conforme syncs its own configuration (`source = "claude"`), and holds one
+plugin as a working example: [`conforme-dev`](../.claude/skills/conforme-dev/),
+a Claude Code bundle with a `pre-push` skill, a `docs-sync-reviewer` subagent
+and a README. One `conforme sync` writes it as:
+
+| Tool | Files |
+|---|---|
+| Claude Code (source) | `.claude/skills/conforme-dev/` (`.claude-plugin/plugin.json`, `skills/pre-push/`, `agents/docs-sync-reviewer.md`) |
+| Mistral Vibe | `.vibe/plugins/conforme-dev/` (`plugin.json`, `skills/pre-push/`, `ai.mistral.vibe/agents/docs-sync-reviewer.toml`, `README.md`) |
+| Codex | `.codex/plugins/conforme-dev/` (`plugin.json`, `skills/pre-push/`, `README.md`), listed in `.agents/plugins/marketplace.json` and enabled by `[plugins."conforme-dev@conforme"]` in `.codex/config.toml`; its subagent is `.codex/agents/docs-sync-reviewer.toml` |
+| Cursor, Copilot, Gemini CLI, Kiro, OpenCode, Kilo Code | the skill in their skills folder, the subagent in their agents folder |
+| Devin, Zoo Code, Zed, DeepSeek Harness | the skill in their skills folder (they have no subagents) |
+
+CI's `conforme check` fails if any of these copies drifts from the bundle.
+Checked when added: `claude plugin validate --strict` passes on the bundle,
+Vibe 3.1.2's plugin resolver loads it with no issue, and Codex CLI 0.167.2
+lists and installs `conforme-dev@conforme` from the repository marketplace.
+
 ## How each tool loads plugins
 
 Two mechanisms exist in a repository: a **bundle** committed in a folder the
