@@ -2211,3 +2211,174 @@ fn test_roundtrip_claude_rule_body_starting_with_a_dash_line() {
     let notes = read.rules.iter().find(|r| r.name == "notes").unwrap();
     assert_eq!(notes.content, content);
 }
+
+/// A config holding two plugins: one with every component and a loose file,
+/// one disabled.
+fn plugin_config() -> NormalizedConfig {
+    use conforme::config::NormalizedPlugin;
+    let kit = NormalizedPlugin {
+        name: "review-kit".to_string(),
+        description: "Code review tools".to_string(),
+        version: Some("1.2.0".to_string()),
+        author: Some("Jane Doe".to_string()),
+        license: Some("MIT".to_string()),
+        keywords: vec!["review".to_string(), "lint".to_string()],
+        instructions: "Review every change.".to_string(),
+        rules: vec![NormalizedRule {
+            name: "style".to_string(),
+            content: "Prefer const.".to_string(),
+            activation: ActivationMode::GlobMatch(vec!["**/*.ts".to_string()]),
+        }],
+        skills: vec![NormalizedSkill {
+            name: "lint".to_string(),
+            description: "Run the linter".to_string(),
+            content: "Run `npm run lint`.".to_string(),
+            files: [("scripts/lint.sh".to_string(), "npm run lint\n".to_string())].into(),
+            ..Default::default()
+        }],
+        agents: vec![NormalizedAgent {
+            name: "reviewer".to_string(),
+            description: "Reviews diffs".to_string(),
+            content: "Review the diff.".to_string(),
+            ..Default::default()
+        }],
+        mcp_servers: rich_config().mcp_servers,
+        files: [("README.md".to_string(), "# Review kit\n".to_string())].into(),
+        ..Default::default()
+    };
+    let off = NormalizedPlugin {
+        name: "off-kit".to_string(),
+        description: "Switched off".to_string(),
+        disabled: true,
+        skills: vec![NormalizedSkill {
+            name: "noop".to_string(),
+            description: "Does nothing".to_string(),
+            content: "Nothing.".to_string(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    NormalizedConfig {
+        instructions: "Be helpful.".to_string(),
+        plugins: vec![kit, off],
+        ..Default::default()
+    }
+}
+
+/// Claude Code, Mistral Vibe and Antigravity CLI write each plugin as a
+/// bundle and read it back whole, and what they read generates the same
+/// files again.
+#[test]
+fn test_roundtrip_plugin_bundles() {
+    let adapters: Vec<(Box<dyn AiToolAdapter>, &str, bool)> = vec![
+        (
+            Box::new(conforme::adapters::claude::ClaudeAdapter),
+            ".claude",
+            false,
+        ),
+        (
+            Box::new(conforme::adapters::vibe::VibeAdapter),
+            ".vibe",
+            false,
+        ),
+        (
+            Box::new(conforme::adapters::antigravity::AntigravityAdapter),
+            ".agents/rules",
+            true,
+        ),
+    ];
+    for (adapter, marker_dir, holds_rules) in adapters {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join(marker_dir)).unwrap();
+        let config = plugin_config();
+        let files = adapter.generate(dir.path(), &config).unwrap();
+        for (path, text) in &files {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+
+        let read = adapter.read(dir.path()).unwrap();
+        let name = adapter.name();
+        assert_eq!(read.plugins.len(), 2, "{name}: {:?}", read.plugins);
+        let kit = read
+            .plugins
+            .iter()
+            .find(|p| p.name == "review-kit")
+            .unwrap();
+        assert_eq!(kit.description, "Code review tools", "{name}");
+        assert_eq!(kit.version.as_deref(), Some("1.2.0"), "{name}");
+        assert_eq!(kit.author.as_deref(), Some("Jane Doe"), "{name}");
+        assert_eq!(kit.license.as_deref(), Some("MIT"), "{name}");
+        assert_eq!(kit.keywords, ["review", "lint"], "{name}");
+        assert!(!kit.disabled, "{name}");
+        assert_eq!(kit.skills.len(), 1, "{name}");
+        assert_eq!(kit.skills[0].content, "Run `npm run lint`.", "{name}");
+        assert_eq!(
+            kit.skills[0]
+                .files
+                .get("scripts/lint.sh")
+                .map(String::as_str),
+            Some("npm run lint\n"),
+            "{name}"
+        );
+        assert_eq!(kit.agents.len(), 1, "{name}");
+        assert_eq!(kit.agents[0].content, "Review the diff.", "{name}");
+        assert_eq!(
+            mcp_names(&NormalizedConfig {
+                mcp_servers: kit.mcp_servers.clone(),
+                ..Default::default()
+            }),
+            ["api", "fs"],
+            "{name}"
+        );
+        assert_eq!(
+            kit.files.get("README.md").map(String::as_str),
+            Some("# Review kit\n"),
+            "{name}"
+        );
+        if holds_rules {
+            assert_eq!(kit.instructions, "Review every change.", "{name}");
+            assert_eq!(kit.rules[0].name, "style", "{name}");
+        } else {
+            // The bundle has no rules: they are the tool's own.
+            assert!(
+                kit.rules.is_empty() && kit.instructions.is_empty(),
+                "{name}"
+            );
+        }
+        let off = read.plugins.iter().find(|p| p.name == "off-kit").unwrap();
+        assert!(off.disabled, "{name}: the disabled state reads back");
+
+        let again = adapter.generate(dir.path(), &read).unwrap();
+        let mut expected = files.clone();
+        let mut regenerated = again.clone();
+        expected.sort();
+        regenerated.sort();
+        assert_eq!(regenerated, expected, "{name}: read → generate differs");
+    }
+}
+
+/// A bundle folder written by hand (no conforme marker) is never written
+/// over, and the tool warns about the plugin it cannot write.
+#[test]
+fn test_hand_written_bundle_is_left_alone() {
+    let adapter = conforme::adapters::vibe::VibeAdapter;
+    let dir = TempDir::new().unwrap();
+    let bundle = dir.path().join(".vibe/plugins/review-kit");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::write(bundle.join("plugin.json"), "{\"name\": \"mine\"}\n").unwrap();
+
+    let config = plugin_config();
+    let files = adapter.generate(dir.path(), &config).unwrap();
+    assert!(
+        !files.iter().any(|(path, _)| path.starts_with(&bundle)),
+        "{files:?}"
+    );
+    let warnings = adapter.warnings(dir.path(), &config);
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("plugin review-kit is not written")),
+        "{warnings:?}"
+    );
+}

@@ -16,7 +16,7 @@ pub struct KiroAdapter;
 
 impl AiToolAdapter for KiroAdapter {
     /// What its variable syntax cannot carry (see [`crate::mcp::env_ref_losses`]).
-    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+    fn tool_warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
         crate::mcp::env_ref_losses(
             &config.mcp_servers,
             crate::mcp::EnvRefStyle::DollarNoDefault,
@@ -128,7 +128,7 @@ impl AiToolAdapter for KiroAdapter {
         })
     }
 
-    fn generate(
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,

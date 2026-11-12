@@ -91,7 +91,7 @@ impl AiToolAdapter for ZooCodeAdapter {
     /// Zoo resolves only `${env:VAR}` and `${workspaceFolder}` in
     /// `.roo/mcp.json` (`McpHub.ts`, `injectVariables`); the other VS Code
     /// variables conforme passes through stay literal.
-    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+    fn tool_warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
         const LITERAL: &[&str] = &[
             "${userHome}",
             "${workspaceFolderBasename}",
@@ -189,7 +189,7 @@ impl AiToolAdapter for ZooCodeAdapter {
         })
     }
 
-    fn generate(
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,

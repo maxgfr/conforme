@@ -256,9 +256,14 @@ pub fn print_help_ai() {
          MCP section in it with `<!-- plugin: <name> -->`."
     );
     println!(
-        "  Every tool gets the plugin's content as its own: its instructions as an always-on \
-         rule named after it, the rest under their names (`<plugin>-<name>` on a clash). \
-         Items using ${{PLUGIN_ROOT}} and disabled plugins are left out, with a warning."
+        "  Bundles: Claude Code .claude/skills/<plugin>/.claude-plugin/plugin.json, Mistral Vibe \
+         .vibe/plugins/<plugin>/plugin.json (Agent Plugins 1.0), Antigravity CLI \
+         .agents/plugins/<plugin>/plugin.json; conforme's carry a .conforme-plugin marker."
+    );
+    println!(
+        "  Every other tool gets the plugin's content as its own: its instructions as an \
+         always-on rule named after it, the rest under their names (`<plugin>-<name>` on a \
+         clash). Items using ${{PLUGIN_ROOT}} and disabled plugins are left out, with a warning."
     );
     println!();
     println!(

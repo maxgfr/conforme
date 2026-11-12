@@ -5947,25 +5947,38 @@ fn test_plugin_content_reaches_every_tool() {
     assert!(rule.contains("alwaysApply: true"), "{rule}");
     assert!(rule.contains("Review every change before merging."));
     for skill in [
-        ".claude/skills/lint/SKILL.md",
         ".cursor/skills/lint/SKILL.md",
         ".agents/skills/lint/SKILL.md",
     ] {
         let text = fs::read_to_string(root.join(skill)).unwrap();
         assert!(text.contains("Run `npm run lint`."), "{skill}: {text}");
     }
-    assert!(fs::read_to_string(root.join(".claude/agents/reviewer.md"))
-        .unwrap()
-        .contains("Review the diff for bugs."));
     assert!(fs::read_to_string(root.join(".codex/agents/reviewer.toml"))
         .unwrap()
         .contains("Review the diff for bugs."));
-    let mcp = fs::read_to_string(root.join(".mcp.json")).unwrap();
+    let mcp = fs::read_to_string(root.join(".cursor/mcp.json")).unwrap();
     assert!(
         mcp.contains("\"docs\"") && mcp.contains("https://example.com/mcp"),
         "{mcp}"
     );
-    // Claude Code keeps an always-on rule in CLAUDE.md.
+    // Claude Code holds the plugin as a bundle in .claude/skills/<plugin>/.
+    let bundle = root.join(".claude/skills/review-kit");
+    let manifest = fs::read_to_string(bundle.join(".claude-plugin/plugin.json")).unwrap();
+    assert!(manifest.contains("\"name\": \"review-kit\""), "{manifest}");
+    assert!(manifest.contains("\"version\": \"1.2.0\""), "{manifest}");
+    assert!(fs::read_to_string(bundle.join("skills/lint/SKILL.md"))
+        .unwrap()
+        .contains("Run `npm run lint`."));
+    assert!(fs::read_to_string(bundle.join("agents/reviewer.md"))
+        .unwrap()
+        .contains("Review the diff for bugs."));
+    assert!(fs::read_to_string(bundle.join(".mcp.json"))
+        .unwrap()
+        .contains("https://example.com/mcp"));
+    assert!(!root.join(".claude/skills/lint").exists());
+    assert!(!root.join(".mcp.json").exists());
+    // Its bundle has no rules: the instructions are an always-on rule, in
+    // CLAUDE.md.
     assert!(fs::read_to_string(root.join("CLAUDE.md"))
         .unwrap()
         .contains("Review every change before merging."));
@@ -6082,6 +6095,239 @@ fn test_native_agents_md_reader_carries_plugins() {
     assert!(fs::read_to_string(root.join(".cursor/agents/reviewer.md"))
         .unwrap()
         .contains("Review the diff for bugs."));
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}
+
+/// A Claude Code project holding a plugin bundle in `.claude/skills/`.
+fn claude_plugin_project() -> TempDir {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    let bundle = root.join(".claude/skills/review-kit");
+    fs::create_dir_all(bundle.join(".claude-plugin")).unwrap();
+    fs::create_dir_all(bundle.join("skills/lint")).unwrap();
+    fs::create_dir_all(bundle.join("commands")).unwrap();
+    fs::create_dir_all(bundle.join("hooks")).unwrap();
+    fs::write(
+        bundle.join(".claude-plugin/plugin.json"),
+        r#"{"name": "review-kit", "version": "2.0.0", "description": "Review tools"}"#,
+    )
+    .unwrap();
+    fs::write(
+        bundle.join("skills/lint/SKILL.md"),
+        "---\nname: lint\ndescription: Run the linter\n---\nRun lint.\n",
+    )
+    .unwrap();
+    fs::write(
+        bundle.join("commands/triage.md"),
+        "---\ndescription: Triage issues\n---\nTriage the open issues.\n",
+    )
+    .unwrap();
+    fs::write(bundle.join("hooks/hooks.json"), "{\"hooks\": {}}\n").unwrap();
+    fs::write(root.join("CLAUDE.md"), "# Project\nUse TypeScript.\n").unwrap();
+    fs::write(root.join(".conformerc.toml"), "source = \"claude\"\n").unwrap();
+    for tool in [".cursor", ".vibe", ".agents/rules"] {
+        fs::create_dir_all(root.join(tool)).unwrap();
+    }
+    dir
+}
+
+/// A Claude Code bundle reaches Vibe and Antigravity as bundles of their own
+/// format and Cursor as its own skills; a second sync changes nothing.
+#[test]
+fn test_claude_bundle_reaches_bundle_tools_and_flat_tools() {
+    let dir = claude_plugin_project();
+    let root = dir.path();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let vibe = root.join(".vibe/plugins/review-kit");
+    let manifest = fs::read_to_string(vibe.join("plugin.json")).unwrap();
+    assert!(manifest.contains("agent-plugins.org/schemas/1.0.0/plugin.schema.json"));
+    assert!(manifest.contains("\"version\": \"2.0.0\""), "{manifest}");
+    assert!(fs::read_to_string(vibe.join("skills/lint/SKILL.md"))
+        .unwrap()
+        .contains("Run lint."));
+    // The command is a skill of the plugin elsewhere.
+    assert!(fs::read_to_string(vibe.join("skills/triage/SKILL.md"))
+        .unwrap()
+        .contains("Triage the open issues."));
+    // A loose file of the bundle travels with it.
+    assert_eq!(
+        fs::read_to_string(vibe.join("hooks/hooks.json")).unwrap(),
+        "{\"hooks\": {}}\n"
+    );
+    let agy = root.join(".agents/plugins/review-kit");
+    assert!(fs::read_to_string(agy.join("plugin.json"))
+        .unwrap()
+        .contains("antigravity.google/schemas/v1/plugin.json"));
+    assert!(fs::read_to_string(agy.join("skills/lint/SKILL.md"))
+        .unwrap()
+        .contains("Run lint."));
+    assert!(
+        fs::read_to_string(root.join(".cursor/skills/lint/SKILL.md"))
+            .unwrap()
+            .contains("Run lint.")
+    );
+    assert!(!root.join(".cursor/skills/review-kit").exists());
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+    let before = fs::read_to_string(vibe.join("plugin.json")).unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(vibe.join("plugin.json")).unwrap(),
+        before
+    );
+}
+
+/// A plugin that leaves the source takes conforme's bundles with it, never a
+/// bundle written by hand nor Codex's marketplace file beside them.
+#[test]
+fn test_plugin_leaving_the_source_removes_only_conformes_bundles() {
+    let dir = claude_plugin_project();
+    let root = dir.path();
+    let mine = root.join(".vibe/plugins/mine");
+    fs::create_dir_all(&mine).unwrap();
+    fs::write(mine.join("plugin.json"), "{\"name\": \"mine\"}\n").unwrap();
+    fs::create_dir_all(root.join(".agents/plugins")).unwrap();
+    let marketplace = root.join(".agents/plugins/marketplace.json");
+    fs::write(&marketplace, "{\"name\": \"local\", \"plugins\": []}\n").unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert!(root.join(".vibe/plugins/review-kit/plugin.json").is_file());
+    assert!(root
+        .join(".agents/plugins/review-kit/plugin.json")
+        .is_file());
+
+    fs::remove_dir_all(root.join(".claude/skills/review-kit")).unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .failure();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    assert!(!root.join(".vibe/plugins/review-kit").exists());
+    assert!(!root.join(".agents/plugins/review-kit").exists());
+    assert!(!root.join(".cursor/skills/lint").exists());
+    assert_eq!(
+        fs::read_to_string(mine.join("plugin.json")).unwrap(),
+        "{\"name\": \"mine\"}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&marketplace).unwrap(),
+        "{\"name\": \"local\", \"plugins\": []}\n"
+    );
+}
+
+/// A disabled plugin stays off in every bundle tool: Claude Code's manifest
+/// `defaultEnabled`, Antigravity's `disabled`, Vibe's `disabled_plugins`.
+#[test]
+fn test_disabled_plugin_stays_off_in_bundle_tools() {
+    let dir = claude_plugin_project();
+    let root = dir.path();
+    fs::write(
+        root.join(".claude/settings.json"),
+        "{\"enabledPlugins\": {\"review-kit@skills-dir\": false}}\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("plugin review-kit is disabled"));
+
+    assert!(
+        fs::read_to_string(root.join(".agents/plugins/review-kit/plugin.json"))
+            .unwrap()
+            .contains("\"disabled\": true")
+    );
+    assert!(fs::read_to_string(root.join(".vibe/config.toml"))
+        .unwrap()
+        .contains("disabled_plugins = [\"review-kit\"]"));
+    // Cursor has no switch: it does not get the plugin's skills.
+    assert!(!root.join(".cursor/skills/lint").exists());
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+}
+
+/// `migrate` to a tool without bundles carries the plugin's content and
+/// leaves the source bundle in place: its hooks have nowhere else to go.
+#[test]
+fn test_migrate_keeps_the_source_bundle() {
+    let dir = claude_plugin_project();
+    let root = dir.path();
+    conforme()
+        .args([
+            "-C",
+            root.to_str().unwrap(),
+            "migrate",
+            "--source",
+            "claude",
+            "--output",
+            "cursor",
+        ])
+        .assert()
+        .success();
+    assert!(
+        fs::read_to_string(root.join(".cursor/skills/lint/SKILL.md"))
+            .unwrap()
+            .contains("Run lint.")
+    );
+    let bundle = root.join(".claude/skills/review-kit");
+    assert!(bundle.join(".claude-plugin/plugin.json").is_file());
+    assert!(bundle.join("hooks/hooks.json").is_file());
+    assert!(bundle.join("skills/lint/SKILL.md").is_file());
+}
+
+/// A folder that is both a skill and a plugin (a root `SKILL.md` beside the
+/// manifest) is a skill elsewhere without the plugin's files attached.
+#[test]
+fn test_hybrid_skill_and_plugin_folder() {
+    let dir = claude_plugin_project();
+    let root = dir.path();
+    let bundle = root.join(".claude/skills/review-kit");
+    fs::write(
+        bundle.join("SKILL.md"),
+        "---\nname: review-kit\ndescription: Review entry point\n---\nStart a review.\n",
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let skill = root.join(".cursor/skills/review-kit");
+    assert!(fs::read_to_string(skill.join("SKILL.md"))
+        .unwrap()
+        .contains("Start a review."));
+    assert!(!skill.join(".claude-plugin").exists());
+    assert!(!skill.join("hooks").exists());
+    assert!(!skill.join("skills").exists());
+    // The plugin still reaches the bundle tools.
+    assert!(root
+        .join(".vibe/plugins/review-kit/skills/lint/SKILL.md")
+        .is_file());
     conforme()
         .args(["-C", root.to_str().unwrap(), "check"])
         .assert()

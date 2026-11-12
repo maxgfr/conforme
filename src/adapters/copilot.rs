@@ -27,7 +27,7 @@ const CLI_BUILTIN_AGENTS: &[&str] = &[
 impl AiToolAdapter for CopilotAdapter {
     /// What its variable syntax cannot carry (see [`crate::mcp::env_ref_losses`])
     /// and the agents Copilot CLI's built-in ones shadow.
-    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+    fn tool_warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
         let mut warnings = crate::mcp::env_ref_losses(
             &config.mcp_servers,
             crate::mcp::EnvRefStyle::EnvColon,
@@ -193,7 +193,7 @@ impl AiToolAdapter for CopilotAdapter {
         })
     }
 
-    fn generate(
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,

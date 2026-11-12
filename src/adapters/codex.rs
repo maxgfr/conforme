@@ -208,7 +208,7 @@ impl AiToolAdapter for CodexAdapter {
         path.ends_with(Path::new(".codex/config.toml"))
     }
 
-    fn warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+    fn tool_warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
         // Codex loads project `.codex/` layers (config.toml, so the MCP
         // servers, and agents/) only in a trusted project; skills are not gated.
         let gated = !config.mcp_servers.is_empty()
@@ -310,7 +310,7 @@ impl AiToolAdapter for CodexAdapter {
         )
     }
 
-    fn generate(
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,

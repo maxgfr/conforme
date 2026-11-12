@@ -64,6 +64,48 @@ fn existing_agent_tools(agents_dir: &Path, name: &str) -> Option<serde_norway::V
     agent_file_fields(&agents_dir.join(format!("{name}.md")))?.remove("tools")
 }
 
+/// The rules Antigravity loads from `dir` (`.agents/rules/`, or a plugin
+/// bundle's `rules/`): its top-level `.md` files with a valid `trigger`. A
+/// file it discards (no valid `trigger`, broken frontmatter, a bundle's
+/// `rules/AGENTS.md`) is not one of its rules.
+pub(crate) fn read_rules_in(dir: &Path) -> Result<Vec<NormalizedRule>> {
+    let mut rules = Vec::new();
+    for path in top_level_rule_files(dir)? {
+        let Some((mut fields, body)) = crate::config::read_text(&path)
+            .ok()
+            .and_then(|content| antigravity_rule(&content))
+        else {
+            continue;
+        };
+        // "singular `glob:` is also accepted" (antigravity.google/docs/rules).
+        if !fields.contains_key("globs") {
+            if let Some(glob) = fields.remove("glob") {
+                fields.insert("globs".to_string(), glob);
+            }
+        }
+        let name = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        rules.push(NormalizedRule {
+            name,
+            content: body.trim().to_string(),
+            activation: parse_devin_activation(&fields),
+        });
+    }
+    Ok(rules)
+}
+
+/// The subagents in `agents_dir` (`.agents/agents/`, or a plugin bundle's
+/// `agents/`), built-in overrides left out.
+pub(crate) fn read_agents_in(agents_dir: &Path) -> Result<Vec<crate::config::NormalizedAgent>> {
+    Ok(crate::skills::read_agents_from_dir(agents_dir, false)?
+        .into_iter()
+        .filter(|agent| !is_builtin_agent(&agent.name))
+        .collect())
+}
+
 /// Antigravity rule files in `dir` (`.agents/rules/`, or a plugin bundle's
 /// `rules/`): Devin's `trigger` vocabulary.
 pub(crate) fn generate_rules_in(
@@ -162,11 +204,18 @@ impl AiToolAdapter for AntigravityAdapter {
             }),
             ManagedDir::subdirs(project_root.join(".agents").join("skills")),
             ManagedDir::files_except(agents_dir(project_root), ".md", is_builtin_agent_file),
+            // Codex keeps its repository marketplace (`marketplace.json`) here
+            // too: only bundle folders are ever conforme's.
+            ManagedDir::bundles(project_root.join(".agents").join("plugins")),
         ]
     }
 
-    fn warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
-        let mut warnings = Vec::new();
+    fn tool_warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+        let mut warnings = crate::plugins::bundle_warnings(
+            project_root,
+            config,
+            &crate::plugins::ANTIGRAVITY_PLUGINS,
+        );
         for skill in config.skills.iter().filter(|s| s.manual_invocation) {
             warnings.push(format!(
                 "Antigravity has no manual-only skills: {} can be used automatically there",
@@ -219,39 +268,10 @@ impl AiToolAdapter for AntigravityAdapter {
     }
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
-        let mut file_rules = Vec::new();
-        for path in top_level_rule_files(&rules_dir(project_root))? {
-            // A file Antigravity discards (no valid `trigger`, broken
-            // frontmatter) is not one of its rules.
-            let Some((mut fields, body)) = crate::config::read_text(&path)
-                .ok()
-                .and_then(|content| antigravity_rule(&content))
-            else {
-                continue;
-            };
-            // "singular `glob:` is also accepted" (antigravity.google/docs/rules).
-            if !fields.contains_key("globs") {
-                if let Some(glob) = fields.remove("glob") {
-                    fields.insert("globs".to_string(), glob);
-                }
-            }
-            let name = path
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            file_rules.push(NormalizedRule {
-                name,
-                content: body.trim().to_string(),
-                activation: parse_devin_activation(&fields),
-            });
-        }
+        let file_rules = read_rules_in(&rules_dir(project_root))?;
         let skills =
             crate::skills::read_skills_from_dir(&project_root.join(".agents").join("skills"))?;
-        let agents = crate::skills::read_agents_from_dir(&agents_dir(project_root), false)?
-            .into_iter()
-            .filter(|agent| !is_builtin_agent(&agent.name))
-            .collect();
+        let agents = read_agents_in(&agents_dir(project_root))?;
         let mut mcp_servers = Vec::new();
         let mcp_path = mcp_path(project_root);
         if mcp_path.exists() {
@@ -266,6 +286,12 @@ impl AiToolAdapter for AntigravityAdapter {
                 skills,
                 agents,
                 mcp_servers,
+                // The manifest's `disabled` is the only switch in the project.
+                plugins: crate::plugins::read_plugins(
+                    project_root,
+                    &crate::plugins::ANTIGRAVITY_PLUGINS,
+                    &|_| None,
+                )?,
                 ..Default::default()
             },
         )?;
@@ -282,7 +308,7 @@ impl AiToolAdapter for AntigravityAdapter {
         Ok(config)
     }
 
-    fn generate(
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,
@@ -310,7 +336,18 @@ impl AiToolAdapter for AntigravityAdapter {
             &crate::mcp::ANTIGRAVITY_SHAPE.owned_keys(),
             &[],
         )?);
+
+        // Plugin bundles as .agents/plugins/<plugin>/plugin.json.
+        files.extend(crate::plugins::generate_plugins(
+            project_root,
+            &config.plugins,
+            &crate::plugins::ANTIGRAVITY_PLUGINS,
+        )?);
         Ok(files)
+    }
+
+    fn plugin_shape(&self) -> Option<&'static crate::plugins::PluginShape> {
+        Some(&crate::plugins::ANTIGRAVITY_PLUGINS)
     }
 }
 

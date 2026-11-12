@@ -44,6 +44,79 @@ fn is_builtin_agent(name: &str) -> bool {
     name == RESERVED_AGENT || BUILTIN_AGENTS.contains(&name.as_str())
 }
 
+/// The `enabled_plugins` and `disabled_plugins` lists of a Vibe
+/// `config.toml` (Vibe's `vibe/core/plugins/_enablement.py`:
+/// https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/plugins/_enablement.py).
+fn plugin_switches(config_text: &str) -> (Vec<String>, Vec<String>) {
+    let table = config_text.parse::<toml::Table>().unwrap_or_default();
+    let list = |key: &str| -> Vec<String> {
+        table
+            .get(key)
+            .and_then(toml::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    (list("enabled_plugins"), list("disabled_plugins"))
+}
+
+/// `config_text` with `disabled_plugins` naming exactly the disabled ones of
+/// `plugins`: a plugin conforme writes is added or removed there, any other
+/// name the list holds is the user's and stays. An empty list is removed.
+fn merge_disabled_plugins(
+    config_text: &str,
+    plugins: &[crate::config::NormalizedPlugin],
+) -> Result<String> {
+    let mut document: toml_edit::DocumentMut = config_text.parse().map_err(|e| {
+        anyhow::anyhow!("failed to parse .vibe/config.toml, nothing was changed: {e}")
+    })?;
+    let ours: Vec<String> = plugins
+        .iter()
+        .map(|p| crate::config::sanitize_name(&p.name))
+        .collect();
+    let mut names: Vec<String> = document
+        .get("disabled_plugins")
+        .and_then(|item| item.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .filter(|name| !ours.contains(name))
+                .collect()
+        })
+        .unwrap_or_default();
+    names.extend(
+        plugins
+            .iter()
+            .filter(|p| p.disabled)
+            .map(|p| crate::config::sanitize_name(&p.name)),
+    );
+    let unchanged = document
+        .get("disabled_plugins")
+        .and_then(|item| item.as_array())
+        .is_some_and(|items| {
+            items.len() == names.len()
+                && items.iter().zip(&names).all(|(a, b)| a.as_str() == Some(b))
+        });
+    if unchanged {
+        return Ok(config_text.to_string());
+    }
+    if names.is_empty() {
+        document.remove("disabled_plugins");
+    } else {
+        let mut array = toml_edit::Array::new();
+        for name in names {
+            array.push(name);
+        }
+        document["disabled_plugins"] = toml_edit::value(array);
+    }
+    Ok(document.to_string())
+}
+
 fn config_path(project_root: &Path) -> PathBuf {
     project_root.join(".vibe").join("config.toml")
 }
@@ -96,8 +169,37 @@ impl AiToolAdapter for VibeAdapter {
         path.ends_with(Path::new(".vibe/config.toml"))
     }
 
-    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
-        let mut warnings = Vec::new();
+    fn tool_warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+        let mut warnings =
+            crate::plugins::bundle_warnings(project_root, config, &crate::plugins::VIBE_PLUGINS);
+        for plugin in &config.plugins {
+            if plugin.disabled {
+                warnings.push(format!(
+                    "plugin {} is switched off by `disabled_plugins` in .vibe/config.toml, which \
+                     Vibe reads since 3.1.2: an older Vibe loads it",
+                    plugin.name
+                ));
+            }
+            for server in &plugin.mcp_servers {
+                if matches!(server.transport, crate::config::McpTransport::Sse { .. }) {
+                    warnings.push(format!(
+                        "plugin {}: MCP server {}: Vibe plugins have no SSE transport, so it is \
+                         written as streamable HTTP and connects only if the server speaks that too",
+                        plugin.name, server.name
+                    ));
+                }
+                let reaches_out = crate::mcp::server_strings(server)
+                    .iter()
+                    .any(|(_, v)| v.contains("${") && !crate::plugins::uses_plugin_root(v));
+                if reaches_out {
+                    warnings.push(format!(
+                        "plugin {}: MCP server {}: a Vibe plugin expands only ${{PLUGIN_ROOT}} \
+                         and ${{PLUGIN_DATA}}, so any other ${{VAR}} is passed as written",
+                        plugin.name, server.name
+                    ));
+                }
+            }
+        }
         for agent in &config.agents {
             let name = crate::config::sanitize_name(&agent.name);
             if name == RESERVED_AGENT {
@@ -149,6 +251,7 @@ impl AiToolAdapter for VibeAdapter {
     fn managed_directories(&self, project_root: &Path) -> Vec<ManagedDir> {
         vec![
             ManagedDir::subdirs(project_root.join(".vibe").join("skills")),
+            ManagedDir::bundles(project_root.join(".vibe").join("plugins")),
             // An agent file that is not a subagent is a mode the user defined,
             // and one named like a built-in agent overrides it on purpose.
             ManagedDir::files_except(project_root.join(".vibe").join("agents"), ".toml", |path| {
@@ -167,11 +270,31 @@ impl AiToolAdapter for VibeAdapter {
                 crate::skills::read_skills_from_dir(&project_root.join(".agents").join("skills"))?;
         }
         let path = config_path(project_root);
+        let config_text = if path.exists() {
+            crate::config::read_text(&path)?
+        } else {
+            String::new()
+        };
         let mcp_servers = if path.exists() {
-            crate::mcp::parse_vibe_mcp_toml(&crate::config::read_text(&path)?)?
+            crate::mcp::parse_vibe_mcp_toml(&config_text)?
         } else {
             Vec::new()
         };
+        let (enabled, disabled) = plugin_switches(&config_text);
+        let plugins = crate::plugins::read_plugins(
+            project_root,
+            &crate::plugins::VIBE_PLUGINS,
+            // "a disable beats an enable".
+            &|name| {
+                if disabled.iter().any(|n| n == name) {
+                    Some(false)
+                } else if enabled.iter().any(|n| n == name) {
+                    Some(true)
+                } else {
+                    None
+                }
+            },
+        )?;
         crate::markdown::read_native_agents_md(
             project_root,
             INSTRUCTION_FILES,
@@ -183,12 +306,17 @@ impl AiToolAdapter for VibeAdapter {
                     .filter(|a| !is_builtin_agent(&a.name))
                     .collect(),
                 mcp_servers,
+                plugins,
                 ..Default::default()
             },
         )
     }
 
-    fn generate(
+    fn plugin_shape(&self) -> Option<&'static crate::plugins::PluginShape> {
+        Some(&crate::plugins::VIBE_PLUGINS)
+    }
+
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,
@@ -206,18 +334,29 @@ impl AiToolAdapter for VibeAdapter {
             .cloned()
             .collect();
         files.extend(crate::skills::generate_vibe_agents(project_root, &agents)?);
-        // A source with no MCP server leaves the user's config untouched.
-        if !config.mcp_servers.is_empty() {
+        files.extend(crate::plugins::generate_plugins(
+            project_root,
+            &config.plugins,
+            &crate::plugins::VIBE_PLUGINS,
+        )?);
+        // A source with no MCP server and no plugin leaves the user's config
+        // untouched.
+        if !config.mcp_servers.is_empty() || !config.plugins.is_empty() {
             let path = config_path(project_root);
-            let existing = if path.exists() {
+            let mut text = if path.exists() {
                 crate::config::read_text(&path)?
             } else {
                 String::new()
             };
-            files.push((
-                path,
-                crate::mcp::merge_vibe_mcp_toml(&existing, &config.mcp_servers)?,
-            ));
+            if !config.mcp_servers.is_empty() {
+                text = crate::mcp::merge_vibe_mcp_toml(&text, &config.mcp_servers)?;
+            }
+            if !config.plugins.is_empty() {
+                text = merge_disabled_plugins(&text, &config.plugins)?;
+            }
+            if path.exists() || !text.trim().is_empty() {
+                files.push((path, text));
+            }
         }
         Ok(files)
     }

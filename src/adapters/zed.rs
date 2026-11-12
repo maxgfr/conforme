@@ -41,7 +41,7 @@ impl AiToolAdapter for ZedAdapter {
 
     /// Zed expands no variable in `context_servers` (none documented, none in
     /// `crates/project/src/context_server_store.rs`).
-    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+    fn tool_warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
         config
             .mcp_servers
             .iter()
@@ -111,7 +111,7 @@ impl AiToolAdapter for ZedAdapter {
         })
     }
 
-    fn generate(
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,

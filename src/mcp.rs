@@ -1326,6 +1326,29 @@ pub const ANTIGRAVITY_SHAPE: ServerShape = ServerShape {
     env_refs: EnvRefStyle::Dollar,
 };
 
+/// The `mcpServers` of a Mistral Vibe plugin's `mcp.json` (Agent Plugins
+/// 1.0): `type` is required, `stdio` or `streamable-http`; plugins have no SSE
+/// ("Plugins don't support `sse`", https://docs.mistral.ai/vibe/code/cli/plugins),
+/// so an SSE server is written as streamable HTTP. Only `${PLUGIN_ROOT}` and
+/// `${PLUGIN_DATA}` expand, so other references are written as is.
+pub const VIBE_PLUGIN_SHAPE: ServerShape = ServerShape {
+    layout: Layout::Flat,
+    toggle: None,
+    drop_passthrough_env: false,
+    remote_needs_type: true,
+    stdio_type: Some("stdio"),
+    http_type: Some("streamable-http"),
+    url_key: "url",
+    http_extra: None,
+    env_on_http: false,
+    sse: None,
+    env_refs: EnvRefStyle::Literal,
+};
+
+/// The `$schema` an Agent Plugins 1.0 `mcp.json` must carry.
+pub const AGENT_PLUGINS_MCP_SCHEMA: &str =
+    "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
+
 /// OpenCode 2 `mcp.servers` (https://opencode.ai/docs/mcp-servers/):
 /// `type` is `local` / `remote` (remote is streamable HTTP only, so SSE is
 /// written as `remote` and read back as HTTP), `command` is one

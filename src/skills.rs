@@ -161,7 +161,28 @@ fn bundle_rel(skill_dir: &Path, path: &Path) -> String {
         .join("/")
 }
 
+/// What a Claude Code plugin keeps in its folder besides a root skill: a
+/// folder that is both (a `SKILL.md` beside `.claude-plugin/plugin.json`)
+/// bundles none of it with the skill.
+const PLUGIN_PARTS: &[&str] = &[
+    ".claude-plugin/",
+    "skills/",
+    "commands/",
+    "agents/",
+    "hooks/",
+    "output-styles/",
+    "bin/",
+    ".mcp.json",
+    ".lsp.json",
+    "settings.json",
+    crate::plugins::PLUGIN_MARKER,
+];
+
 fn skill_bundle_paths(skill_dir: &Path) -> Result<Vec<PathBuf>> {
+    let is_plugin = skill_dir
+        .join(".claude-plugin")
+        .join("plugin.json")
+        .is_file();
     let mut found = Vec::new();
     let mut stack = vec![skill_dir.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -173,7 +194,11 @@ fn skill_bundle_paths(skill_dir: &Path) -> Result<Vec<PathBuf>> {
                 }
             } else if path.is_file() {
                 let rel = bundle_rel(skill_dir, &path);
-                if rel != "SKILL.md" && !is_skill_metadata_file(&rel) {
+                let plugin_part = is_plugin
+                    && PLUGIN_PARTS
+                        .iter()
+                        .any(|part| rel == *part || (part.ends_with('/') && rel.starts_with(part)));
+                if rel != "SKILL.md" && !is_skill_metadata_file(&rel) && !plugin_part {
                     found.push(path);
                 }
             }
@@ -593,6 +618,9 @@ pub const CURSOR_SKILLS: SkillShape = shape(".cursor/skills");
 /// required, `disable-model-invocation: true` keeps a skill out of automatic
 /// use.
 pub const VIBE_SKILLS: SkillShape = shape(".vibe/skills");
+/// The `skills/` of an Antigravity CLI plugin bundle (no Codex policy
+/// sidecar there).
+pub const ANTIGRAVITY_PLUGIN_SKILLS: SkillShape = shape(".agents/plugins");
 /// Kiro `.kiro/skills/`.
 pub const KIRO_SKILLS: SkillShape = shape(".kiro/skills");
 /// Zoo Code `.roo/skills/`.
@@ -851,12 +879,23 @@ pub(crate) fn is_vibe_subagent_file(path: &Path) -> bool {
 /// Read Mistral Vibe subagents back from `.vibe/agents/*.toml`. The prompt is
 /// `instructions`, or the `.vibe/prompts/<system_prompt_id>.md` file.
 pub(crate) fn read_vibe_agents(project_root: &Path) -> Result<Vec<NormalizedAgent>> {
-    let agents_dir = project_root.join(".vibe").join("agents");
+    read_vibe_agents_in(
+        &project_root.join(".vibe").join("agents"),
+        &project_root.join(".vibe").join("prompts"),
+    )
+}
+
+/// The subagents in `agents_dir` (`.vibe/agents/`, or a plugin bundle's
+/// `ai.mistral.vibe/agents/`), a `system_prompt_id` read from `prompts_dir`.
+pub(crate) fn read_vibe_agents_in(
+    agents_dir: &Path,
+    prompts_dir: &Path,
+) -> Result<Vec<NormalizedAgent>> {
     let mut agents = Vec::new();
     if !agents_dir.is_dir() {
         return Ok(agents);
     }
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&agents_dir)?
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(agents_dir)?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().is_some_and(|e| e == "toml") && is_vibe_subagent_file(p))
         .collect();
@@ -872,15 +911,7 @@ pub(crate) fn read_vibe_agents(project_root: &Path) -> Result<Vec<NormalizedAgen
         let content = match text("instructions") {
             Some(instructions) => instructions,
             None => text("system_prompt_id")
-                .and_then(|id| {
-                    crate::config::read_text(
-                        &project_root
-                            .join(".vibe")
-                            .join("prompts")
-                            .join(format!("{id}.md")),
-                    )
-                    .ok()
-                })
+                .and_then(|id| crate::config::read_text(&prompts_dir.join(format!("{id}.md"))).ok())
                 .unwrap_or_default(),
         };
         let tools = value
