@@ -6675,3 +6675,44 @@ fn test_agents_md_hooks_reach_claude_and_copilot() {
         .assert()
         .success();
 }
+
+/// Codex, Zed and Antigravity share `.agents/skills/`: Zed, which holds no
+/// bundle, gets a plugin's skills there, while Codex and Antigravity hold
+/// them in their bundles. Neither one's orphan cleanup deletes the other's
+/// files, so one sync settles and `check` passes (issue #34).
+#[test]
+fn test_tools_sharing_a_skills_dir_keep_each_others_plugin_skills() {
+    let dir = claude_plugin_project();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::write(root.join(".rules"), "").unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    // Zed's copy, in the shared directory.
+    assert!(
+        fs::read_to_string(root.join(".agents/skills/lint/SKILL.md"))
+            .unwrap()
+            .contains("Run lint.")
+    );
+    // Codex's and Antigravity's, in their bundles.
+    assert!(root
+        .join(".codex/plugins/review-kit/skills/lint/SKILL.md")
+        .is_file());
+    assert!(root
+        .join(".agents/plugins/review-kit/skills/lint/SKILL.md")
+        .is_file());
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("wrote").not());
+    assert!(root.join(".agents/skills/lint/SKILL.md").is_file());
+}

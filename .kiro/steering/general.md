@@ -159,7 +159,9 @@ conforme's old copies: a legacy file or skill whose name is generated in the
 current location (a skill folder that bundles other files is kept).
 
 Directories two tools share (`.agents/skills/` for Codex, Zed and Antigravity CLI):
-`sync::target_config` leaves the source's skills root (or a link to it) to the source, and
+`sync::target_config` leaves the source's skills root (or a link to it) to the source,
+a file another selected target generates there is never an orphan (`sync::shared_files`:
+Zed gets a plugin's skills there, Codex and Antigravity hold them in bundles), and
 `remove` never deletes a file the source or another kept tool also generates.
 `migrate` generates the output through `target_config` too, never deletes a
 file another detected tool generates nor anything in a directory a staying tool

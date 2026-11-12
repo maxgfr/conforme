@@ -60,7 +60,8 @@ src/
                        file reached through a link into what the source reads (`CLAUDE.md -> AGENTS.md`,
                        `.cursor/skills -> ../.claude/skills`: is_source_file, is_one_of, LinkWalk and is_beneath
                        against source_read_paths, all held by TargetGuard, which orphan cleanup obeys too) or that
-                       the source reads through its own link; a link into another tool's directory yields; remove and migrate
+                       the source reads through its own link; a link into another tool's directory yields; a file another selected target
+                       generates in a directory both manage is never an orphan (shared_files); remove and migrate
                        never delete a file that really is the source's or a staying tool's, migrate replaces an
                        output link into the source with a file or directory of its own;
                        generated_agents_md is compared by check and diff too; check validates the config;
