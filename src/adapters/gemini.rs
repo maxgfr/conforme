@@ -172,6 +172,7 @@ impl AiToolAdapter for GeminiAdapter {
             skills,
             agents,
             mcp_servers,
+            plugins: Vec::new(),
         };
         if !self.reads_agents_md(project_root) {
             return Ok(config);

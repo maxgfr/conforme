@@ -67,6 +67,8 @@ conforme diff                        # Show what would change
 conforme check                       # CI check (exit 1 if out of sync)
 conforme status                      # Show tools and sync state
 conforme add rule "Name" --activation "glob **/*.ts"
+conforme add plugin review-kit       # Group entries in a plugin...
+conforme add skill lint --plugin review-kit  # ...and add to it
 conforme watch                       # Auto-sync on file changes
 conforme remove cursor,devin         # Remove generated files
 conforme migrate --source gemini --output opencode  # Migrate between tools
@@ -189,6 +191,29 @@ Review all changes for correctness and security.
 ```
 
 Metadata comments are read only in the comment lines right after a section's heading (`<!--activation:manual-->` and any case of the mode are accepted), so an example comment further down, in a code block for instance, stays text. `args` and `tools` take comma-separated values and `env` and `headers` comma-separated `Name=Value` pairs; a value that holds a comma, a line break or `-->`, or that starts or ends with a space, is written in JSON form instead (`<!-- args: ["--tables=users,orders"] -->`, `<!-- env: {"LIST":"a,b"} -->`, `<!-- description: "line 1\nline 2" -->`), and both forms are read. `conforme add` checks that the entry leaves a valid config (no duplicate or colliding name, a pattern after `glob`) before writing it.
+
+### Plugins
+
+A plugin groups rules, skills, agents and MCP servers under one name, with the metadata of a plugin manifest. Declare it with a `## Plugin:` section (its body is instructions the plugin always adds) and place any `## Rule:`, `## Skill:`, `## Agent:` or `## MCP:` section in it with a `<!-- plugin: <name> -->` comment, before or after the plugin's own section:
+
+```markdown
+## Plugin: review-kit
+<!-- description: Code review tools -->
+<!-- version: 1.2.0 -->
+<!-- author: Jane Doe -->
+<!-- keywords: review, lint -->
+
+Review every change before merging.
+
+## Skill: lint
+<!-- plugin: review-kit -->
+<!-- description: Run the linter -->
+Run `npm run lint`.
+```
+
+Other keys: `homepage`, `repository`, `license`, and `disabled: true` for a plugin that is installed but switched off. `conforme add plugin <name>` adds the section, and `--plugin <name>` on `add rule|skill|agent|mcp` places an entry in it.
+
+No tool yet gets the plugin as a bundle: each one receives the plugin's content as its own (the instructions as an always-on rule named after the plugin, the rest under their own names). An item whose name the project already uses is written as `<plugin>-<name>`, and left out when that is taken too; an item that uses the plugin's own folder (`${PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_ROOT}`, …) only works inside a bundle and is left out; a disabled plugin is left out whole. Each case is warned about. Two plugins of the same name are an error. See [docs/plugins.md](docs/plugins.md).
 
 ### Feature matrix
 

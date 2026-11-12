@@ -469,6 +469,7 @@ mod tests {
                 },
                 env: Default::default(),
             }],
+            plugins: Vec::new(),
         }
     }
 

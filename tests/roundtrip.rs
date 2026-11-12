@@ -49,6 +49,7 @@ fn rich_config() -> NormalizedConfig {
                 env: Default::default(),
             },
         ],
+        plugins: Vec::new(),
     }
 }
 
@@ -87,6 +88,7 @@ fn roundtrip_config() -> NormalizedConfig {
         skills: vec![],
         mcp_servers: vec![],
         agents: vec![],
+        plugins: Vec::new(),
     }
 }
 

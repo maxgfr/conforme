@@ -390,6 +390,7 @@ impl AiToolAdapter for ClaudeAdapter {
             skills,
             agents,
             mcp_servers,
+            plugins: Vec::new(),
         };
         if !reads_agents_md_fallback(project_root) {
             return Ok(config);
@@ -527,6 +528,7 @@ mod tests {
             skills: vec![],
             mcp_servers: vec![],
             agents: vec![],
+            plugins: Vec::new(),
         }
     }
 
@@ -539,6 +541,7 @@ mod tests {
             skills: vec![],
             mcp_servers: vec![],
             agents: vec![],
+            plugins: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -601,6 +604,7 @@ mod tests {
             }],
             mcp_servers: vec![],
             agents: vec![],
+            plugins: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -633,6 +637,7 @@ mod tests {
                 tools: vec!["codebase".to_string()],
                 ..Default::default()
             }],
+            plugins: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -804,6 +809,7 @@ mod tests {
                 env: BTreeMap::new(),
             }],
             agents: vec![],
+            plugins: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();
@@ -827,6 +833,7 @@ mod tests {
             skills: vec![],
             mcp_servers: vec![],
             agents: vec![],
+            plugins: Vec::new(),
         };
         let root = Path::new("/tmp/test");
         let files = adapter.generate(root, &config).unwrap();

@@ -305,6 +305,7 @@ impl AiToolAdapter for CodexAdapter {
                 skills,
                 agents: crate::skills::read_codex_agents(project_root)?,
                 mcp_servers,
+                plugins: Vec::new(),
             },
         )
     }

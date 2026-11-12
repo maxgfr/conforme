@@ -706,7 +706,7 @@ fn carried_agents_md_sections(
     if markdown::generated_from(&existing).is_some_and(|id| id != source_id) {
         return NormalizedConfig::default();
     }
-    let Ok(old) = markdown::parse_agents_md(&existing) else {
+    let Ok(old) = parse_agents_md_flat(&existing) else {
         return NormalizedConfig::default();
     };
     let caps = source.capabilities();
@@ -759,7 +759,7 @@ fn refuse_hand_written_agents_md(
     // The generated file holds instructions and rules only: the skills,
     // agents and MCP servers of the hand-written one must be in the source
     // too, or replacing it loses them.
-    let old = markdown::parse_agents_md(&existing).ok();
+    let old = parse_agents_md_flat(&existing).ok();
     // Sections the source cannot hold are carried into the generated file
     // (see [`carried_agents_md_sections`]): only those it could hold count.
     let carried = carried_agents_md_sections(&path, source_id, config);
@@ -988,7 +988,7 @@ fn rules_outside_agents_md(
     if config.rules.is_empty() || !source.source_files(project_root).contains(&path) {
         return Ok(Vec::new());
     }
-    let in_file = markdown::parse_agents_md(&std::fs::read_to_string(&path)?)?.rules;
+    let in_file = parse_agents_md_flat(&std::fs::read_to_string(&path)?)?.rules;
     let normalize = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
     Ok(unheld_rules(held, project_root, output, config)?
         .into_iter()
@@ -1192,6 +1192,32 @@ fn instructions_rules_and_unheld(
     })
 }
 
+/// The source config as every target gets it: no tool holds a plugin bundle
+/// yet, so each plugin's rules, skills, agents and MCP servers become the
+/// config's own (see [`crate::plugins::flatten`]), with a warning for what
+/// that leaves out.
+fn flattened_source(config: NormalizedConfig) -> Result<NormalizedConfig> {
+    if config.plugins.is_empty() {
+        return Ok(config);
+    }
+    let (config, warnings) = crate::plugins::flatten(&config)?;
+    for warning in warnings {
+        eprintln!("  {} {warning}", "!".yellow());
+    }
+    Ok(config)
+}
+
+/// An AGENTS.md read the way the source is ([`flattened_source`], without its
+/// warnings), so it compares with it: a `## Skill:` section placed in a
+/// plugin is the same skill once flattened.
+fn parse_agents_md_flat(text: &str) -> Result<NormalizedConfig> {
+    let config = markdown::parse_agents_md(text)?;
+    if config.plugins.is_empty() {
+        return Ok(config);
+    }
+    Ok(crate::plugins::flatten(&config)?.0)
+}
+
 /// Resolve the source config: reads from the configured source tool or AGENTS.md.
 fn resolve_config(
     project_root: &Path,
@@ -1229,7 +1255,7 @@ fn resolve_config(
             .read(project_root)
             .with_context(|| format!("failed to read config from {}", adapter.name()))?;
 
-        return Ok((config, id.clone()));
+        return Ok((flattened_source(config)?, id.clone()));
     }
 
     // Fallback: read AGENTS.md
@@ -1237,7 +1263,7 @@ fn resolve_config(
     if agents_md.exists() {
         let content = std::fs::read_to_string(&agents_md).context("failed to read AGENTS.md")?;
         let config = markdown::parse_agents_md(&content)?;
-        return Ok((config, "agents.md".to_string()));
+        return Ok((flattened_source(config)?, "agents.md".to_string()));
     }
 
     bail!(
@@ -2312,9 +2338,11 @@ pub fn run_migrate(
     }
 
     // Read config from source
-    let config = source_adapter
-        .read(project_root)
-        .with_context(|| format!("failed to read config from {}", source_adapter.name()))?;
+    let config = flattened_source(
+        source_adapter
+            .read(project_root)
+            .with_context(|| format!("failed to read config from {}", source_adapter.name()))?,
+    )?;
     if source == "opencode" {
         if let Some(notice) = adapters::opencode::opencode_1_notice(project_root) {
             eprintln!("  {} OpenCode: {notice}", "!".yellow());
@@ -2793,28 +2821,45 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
         content.push('\n');
     }
 
+    // The comment that places an entry in a plugin, right after its heading.
+    let plugin_line = |plugin: &Option<String>| {
+        plugin
+            .as_ref()
+            .map(|p| format!("<!-- plugin: {p} -->\n"))
+            .unwrap_or_default()
+    };
+    let in_plugin = |plugin: &Option<String>| {
+        plugin
+            .as_ref()
+            .map(|p| format!(" in plugin '{}'", p.bold()))
+            .unwrap_or_default()
+    };
     let added = match target {
         AddTarget::Rule {
             name,
             activation,
             content: rule_content,
+            plugin,
         } => {
             content.push_str(&format!("\n## Rule: {name}\n"));
+            content.push_str(&plugin_line(plugin));
             content.push_str(&format!("<!-- activation: {activation} -->\n"));
             if !rule_content.is_empty() {
                 content.push_str(&format!("\n{rule_content}\n"));
             } else {
                 content.push_str("\n<!-- Add rule content here -->\n");
             }
-            format!("rule '{}'", name.bold())
+            format!("rule '{}'{}", name.bold(), in_plugin(plugin))
         }
         AddTarget::Skill {
             name,
             description,
             tools,
             content: skill_content,
+            plugin,
         } => {
             content.push_str(&format!("\n## Skill: {name}\n"));
+            content.push_str(&plugin_line(plugin));
             if !description.is_empty() {
                 content.push_str(&format!("<!-- description: {description} -->\n"));
             }
@@ -2826,7 +2871,7 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
             } else {
                 content.push_str("\n<!-- Add skill content here -->\n");
             }
-            format!("skill '{}'", name.bold())
+            format!("skill '{}'{}", name.bold(), in_plugin(plugin))
         }
         AddTarget::Agent {
             name,
@@ -2834,8 +2879,10 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
             model,
             tools,
             content: agent_content,
+            plugin,
         } => {
             content.push_str(&format!("\n## Agent: {name}\n"));
+            content.push_str(&plugin_line(plugin));
             if !description.is_empty() {
                 content.push_str(&format!("<!-- description: {description} -->\n"));
             }
@@ -2850,15 +2897,17 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
             } else {
                 content.push_str("\n<!-- Add agent instructions here -->\n");
             }
-            format!("agent '{}'", name.bold())
+            format!("agent '{}'{}", name.bold(), in_plugin(plugin))
         }
         AddTarget::Mcp {
             name,
             command,
             args,
             url,
+            plugin,
         } => {
             content.push_str(&format!("\n## MCP: {name}\n"));
+            content.push_str(&plugin_line(plugin));
             if let Some(cmd) = command {
                 content.push_str(&format!("<!-- command: {cmd} -->\n"));
                 if !args.is_empty() {
@@ -2868,14 +2917,32 @@ pub fn run_add(project_root: &Path, target: &AddTarget, verbose: bool) -> Result
                 content.push_str(&format!("<!-- url: {u} -->\n"));
             }
             content.push('\n');
-            format!("MCP server '{}'", name.bold())
+            format!("MCP server '{}'{}", name.bold(), in_plugin(plugin))
+        }
+        AddTarget::Plugin {
+            name,
+            description,
+            version,
+            content: plugin_content,
+        } => {
+            content.push_str(&format!("\n## Plugin: {name}\n"));
+            if !description.is_empty() {
+                content.push_str(&format!("<!-- description: {description} -->\n"));
+            }
+            if let Some(v) = version {
+                content.push_str(&format!("<!-- version: {v} -->\n"));
+            }
+            if !plugin_content.is_empty() {
+                content.push_str(&format!("\n{plugin_content}\n"));
+            }
+            format!("plugin '{}'", name.bold())
         }
     };
 
     // The addition must leave a config sync accepts: a duplicate or colliding
     // name, or a glob activation without a pattern, is refused here rather
     // than breaking every later sync.
-    let parsed = markdown::parse_agents_md(&content)
+    let parsed = parse_agents_md_flat(&content)
         .context("the entry would not read back; AGENTS.md was not changed")?;
     if !validate::validate(&parsed, verbose) {
         bail!("Validation failed; AGENTS.md was not changed.");
@@ -2921,7 +2988,7 @@ fn migrated_agents_md(
             return Ok(none());
         }
         let existing = std::fs::read_to_string(&path)?;
-        let mut taken: std::collections::HashSet<String> = markdown::parse_agents_md(&existing)?
+        let mut taken: std::collections::HashSet<String> = parse_agents_md_flat(&existing)?
             .rules
             .iter()
             .map(|r| crate::config::rule_file_name(&r.name))
@@ -2977,7 +3044,7 @@ fn migrated_agents_md(
     // (an agent Zed cannot hold) are carried into the new one, unless the
     // output holds them in its own files, where the caller writes them. Text
     // the source lacks is the user's: refused.
-    let old = markdown::parse_agents_md(&existing).ok();
+    let old = parse_agents_md_flat(&existing).ok();
     let carried = old
         .as_ref()
         .map(|old| sections_missing_from(config, old))

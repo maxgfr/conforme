@@ -9,6 +9,7 @@ pub mod hook;
 pub mod json_settings;
 pub mod markdown;
 pub mod mcp;
+pub mod plugins;
 pub mod project_config;
 pub mod skills;
 pub mod sync;
