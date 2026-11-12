@@ -277,6 +277,24 @@ impl AiToolAdapter for AntigravityAdapter {
                 ));
             }
         }
+        // A plugin server's `${VAR}` expands only when the server declares it
+        // in `variables` ("interpolated as `${ACME_API_TOKEN}`",
+        // https://antigravity.google/docs/build-plugins/); `agy plugin validate
+        // --strict` fails on one that is not, which it passes as written.
+        for plugin in &config.plugins {
+            for server in &plugin.mcp_servers {
+                if crate::mcp::server_strings(server)
+                    .iter()
+                    .any(|(_, s)| s.contains("${"))
+                {
+                    warnings.push(format!(
+                        "plugin {}: MCP server {} has a ${{VAR}} that Antigravity passes as \
+                         written, since the server declares no `variables`",
+                        plugin.name, server.name
+                    ));
+                }
+            }
+        }
         warnings
     }
 
@@ -990,6 +1008,41 @@ mod tests {
             "{warnings:?}"
         );
         assert!(warnings[0].contains("SSE"), "{warnings:?}");
+    }
+
+    #[test]
+    fn test_antigravity_warns_about_plugin_server_variables() {
+        // `agy plugin validate --strict`: "`${API_TOKEN}` isn't declared in
+        // "variables", so it's passed as is".
+        let project = tempfile::TempDir::new().unwrap();
+        let config = NormalizedConfig {
+            plugins: vec![crate::config::NormalizedPlugin {
+                name: "kit".to_string(),
+                description: "Kit".to_string(),
+                mcp_servers: vec![crate::config::NormalizedMcpServer {
+                    name: "api".to_string(),
+                    transport: crate::config::McpTransport::Http {
+                        url: "https://example.com/mcp".to_string(),
+                        headers: [(
+                            "Authorization".to_string(),
+                            "Bearer ${API_TOKEN}".to_string(),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    },
+                    env: Default::default(),
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let warnings = AntigravityAdapter.warnings(project.path(), &config);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.starts_with("plugin kit: MCP server api has a ${VAR}")),
+            "{warnings:?}"
+        );
     }
 
     #[test]

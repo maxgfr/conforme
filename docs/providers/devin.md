@@ -2,7 +2,7 @@
 
 > Cognition's AI IDE, formerly Windsurf. Source: `--from devin`
 
-**Last verified online:** 2026-11-09, against Devin Desktop 3.12.28 and Devin CLI 3000.12.17 (https://docs.devin.ai/desktop/changelog, https://docs.devin.ai/cli/changelog/stable)
+**Last verified online:** 2026-11-12, against Devin Desktop 3.12.43 and Devin CLI 3000.12.43 (https://docs.devin.ai/desktop/changelog, https://docs.devin.ai/cli/changelog/stable)
 
 Windsurf was renamed Devin Desktop in v3.0.12 (2026-06-02). Since v3.6.21
 (2026-07-29) new tabs defaulted to the **Devin Local** agent, and v3.9.19
@@ -32,6 +32,9 @@ conforme's tool id was `windsurf` until 4.0.0 and is now `devin`.
 - CLI extensibility (`.devin/` layout, imported files): https://docs.devin.ai/cli/extensibility/index
 - CLI configuration (layers and precedence): https://docs.devin.ai/cli/extensibility/configuration
 - CLI plugins: https://docs.devin.ai/cli/extensibility/plugins/overview
+- CLI plugins quickstart: https://docs.devin.ai/cli/extensibility/plugins/quickstart
+- CLI hooks: https://docs.devin.ai/cli/extensibility/hooks/overview
+- CLI lifecycle hooks: https://docs.devin.ai/cli/extensibility/hooks/lifecycle-hooks
 
 ## Config files
 
@@ -80,7 +83,7 @@ conforme's tool id was `windsurf` until 4.0.0 and is now `devin`.
 - Project MCP servers live in `.devin/mcp_config.json`: the CLI configuration reference says "Only `permissions`, `read_config_from`, and `hooks` are available in project configs. `mcpServers` can also be set at both levels, but lives in the dedicated `mcp_config.json` files" (https://docs.devin.ai/cli/reference/configuration/config-file) (the older Devin Local page still shows `config.json`)
 - Devin also imports other tools' files (`.cursor/rules`, `.claude/skills`, `.github/skills`, …): with those targets synced too, the same rules and skills reach Devin twice. It imports MCP servers as well, from `.cursor/mcp.json`, `.mcp.json`, `.claude/settings.json`, `opencode.json` and `.zed/settings.json` (https://docs.devin.ai/cli/reference/configuration/read-config-from), so a synced server can reach Devin from several files. `read_config_from` in `.devin/config.json` turns an import off per tool
 - Devin Local also reads `CLAUDE.md`, `.cursor/rules/`, `AGENTS.md`, `AGENT.md` and a personal `AGENTS.local.md` (https://docs.devin.ai/cli/extensibility/rules); AGENTS.md at the root is always-on, and in a subdirectory it applies to `<dir>/**`
-- Devin also loads skills from `.agents/skills/`, `.claude/skills/` and `.cursor/skills/`, so a skill can appear twice when Codex/Zed, Claude Code or Cursor are synced too
+- Devin also loads skills from `.agents/skills/` and `.kiro/skills/`, and "also reads skills that other tools keep in their own directories" "such as `.claude/skills/`, `.github/skills/`, `.codex/skills/`" (https://docs.devin.ai/cli/extensibility/skills/overview), so a skill can appear twice when Codex/Zed, Kiro, Claude Code or Copilot are synced too; `.cursor/skills/` is not among them
 - `globs` is written as one comma-separated string, the historical Windsurf form, with brace groups expanded (`src/*.{ts,tsx}` → `src/*.ts, src/*.tsx`); a YAML list is also read. Whether the current agent splits a comma-separated string is not documented (unverified)
 - Subagents (`.devin/agents/`, also `.agents/agents/`) are marked experimental upstream and are not generated yet (known gap)
 - Hooks and workflows are Devin-specific and not synced

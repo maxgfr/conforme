@@ -69,14 +69,32 @@ pub fn read_settings(settings: &Value) -> (Vec<NormalizedPluginRef>, Vec<Normali
 }
 
 /// The project hooks of a Claude Code or Copilot settings file (its `hooks`
-/// key); an unreadable or unparsable file reads as none.
-pub fn read_settings_hooks(path: &Path) -> Vec<crate::config::NormalizedHook> {
+/// key, read by `read`: `hooks::read_claude` or `hooks::read_copilot`); an
+/// unreadable or unparsable file reads as none.
+pub fn read_settings_hooks(
+    path: &Path,
+    read: fn(&Value) -> Vec<crate::config::NormalizedHook>,
+) -> Vec<crate::config::NormalizedHook> {
     crate::config::read_text(path)
         .ok()
         .and_then(|text| crate::json_settings::parse_jsonc(&text).ok())
         .and_then(|settings| settings.get("hooks").cloned())
-        .map(|hooks| crate::hooks::read_claude(&hooks))
+        .map(|hooks| read(&hooks))
         .unwrap_or_default()
+}
+
+/// The `hooks` value of a settings file for the project's hooks, in its
+/// tool's shape.
+pub type HooksJson = fn(&[crate::config::NormalizedHook]) -> Option<Value>;
+
+/// Claude Code's `hooks` value.
+pub fn claude_hooks(hooks: &[crate::config::NormalizedHook]) -> Option<Value> {
+    Some(crate::hooks::claude_json(hooks))
+}
+
+/// Copilot's `hooks` value, without the hooks it has no event for.
+pub fn copilot_hooks(hooks: &[crate::config::NormalizedHook]) -> Option<Value> {
+    crate::hooks::copilot_json(hooks, "project").0
 }
 
 /// [`read_settings`] of a settings file; an unreadable or unparsable file
@@ -96,15 +114,24 @@ pub fn read_settings_file(path: &Path) -> (Vec<NormalizedPluginRef>, Vec<Normali
 /// plugin leaves the file untouched, and one with plugins but no marketplace
 /// (Codex keeps them per user) leaves `extraKnownMarketplaces` alone. The
 /// project's hooks, when there are any (`hooks = true`), replace its `hooks`
-/// key (Claude Code's shape, which Copilot reads too).
-pub fn settings_file(path: &Path, config: &NormalizedConfig) -> Result<Option<(PathBuf, String)>> {
-    if config.plugin_refs.is_empty() && config.marketplaces.is_empty() && config.hooks.is_empty() {
+/// key, in the shape `hooks_json` gives them.
+pub fn settings_file(
+    path: &Path,
+    config: &NormalizedConfig,
+    hooks_json: HooksJson,
+) -> Result<Option<(PathBuf, String)>> {
+    let hooks = if config.hooks.is_empty() {
+        None
+    } else {
+        hooks_json(&config.hooks)
+    };
+    if config.plugin_refs.is_empty() && config.marketplaces.is_empty() && hooks.is_none() {
         return Ok(None);
     }
     let existing = crate::json_settings::load(path)?;
     let mut set: Vec<(&str, Value)> = Vec::new();
-    if !config.hooks.is_empty() {
-        set.push(("hooks", crate::hooks::claude_json(&config.hooks)));
+    if let Some(hooks) = hooks {
+        set.push(("hooks", hooks));
     }
     if config.plugin_refs.is_empty() && config.marketplaces.is_empty() {
         let json = crate::json_settings::render(existing.as_ref(), &set, &[])?;
@@ -271,7 +298,9 @@ mod tests {
             }],
             ..Default::default()
         };
-        let (_, text) = settings_file(&path, &config).unwrap().unwrap();
+        let (_, text) = settings_file(&path, &config, claude_hooks)
+            .unwrap()
+            .unwrap();
         assert!(
             text.contains("// mine") && text.contains("\"model\": \"opus\""),
             "{text}"
@@ -290,7 +319,9 @@ mod tests {
         assert_eq!(read_markets.len(), 1);
 
         let empty = NormalizedConfig::default();
-        assert!(settings_file(&path, &empty).unwrap().is_none());
+        assert!(settings_file(&path, &empty, claude_hooks)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

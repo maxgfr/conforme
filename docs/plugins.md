@@ -47,10 +47,19 @@ equivalent for (`TodoWrite`, an `mcp__…` pattern), is left out with a warning.
 A hook script receives each tool's own JSON on stdin and blocks its own way
 (Vibe: printing a `deny` decision, a non-zero exit being a warning unless
 `strict`; Antigravity: printing a `decision`), so Vibe and Antigravity warn
-that a translated guard must handle their payload. Codex bundles hold no hooks
-(`plugin_hooks` is `removed` in Codex CLI 0.167.2), nor does any tool without
-bundles: `sync` names the hooks they do not get. The translated hooks pass
-`agy plugin validate --strict` and load in Vibe 3.1.0's resolver.
+that a translated guard must handle their payload. Matchers are read the way
+Claude Code reads them: "`Edit|Write` and `Edit, Write` each match either
+tool" (https://code.claude.com/docs/en/hooks). Antigravity runs a plugin's
+hook in the plugin root and asks for "relative paths (such as `node
+./scripts/policy.mjs`) rather than `${PLUGIN_ROOT}`"
+(https://antigravity.google/docs/build-plugins/), so `${PLUGIN_ROOT}/` is
+written `./` there and read back as `${PLUGIN_ROOT}/`. Codex bundles hold no
+hooks: Codex loads none from a plugin with an Agent Plugins manifest, the root
+`plugin.json` conforme writes (`codex-rs/core-plugins/src/loader.rs`, Codex
+CLI 0.167.2, although its plugin docs show `extensions.com.openai.hooks` in
+that manifest); nor does any tool without bundles: `sync` names the hooks they
+do not get. The translated hooks pass `agy plugin validate --strict` and load
+in Vibe 3.1.2's resolver.
 
 Each bundle conforme writes holds a `.conforme-plugin` marker, so it is kept in
 step with the source and deleted once its plugin leaves it. A bundle folder
@@ -139,12 +148,12 @@ and the matcher use Claude Code's names.
 | Tool | Where | Owned by conforme |
 |---|---|---|
 | Claude Code | `.claude/settings.json` `hooks` ([hooks](https://code.claude.com/docs/en/hooks)) | the `hooks` key, as the source has it; every other key stays |
-| GitHub Copilot | `.github/copilot/settings.json` `hooks`, Claude Code's shape, part of "the shared cross-tool subset" ([config directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)) | the `hooks` key; nothing is written there when Claude Code is the source, since Copilot CLI reads `.claude/settings.json` hooks itself |
-| Codex | `.codex/hooks.json`, Claude Code's shape ([hooks](https://learn.chatgpt.com/docs/hooks)) | the `hooks` key; Codex runs a project hook once it is trusted and approved (`/hooks`) |
+| GitHub Copilot | `.github/copilot/settings.json` `hooks`, "keyed by event name. Uses the same schema as `.github/hooks/*.json` files" ([config directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)): one flat entry per hook (`type`, `command`, `matcher`, `timeoutSec`) under the Claude Code event name, which selects Claude Code's tool names in matchers ([hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference)) | the `hooks` key; only `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` and `SessionStart`, the Claude Code names `copilot help config` (CLI 1.0.109) maps, since "any item-level validation error rejects the whole `hooks` field"; nothing is written there when Claude Code is the source, since Copilot CLI reads `.claude/settings.json` hooks itself. Copilot's cloud agent reads only `.github/hooks/*.json` |
+| Codex | `.codex/hooks.json`, Claude Code's shape ([hooks](https://learn.chatgpt.com/docs/hooks)) | the `hooks` key; Codex runs a project hook once it is trusted and approved (`/hooks`); a hook on an event Codex lacks (`Notification`, `PostToolUseFailure`, `PermissionDenied`: `HookEventsToml` in `codex-rs/protocol/src/hooks.rs` ignores such a key silently) is left out with a warning |
 | Antigravity CLI | `.agents/hooks.json` ([hooks](https://antigravity.google/docs/hooks/)) | the `conforme` group only; `PreToolUse`, `PostToolUse`, `SessionStart`, `Stop`, tool names as `agy plugin validate` gives them |
-| Mistral Vibe | `.vibe/hooks.toml` ([hooks](https://docs.mistral.ai/vibe/code/cli/hooks)) | the hooks named `conforme-…`; `pre_tool`, `post_tool`, `post_agent`, tool names in Vibe's; checked with Vibe 3.1.0's `load_hooks_file` |
+| Mistral Vibe | `.vibe/hooks.toml` ([hooks](https://docs.mistral.ai/vibe/code/cli/hooks)) | the hooks named `conforme-…`; `pre_tool`, `post_tool`, `post_agent`, the three Vibe's own Claude Code importer maps (Vibe 3.1.1 added `pre_agent`, `notification`, `session_start`, `session_end`, fired by its app server), tool names in Vibe's; checked with Vibe 3.1.2's `load_hooks_file` |
 | Cursor, Devin | not written | both load Claude Code's `.claude/settings.json` hooks themselves ([Cursor](https://cursor.com/docs/reference/third-party-hooks), [Devin](https://docs.devin.ai/cli/extensibility/hooks/overview)) |
-| every other tool | not written | `sync` names the hooks it does not get (Gemini CLI and Kiro have their own formats, not written yet; OpenCode and Kilo Code only run hooks from code plugins; Zed, Zoo Code and DeepSeek Harness have none) |
+| every other tool | not written | `sync` names the hooks it does not get (Gemini CLI and Kiro have their own formats, not written yet; OpenCode and Kilo Code only run hooks from code plugins; Zed has only task hooks (`create_worktree` in `.zed/tasks.json`), no agent hooks; Zoo Code has none; DeepSeek Harness only opt-in experimental bridges that read a Claude Code or Codex hooks file you point them at) |
 
 A hook on an event or a tool a format lacks is left out with a warning, and
 Vibe and Antigravity warn about their payload. A source with no hook leaves
@@ -239,7 +248,7 @@ installed from a marketplace).
 | Codex | a folder listed in `.agents/plugins/marketplace.json`, enabled by `[plugins."<plugin>@<marketplace>"]` in a trusted `.codex/config.toml` ([plugins](https://developers.openai.com/plugins/build/plugins)) | `[plugins."<name>@<marketplace>"]` + `[marketplaces.<name>]` |
 | GitHub Copilot | a folder listed in a repository `marketplace.json` (root, `.plugin/`, `.github/plugin/` or `.claude-plugin/`) ([CLI plugins](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference)) | `.github/copilot/settings.json` `enabledPlugins` + `extraKnownMarketplaces`, also read from `.claude/settings.json` ([config directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)) |
 | Devin | none: plugins are installed per user ([plugins](https://docs.devin.ai/cli/extensibility/plugins/overview)) | `.devin/config.json` `requiredPlugins` / `optionalPlugins` / `forbiddenPlugins`, naming plugin repositories, not `name@marketplace` |
-| Cursor | none: local plugins live in `~/.cursor/plugins/local/` ([plugins](https://cursor.com/docs/plugins)) | a project scope exists, but its file is undocumented |
+| Cursor | none: local plugins live in `~/.cursor/plugins/local/` ([plugins](https://cursor.com/docs/plugins)) | undocumented: Cursor CLI 2026.11.11's own code reads a `.cursor/settings.json` `plugins` map (`"<name>"` or `"<marketplace>/<name>"` → `{enabled, gitUrl?, gitRef?, gitPath?}`) and the plugins Claude Code's `.claude/settings.json` enables, but no Cursor page describes it, so conforme writes nothing there |
 | Kiro | none: Powers live in `~/.kiro/powers/` ([configuration](https://kiro.dev/docs/configuration/)) | none |
 | Gemini CLI | none: extensions live in `~/.gemini/extensions/` ([extensions](https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/reference.md)) | none: workspace enablement is stored in `~/.gemini` |
 | OpenCode, Kilo Code | plugins are JavaScript/TypeScript modules ([OpenCode](https://opencode.ai/docs/plugins/), [Kilo](https://kilo.ai/docs/automate/extending/plugins)); conforme never reads nor writes them | the `plugins` / `plugin` array of their config, left untouched |

@@ -106,7 +106,18 @@ proof:
   headers keys, env-var syntax, whether the file is project-scoped, what a
   project entry does to a user entry of the same name;
 - instruction file: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.rules`, and the
-  fallback order.
+  fallback order;
+- plugins: the bundle directory and manifest paths (and which wins when
+  several exist), manifest keys and their types (a `homepage` that must be a
+  URL), which components a bundle holds, how a bundle's agents are named when
+  frontmatter is missing or broken, the marketplace file and the setting that
+  enables a plugin, and which other tools' plugin settings the tool reads;
+- hooks: the file and its shape (matcher groups or flat entries), every event
+  name the tool accepts (from its source when it has one: an unknown key may
+  be ignored without a word, or reject the whole file), the matcher syntax
+  (`|`, `,`, regex) and tool names, the timeout unit, the working directory
+  and the plugin-root variable a bundle's hook may use, and which other tools'
+  hooks files the tool runs itself.
 
 The research fans out well: one subagent per two or three tools, each given
 the brief in [`references/online-brief.md`](references/online-brief.md).
@@ -184,11 +195,15 @@ The script compares each copy root (`.agents/skills`, `.cursor/skills`,
 copies, a `name` that is not the folder, a missing or over-long
 `description`, different instructions, bundled files missing, different or
 extra, a copy without conforme's `.conforme` marker, and a marked copy whose
-skill left the source. Then build a fixture whose source skills cover a
-bundled script, a manual skill, a nested skill and a long description, sync
-it to every tool, run the script with `--source <its skills dir>`, and repeat
-after editing a skill body, deleting a bundled file and deleting a whole
-skill. A nested skill (`group/<name>/SKILL.md`) needs a source that loads
+skill left the source. It knows plugins too: a source bundle's
+(`.claude/skills/<p>/.claude-plugin/plugin.json`) skills are compared with
+each bundle copy (`.vibe/plugins/<p>/skills`, `.codex/plugins/<p>/skills`,
+`.agents/plugins/<p>/skills`) and with the tools that get them as their own.
+Then build a fixture whose source skills cover a bundled script, a manual
+skill, a nested skill, a long description and a plugin bundle, sync it to
+every tool, run the script with `--source <its skills dir>`, and repeat after
+editing a skill body, deleting a bundled file, deleting a whole skill, editing
+a plugin's skill and deleting the plugin. A nested skill (`group/<name>/SKILL.md`) needs a source that loads
 one (Codex's `.agents/skills`, Cursor, OpenCode, Kilo) and `--nested`; Claude
 Code documents only top-level skill folders, and conforme reads only those.
 
@@ -210,6 +225,17 @@ tool's own format (`migrate --source claude --output <tool>`), migrate it
 into every installed tool, and ask that tool's CLI the same questions.
 `tests/migrate_matrix.rs` covers every pair offline; this run proves each
 output is what the real tool loads.
+
+Plugins and hooks get the same proof: sync a Claude Code bundle holding a
+skill, an agent, an MCP server and hooks (a `${CLAUDE_PLUGIN_ROOT}` script on
+`PreToolUse`, a `Stop` and a `SessionStart`), then run `agy plugin validate
+--strict` on `.agents/plugins/<p>`, Vibe's own `PluginResolver` and
+`load_hooks_file` (its Python, found from the `vibe` script's shebang) on
+`.vibe/plugins/<p>`, and `codex plugin marketplace add` then `codex plugin add`
+on the Codex bundle. With `hooks = true`, every project hooks file conforme
+writes must load in its tool too. A tool whose CLI ships only as a compiled
+binary (Copilot CLI) cannot be read this way: rely on its docs and its own
+`help config`, and list what they leave open as unconfirmed.
 
 Done when: each adapter is **verified** (with the command and version),
 **not installed** or **needs login**, every source migrated into each
@@ -243,9 +269,13 @@ files are committed. A value in clear in `.mcp.json` (gitignored) once leaked
 an API key through every target. Check the tracked files:
 
 ```bash
-git ls-files | grep -E '^\.[^/]+/.*(mcp|settings|config\.toml)|^(\.opencode/)?opencode\.jsonc?$|^kilo\.jsonc?$|^\.mcp\.json$' \
-  | xargs grep -nE '"[^"]*([Kk]ey|[Tt]oken|[Ss]ecret|[Aa]uth)[^"]*"\s*[:=]\s*"[^"$\{][^"]*"' || echo "no literal secret"
+git ls-files | grep -E '^\.[^/]+/.*(mcp|settings|config\.toml|hooks|marketplace)|^(\.opencode/)?opencode\.jsonc?$|^kilo\.jsonc?$|^\.mcp\.json$' \
+  | xargs grep -nE '"[^"]*([Kk]ey|[Tt]oken|[Ss]ecret|[Aa]uth)[^"]*"\s*[:=]\s*"[^"$\{][^"]*"' \
+  | grep -v '"authentication": "ON_' || echo "no literal secret"
 ```
+
+(A Codex marketplace entry's `"authentication": "ON_INSTALL"` is its install
+policy, not a credential.)
 
 Done when: no tracked file holds a credential in clear (every one is a
 `${VAR}` reference in that tool's syntax), and `validate` warns about such a

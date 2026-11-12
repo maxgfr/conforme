@@ -52,6 +52,7 @@ impl AiToolAdapter for CopilotAdapter {
                 ));
             }
         }
+        warnings.extend(crate::hooks::copilot_json(&config.hooks, "project").1);
         warnings
     }
 
@@ -205,7 +206,10 @@ impl AiToolAdapter for CopilotAdapter {
             plugins: Vec::new(),
             plugin_refs,
             marketplaces,
-            hooks: crate::marketplaces::read_settings_hooks(&settings_path(project_root)),
+            hooks: crate::marketplaces::read_settings_hooks(
+                &settings_path(project_root),
+                crate::hooks::read_copilot,
+            ),
         })
     }
 
@@ -304,9 +308,11 @@ impl AiToolAdapter for CopilotAdapter {
         // Marketplace plugins, merged into .github/copilot/settings.json: "A
         // plugin enabled only through a repository's `enabledPlugins` ...
         // auto-installs and activates in the declaring repository".
+        // The project's hooks go there too, in Copilot's own flat shape.
         files.extend(crate::marketplaces::settings_file(
             &settings_path(project_root),
             config,
+            crate::marketplaces::copilot_hooks,
         )?);
 
         Ok(files)

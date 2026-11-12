@@ -172,6 +172,77 @@ pub(crate) fn read_agents_in(agents_dir: &Path) -> Result<Vec<NormalizedAgent>> 
     Ok(agents)
 }
 
+/// The subagents of a Claude Code plugin bundle (`agents/`), which load
+/// where a project's would be skipped: the name "comes from the frontmatter
+/// `name` field, or from the file name when that field is missing", and an
+/// agent whose "frontmatter doesn't parse" "still loads with every field
+/// ignored. It's named after the file, and its description reads `Agent from
+/// my-plugin plugin`"; `permissionMode` is ignored there
+/// (https://code.claude.com/docs/en/plugins/components.md).
+pub(crate) fn read_plugin_agents_in(
+    agents_dir: &Path,
+    plugin: &str,
+) -> Result<Vec<NormalizedAgent>> {
+    let mut agents = Vec::new();
+    for path in crate::adapters::collect_rule_files(agents_dir, "md")? {
+        let content = crate::config::read_text(&path)?;
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let fallback = format!("Agent from {plugin} plugin");
+        let parsed = frontmatter::is_strict_yaml(&content)
+            .then(|| frontmatter::parse(&content).ok())
+            .flatten();
+        let Some((fields, body)) = parsed else {
+            agents.push(NormalizedAgent {
+                name: stem,
+                description: fallback,
+                content: body_after_frontmatter(&content).trim().to_string(),
+                ..Default::default()
+            });
+            continue;
+        };
+        let text = |key: &str| {
+            fields
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        };
+        agents.push(NormalizedAgent {
+            name: text("name")
+                .filter(|n| n.chars().count() <= 256 && is_claude_agent_name(n))
+                .unwrap_or(stem),
+            description: text("description").unwrap_or(fallback),
+            content: body.trim().to_string(),
+            model: text("model"),
+            tools: parse_tool_list(fields.get("tools")),
+            color: text("color"),
+            permission_mode: None,
+        });
+    }
+    Ok(agents)
+}
+
+/// The text after a `---` frontmatter block, or all of it when there is none.
+fn body_after_frontmatter(content: &str) -> &str {
+    let Some(rest) = content
+        .strip_prefix("---\n")
+        .or_else(|| content.strip_prefix("---\r\n"))
+    else {
+        return content;
+    };
+    match rest.find("\n---") {
+        Some(end) => {
+            let after = &rest[end + 4..];
+            after.split_once('\n').map_or("", |(_, body)| body)
+        }
+        None => content,
+    }
+}
+
 /// The project's `enabledPlugins` (`.claude/settings.json`): plugin id
 /// (`<name>@<marketplace>`) to on or off. An unreadable file reads as none.
 fn enabled_plugins(project_root: &Path) -> BTreeMap<String, bool> {
@@ -444,6 +515,7 @@ impl AiToolAdapter for ClaudeAdapter {
             marketplaces,
             hooks: crate::marketplaces::read_settings_hooks(
                 &project_root.join(".claude").join("settings.json"),
+                crate::hooks::read_claude,
             ),
         };
         if !reads_agents_md_fallback(project_root) {
@@ -548,6 +620,7 @@ impl AiToolAdapter for ClaudeAdapter {
         files.extend(crate::marketplaces::settings_file(
             &project_root.join(".claude").join("settings.json"),
             config,
+            crate::marketplaces::claude_hooks,
         )?);
 
         Ok(files)

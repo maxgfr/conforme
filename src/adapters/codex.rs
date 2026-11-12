@@ -497,6 +497,24 @@ impl AiToolAdapter for CodexAdapter {
         });
         let mut bundles =
             crate::plugins::bundle_warnings(project_root, config, &crate::plugins::CODEX_PLUGINS);
+        bundles.extend(crate::hooks::codex_json(&config.hooks, "project").1);
+        // Codex reads the first marketplace manifest of a root, and
+        // `.agents/plugins/marketplace.json` comes before the others
+        // (`MARKETPLACE_MANIFEST_RELATIVE_PATHS`, codex-rs/core-plugins/src/marketplace.rs).
+        if !config.plugins.is_empty() {
+            for other in [
+                ".claude-plugin/marketplace.json",
+                ".cursor-plugin/marketplace.json",
+            ] {
+                if project_root.join(other).is_file() {
+                    bundles.push(format!(
+                        "Codex reads only the first marketplace of a project, and the \
+                         .agents/plugins/marketplace.json that lists conforme's bundles comes \
+                         before {other}: Codex no longer sees the plugins {other} lists"
+                    ));
+                }
+            }
+        }
         // Codex installs an enabled marketplace plugin only from a marketplace
         // the user added: it clones none a project names.
         let mut markets: Vec<&str> = config
@@ -715,11 +733,10 @@ impl AiToolAdapter for CodexAdapter {
         }
 
         // Project hooks (`hooks = true`) in .codex/hooks.json, Claude Code's
-        // shape (https://learn.chatgpt.com/docs/hooks).
-        if !config.hooks.is_empty() {
+        // shape (https://learn.chatgpt.com/docs/hooks), on the events Codex has.
+        if let (Some(hooks), _) = crate::hooks::codex_json(&config.hooks, "project") {
             let path = hooks_path(project_root);
             let existing = crate::json_settings::load(&path)?;
-            let hooks = crate::hooks::claude_json(&config.hooks);
             files.push((
                 path,
                 crate::json_settings::render(existing.as_ref(), &[("hooks", hooks)], &[])?,
@@ -748,6 +765,34 @@ mod tests {
     };
     use std::collections::BTreeMap;
     use std::path::Path;
+
+    #[test]
+    fn test_codex_warns_that_its_marketplace_hides_a_claude_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = NormalizedConfig {
+            plugins: vec![crate::config::NormalizedPlugin {
+                name: "kit".to_string(),
+                description: "Kit".to_string(),
+                skills: vec![NormalizedSkill {
+                    name: "lint".to_string(),
+                    description: "Lint".to_string(),
+                    content: "Run lint.".to_string(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let hides = |w: &Vec<String>| {
+            w.iter()
+                .any(|w| w.contains(".claude-plugin/marketplace.json"))
+        };
+        assert!(!hides(&CodexAdapter.warnings(tmp.path(), &config)));
+        std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+        std::fs::write(tmp.path().join(".claude-plugin/marketplace.json"), "{}").unwrap();
+        let warnings = CodexAdapter.warnings(tmp.path(), &config);
+        assert!(hides(&warnings), "{warnings:?}");
+    }
 
     #[test]
     fn test_codex_trust_table_is_valid_toml_for_any_path() {

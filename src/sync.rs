@@ -58,14 +58,9 @@ fn target_config<'a>(
             Err(_) => std::borrow::Cow::Borrowed(config),
         }
     };
-    // Copilot CLI reads Claude Code's `.claude/settings.json` hooks itself:
-    // a copy in its own settings would run each hook twice.
-    let config = if source_id == "claude" && target.id() == "copilot" && !config.hooks.is_empty() {
-        let mut without = config.into_owned();
-        without.hooks.clear();
-        std::borrow::Cow::Owned(without)
-    } else {
-        config
+    let config = match without_hooks_it_reads(source_id, target, &config) {
+        std::borrow::Cow::Owned(without) => std::borrow::Cow::Owned(without),
+        std::borrow::Cow::Borrowed(_) => config,
     };
     let Some(source) = find_adapter(source_id) else {
         return config;
@@ -83,6 +78,23 @@ fn target_config<'a>(
         std::borrow::Cow::Owned(stripped)
     } else {
         config
+    }
+}
+
+/// `config` without its hooks for a target that runs the source's own: Copilot
+/// CLI reads Claude Code's `.claude/settings.json` hooks itself, and a copy in
+/// its own settings would run each hook twice.
+fn without_hooks_it_reads<'a>(
+    source_id: &str,
+    target: &dyn AiToolAdapter,
+    config: &'a NormalizedConfig,
+) -> std::borrow::Cow<'a, NormalizedConfig> {
+    if source_id == "claude" && target.id() == "copilot" && !config.hooks.is_empty() {
+        let mut without = config.clone();
+        without.hooks.clear();
+        std::borrow::Cow::Owned(without)
+    } else {
+        std::borrow::Cow::Borrowed(config)
     }
 }
 
@@ -1614,7 +1626,11 @@ pub fn run_sync(
     let mut failed = Vec::new();
     for adapter in targets {
         // Warn about capability loss
-        warn_capability_loss(adapter, project_root, &config);
+        warn_capability_loss(
+            adapter,
+            project_root,
+            &without_hooks_it_reads(&source_id, adapter, &config),
+        );
         warn_rules_outside_agents_md(held, project_root, &source_id, adapter, &config)?;
 
         let synced = target_output(project_root, &source_id, adapter, &config, &source_files)
@@ -2909,6 +2925,7 @@ pub fn run_migrate(
         if retarget_conformerc(project_root, source, output)? {
             println!("  {} .conformerc.toml: source = \"{output}\"", "+".green());
         }
+        keep_unheld_in_agents_md(project_root, output_adapter.as_ref(), &lost)?;
         warn_still_detected(project_root, source_adapter.as_ref());
         // What migrate kept because the output cannot hold it (agents for
         // Zed, Zoo Code or Devin) is an orphan to the next sync, which reads
@@ -2920,6 +2937,78 @@ pub fn run_migrate(
         }
     }
 
+    Ok(())
+}
+
+/// The skills and agents `migrate` carried over that the output cannot hold
+/// (agents for Devin, Zoo Code, Zed or DeepSeek Harness), written as
+/// `## Skill:` / `## Agent:` sections of the AGENTS.md that `sync` generates
+/// from the output. That AGENTS.md keeps the sections its source cannot hold
+/// (see [`carried_agents_md_sections`]), and a later `migrate` moves them to
+/// an output that holds them; without them there, the next sync would delete
+/// every tool's copy as an orphan, and the item would be gone. Nothing is
+/// written when the output reads AGENTS.md itself (its `migrate` writes that
+/// file whole), when `generate_agents_md` is off, or when AGENTS.md was
+/// generated from another tool. An AGENTS.md without conforme's marker (the
+/// previous source's own, OpenCode's or Codex's) is no source any more: the
+/// next sync replaces it by the one it generates, carrying these sections.
+fn keep_unheld_in_agents_md(
+    project_root: &Path,
+    output: &dyn AiToolAdapter,
+    lost: &NormalizedConfig,
+) -> Result<()> {
+    if (lost.skills.is_empty() && lost.agents.is_empty())
+        || output.reads_agents_md(project_root)
+        || !ProjectConfig::load(project_root)?.generate_agents_md
+    {
+        return Ok(());
+    }
+    let path = project_root.join("AGENTS.md");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) if markdown::generated_from(&text).is_none_or(|from| from == output.id()) => text,
+        Ok(_) => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            format!("{}\n", markdown::generated_marker(output.id()))
+        }
+        Err(e) => return Err(e).with_context(|| format!("failed to read {}", path.display())),
+    };
+    let existing = markdown::parse_agents_md(&text).unwrap_or_default();
+    let same =
+        |a: &str, b: &str| crate::config::sanitize_name(a) == crate::config::sanitize_name(b);
+    let kept = NormalizedConfig {
+        skills: lost
+            .skills
+            .iter()
+            .filter(|s| !existing.skills.iter().any(|e| same(&e.name, &s.name)))
+            .cloned()
+            .collect(),
+        agents: lost
+            .agents
+            .iter()
+            .filter(|a| !existing.agents.iter().any(|e| same(&e.name, &a.name)))
+            .cloned()
+            .collect(),
+        ..Default::default()
+    };
+    if kept.skills.is_empty() && kept.agents.is_empty() {
+        return Ok(());
+    }
+    let mut out = text.trim_end().to_string();
+    out.push('\n');
+    out.push_str(&markdown::export_as_agents_md(&kept));
+    std::fs::write(&path, out)?;
+    let names: Vec<String> = kept
+        .skills
+        .iter()
+        .map(|s| format!("skill {}", s.name))
+        .chain(kept.agents.iter().map(|a| format!("agent {}", a.name)))
+        .collect();
+    println!(
+        "  {} AGENTS.md: kept {}, which {} cannot hold",
+        "+".green(),
+        names.join(", "),
+        output.name()
+    );
     Ok(())
 }
 

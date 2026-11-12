@@ -2,7 +2,7 @@
 
 > AWS's AI IDE, successor to Amazon Q CLI. Source: `--from kiro`
 
-**Last verified online:** 2026-11-09, against Kiro CLI 3.1.0 and IDE 1.4.121 (https://kiro.dev/changelog/)
+**Last verified online:** 2026-11-12, against Kiro CLI 3.2.1 and IDE 1.4.154 (https://kiro.dev/changelog/)
 
 ## Official docs
 
@@ -16,7 +16,10 @@
 - Getting started: https://kiro.dev/docs/getting-started/first-project/
 - Powers marketplace: https://kiro.dev/powers/
 - Custom agents: https://kiro.dev/docs/custom-agents/creating/
-- What's new in CLI 3.0: https://kiro.dev/docs/cli/v3/
+- Upgrade from CLI 2.x (formerly "What's new in CLI 3.0"): https://kiro.dev/docs/cli/v3/
+- Hooks: https://kiro.dev/docs/hooks/
+- Hook types: https://kiro.dev/docs/hooks/types/
+- CLI V3 hooks migration: https://kiro.dev/docs/cli/v3/hooks-migration/
 - Agent configuration reference (IDE 1.0 and CLI V3; the former https://kiro.dev/docs/cli/v3/agent-config/ "has moved" here): https://kiro.dev/docs/custom-agents/configuration-reference/
 - CLI 3.0 release (V3 by default): https://kiro.dev/changelog/cli/3-0/
 - Kiro Crew (reads the same `.kiro/steering/`, no new project path): https://kiro.dev/docs/crew/capabilities/steering

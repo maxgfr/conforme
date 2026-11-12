@@ -2,7 +2,7 @@
 
 > Open-source AI CLI tool. Source: `--from opencode`
 
-**Last verified online:** 2026-11-09, against OpenCode 2 2.2.6 (https://github.com/anomalyco/opencode/releases/tag/v2.2.6, Homebrew `opencode-v2` 2.2.6). conforme targets OpenCode 2 only; OpenCode 1 (v1.19.x) is no longer a target.
+**Last verified online:** 2026-11-12, against OpenCode 2 2.2.7 (https://github.com/anomalyco/opencode/releases, Homebrew `opencode-v2` 2.2.7). conforme targets OpenCode 2 only; OpenCode 1 (v1.19.x) is no longer a target.
 
 ## Official docs
 
@@ -64,7 +64,7 @@ No activation modes. Reads AGENTS.md natively (all content always-on).
 - Only `.opencode/agents/` is swept for orphans, plus the stale bundled files inside a skill folder conforme writes in `.opencode/skills/` (skill folders themselves are never swept). The top-level `.opencode/` also holds user-owned files (`package.json`, `commands/`, `plugins/`, …) and is never cleaned
 - Skill frontmatter V2 reads: `name` (a display label; the folder name is the ID), `description`, `metadata.opencode/autoinvoke` and `disable-model-invocation`; `license` and `compatibility` are accepted and ignored. No `allowed-tools`
 - OpenCode also discovers skills in `.claude/skills/` and `.agents/skills/`; conforme reads only `.opencode/skills/` and `.opencode/skill/`. When Claude Code or Codex is synced too, the same skill exists in several roots; "the source registered later supplies the skill", and project `.opencode/skills` is registered after both (seen with 2.1.0: `opencode api skill.list` lists each synced skill once, from `.opencode/skills/`). OpenCode ships built-in `opencode` and `report` skills that a synced skill of that name would override
-- Skill discovery is recursive (`SKILL.md` at any depth); conforme reads nested folders under `.opencode/skills/` and the singular `.opencode/skill/` too (written back flat). Flat `skills/<name>.md` files are not read (known gap)
+- Skill discovery is recursive, down to six directories: "Search stops six directories below the source root" (https://opencode.ai/docs/skills/; `MAX_DEPTH = 6` in `packages/core/src/config/plugin/skill-scan.ts`), and conforme reads the same depth; it reads nested folders under `.opencode/skills/` and the singular `.opencode/skill/` too (written back flat). Flat `skills/<name>.md` files are not read (known gap)
 
 ## Manual skill invocation
 

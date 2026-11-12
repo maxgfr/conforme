@@ -2,7 +2,7 @@
 
 > Google's Antigravity command-line agent (`agy`). Source: `--from antigravity`
 
-**Last verified online:** 2026-11-09, against Antigravity CLI 1.5.3 (https://github.com/google-antigravity/antigravity-cli/releases)
+**Last verified online:** 2026-11-12, against Antigravity CLI 1.5.6 (https://github.com/google-antigravity/antigravity-cli/releases; local `agy` 1.5.3)
 
 ## Official docs
 
@@ -89,10 +89,10 @@ Reading: `agy mcp list` and `agy agents` show nothing from the project's `.agent
 
 ## Plugins
 
-Verified 2026-11-12 against Antigravity CLI 1.5.3; generated bundles pass `agy plugin validate --strict`.
+Verified 2026-11-12 against Antigravity CLI 1.5.6 (changelog) and 1.5.3 (local `agy plugin validate --strict`). A plugin hook runs with "its working directory (`cwd`) set to `<plugin-root>`" and "should use relative paths (such as `node ./scripts/policy.mjs`) rather than `${PLUGIN_ROOT}`" (https://antigravity.google/docs/build-plugins/); since 1.5.6 `agy plugin validate` warns on `${PLUGIN_ROOT}` in a hook command and fails with `--strict`, so conforme writes `${PLUGIN_ROOT}/` as `./` there and reads `./` back as `${PLUGIN_ROOT}/`. A plugin MCP server's `${VAR}` expands only when declared in its `variables` ("interpolated as `${ACME_API_TOKEN}`", build-plugins); conforme declares none, and `sync` warns about each such server (`agy` 1.5.3: "`${API_TOKEN}` isn't declared in \"variables\", so it's passed as is").
 
 - Bundles load from `.agents/plugins/<plugin>/` ("Manifests add to the standard folders; they don't replace them", https://antigravity.google/docs/customization-discovery); conforme reads and writes them (`plugins::ANTIGRAVITY_PLUGINS`, a `ManagedKind::Bundles` directory).
-- Manifest: `plugin.json`, else `.antigravity-plugin/plugin.json` or `.gemini-plugin/plugin.json` on read (the first wins); conforme writes `plugin.json` with `$schema` `https://antigravity.google/schemas/v1/plugin.json`, `name` (`^[a-zA-Z0-9_-]+$`), `description`, `version`, `author` (a string), `homepage`, `repository`, `license`, `keywords`, and `disabled: true` for a plugin switched off ("A user's own enable/disable choice takes precedence", https://antigravity.google/schemas/v1/plugin.json).
+- Manifest: on read `.antigravity-plugin/plugin.json`, which "takes precedence over root `plugin.json`" (build-plugins), then `.gemini-plugin/plugin.json`, then `plugin.json` (the first found wins); conforme writes `plugin.json` with `$schema` `https://antigravity.google/schemas/v1/plugin.json`, `name` (`^[a-zA-Z0-9_-]+$`), `description`, `version`, `author` (a string), `homepage`, `repository`, `license`, `keywords`, and `disabled: true` for a plugin switched off ("A user's own enable/disable choice takes precedence", https://antigravity.google/schemas/v1/plugin.json).
 - Components (https://antigravity.google/docs/build-plugins/): `skills/<name>/SKILL.md`, `agents/<name>.md`, `rules/<name>.md` with the `trigger` frontmatter of `.agents/rules/`, `rules/AGENTS.md` (the plugin's always-on instructions, no frontmatter), and `mcp_config.json` (`mcpServers`, the shape of `.agents/mcp_config.json`). Other text files are carried as they are. A bundle's `hooks.json` (named groups; `PreToolUse` / `PostToolUse` with a matcher and nested handlers, `SessionStart` / `Stop` flat) is read and written as the plugin's hooks, under a `conforme` group, matchers in Antigravity's tool names as `agy plugin validate` gives them (`Bash` → `run_command`); other events are left out (warned).
 - `.agents/plugins/` is also where Codex keeps its repository marketplace (`marketplace.json`): only bundle folders there are conforme's, and `gitignore install` ignores `.agents/plugins/*/`.
 - Project hooks (`hooks = true`): conforme writes the `conforme` group of `.agents/hooks.json` (https://antigravity.google/docs/hooks/), the user's other groups untouched; `PreToolUse`, `PostToolUse`, `SessionStart` and `Stop`, matchers in Antigravity's tool names; a hook blocks only by printing a `decision`, which `sync` warns about

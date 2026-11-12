@@ -24,6 +24,16 @@ holding `<name>/SKILL.md` folders (`.cursor/skills`, `.agents/skills`,
 - UNMANAGED    the copy root has a skill without the marker that the source
                does not have: written by hand in that tool (warning)
 
+Plugins: a source folder holding `.claude-plugin/plugin.json` is a plugin
+bundle, and its `skills/` are the plugin's skills, sources too. A copy root
+whose parent folder holds a plugin manifest (`.vibe/plugins/<p>/skills`,
+`.codex/plugins/<p>/skills`, `.agents/plugins/<p>/skills`) is that plugin's
+copy and is compared with its skills alone. Every other copy root holds the
+plugins' skills flat too, the tool getting them as its own, except one whose
+tool holds them in its bundles (`BUNDLE_TOOL_ROOTS`); in `.agents/skills`,
+shared by Codex and Antigravity (bundles) with Zed (flat), they are required
+only when Zed is in the project (`.rules`).
+
 Exits 1 when any finding but UNMANAGED is reported, and 2 when nothing could
 be checked (bad arguments, no source skill, no copy root). Standard library
 only.
@@ -36,6 +46,24 @@ import sys
 SKIP_DIRS = {".git", "node_modules", "target", "worktrees"}
 METADATA = {"agents/openai.yaml", ".conforme"}
 MAX_DESCRIPTION = 1024
+# Where a folder is a plugin bundle (Claude Code, Agent Plugins / Vibe / Codex,
+# Antigravity).
+MANIFESTS = (
+    ".claude-plugin/plugin.json",
+    "plugin.json",
+    ".codex-plugin/plugin.json",
+    ".antigravity-plugin/plugin.json",
+    ".gemini-plugin/plugin.json",
+)
+# Skills roots of tools that hold plugins in bundles: their own skills root
+# gets no plugin skill.
+BUNDLE_TOOL_ROOTS = {".vibe/skills"}
+# The skills root shared with Zed, which gets plugin skills flat.
+SHARED_ROOT = ".agents/skills"
+
+
+def is_bundle(folder):
+    return any(os.path.isfile(os.path.join(folder, m)) for m in MANIFESTS)
 
 
 def kebab(name):
@@ -164,18 +192,49 @@ def main(argv):
         print(f"no skill in {source_rel}")
         return 2
 
-    expected = {}
-    for folder, path in source_skills.items():
-        with open(os.path.join(path, "SKILL.md"), encoding="utf-8") as handle:
-            fields, body = split_frontmatter(handle.read())
-        expected[kebab(fields.get("name") or folder)] = (body, bundled(path))
+    def described(skills):
+        out = {}
+        for folder, path in skills.items():
+            with open(os.path.join(path, "SKILL.md"), encoding="utf-8") as handle:
+                fields, body = split_frontmatter(handle.read())
+            out[kebab(fields.get("name") or folder)] = (body, bundled(path))
+        return out
+
+    expected = described(source_skills)
+    # The source's plugin bundles and their skills.
+    plugin_skills = {}
+    if os.path.isdir(source):
+        for entry in sorted(os.listdir(source)):
+            bundle = os.path.join(source, entry)
+            if os.path.isfile(os.path.join(bundle, ".claude-plugin", "plugin.json")):
+                plugin_skills[entry] = described(skills_in(os.path.join(bundle, "skills")))
+    flat_plugin_skills = {}
+    for skills in plugin_skills.values():
+        for name, skill in skills.items():
+            flat_plugin_skills.setdefault(name, skill)
 
     errors, warnings = [], []
-    roots = copy_roots(project, source)
+    roots = [
+        root
+        for root in copy_roots(project, source)
+        if not root.startswith(source + os.sep)
+    ]
+    zed = os.path.exists(os.path.join(project, ".rules"))
     for root in roots:
         rel_root = os.path.relpath(root, project)
         copies = skills_in(root)
-        for name, (body, files) in expected.items():
+        bundle = os.path.dirname(root)
+        optional = {}
+        if is_bundle(bundle):
+            # A plugin's copy: its skills alone (none when the plugin left).
+            root_expected = plugin_skills.get(os.path.basename(bundle), {})
+        elif rel_root in BUNDLE_TOOL_ROOTS:
+            root_expected = expected
+        elif rel_root == SHARED_ROOT and not zed:
+            root_expected, optional = expected, flat_plugin_skills
+        else:
+            root_expected = {**flat_plugin_skills, **expected}
+        for name, (body, files) in root_expected.items():
             where = f"{rel_root}/{name}"
             if name not in copies:
                 errors.append(f"MISSING      {where}/SKILL.md")
@@ -197,7 +256,7 @@ def main(argv):
                     errors.append(f"BUNDLE       {where}/{rel}: missing or different")
             for rel in sorted(set(copy_files) - set(files)):
                 errors.append(f"EXTRA        {where}/{rel}: not in the source")
-        for name in sorted(set(copies) - set(expected)):
+        for name in sorted(set(copies) - set(root_expected) - set(optional)):
             if os.path.isfile(os.path.join(copies[name], ".conforme")):
                 errors.append(f"STALE        {rel_root}/{name}: generated, not in the source")
             else:

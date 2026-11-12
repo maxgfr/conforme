@@ -12,6 +12,10 @@ use crate::config::NormalizedConfig;
 /// `mcp.servers`.
 pub struct OpenCodeAdapter;
 
+/// How deep OpenCode looks for a `SKILL.md` below a skills root: "Search
+/// stops six directories below the source root" (`MAX_DEPTH = 6`).
+const OPENCODE_SKILL_DEPTH: usize = 6;
+
 /// OpenCode 2 "currently only discovers AGENTS.md"
 /// (https://opencode.ai/docs/migrate-v1/#instruction-files).
 const INSTRUCTION_FILES: &[&str] = &["AGENTS.md"];
@@ -161,12 +165,15 @@ impl AiToolAdapter for OpenCodeAdapter {
 
     fn read(&self, project_root: &Path) -> Result<NormalizedConfig> {
         // Read skills back from `.opencode/skills/**/SKILL.md`, then the
-        // singular `.opencode/skill/` OpenCode also accepts.
+        // singular `.opencode/skill/` OpenCode also accepts. "Search stops six
+        // directories below the source root" (https://opencode.ai/docs/skills/;
+        // `MAX_DEPTH = 6`, packages/core/src/config/plugin/skill-scan.ts): a
+        // deeper skill is one OpenCode does not load.
         let mut skills = Vec::new();
         for dir in ["skills", "skill"] {
             for skill in crate::skills::read_skills_recursive(
                 &project_root.join(".opencode").join(dir),
-                crate::skills::UNBOUNDED_SKILL_DEPTH,
+                OPENCODE_SKILL_DEPTH,
             )? {
                 if !skills
                     .iter()
@@ -328,6 +335,33 @@ mod tests {
 
     fn make_adapter() -> OpenCodeAdapter {
         OpenCodeAdapter
+    }
+
+    /// OpenCode finds a `SKILL.md` up to six directories below the skills
+    /// root and no deeper: conforme reads the same skills.
+    #[test]
+    fn test_read_skills_stops_six_directories_down() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join(".opencode/skills");
+        let write = |rel: &str, name: &str| {
+            let folder = root.join(rel);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(
+                folder.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: {name}\n---\nBody.\n"),
+            )
+            .unwrap();
+        };
+        write("a/b/c/d/e/six", "six");
+        write("a/b/c/d/e/f/seven", "seven");
+        let names: Vec<String> = make_adapter()
+            .read(dir.path())
+            .unwrap()
+            .skills
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(names, ["six"]);
     }
 
     #[test]
