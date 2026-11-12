@@ -75,6 +75,120 @@ fn is_claude_agent_name(name: &str) -> bool {
 /// such a project as the sync source lost the instructions entirely, and writing
 /// to it created a second instruction file that Claude Code would load on top of
 /// the first.
+/// The commands in `commands_dir` (`.claude/commands/`, or a plugin bundle's
+/// `commands/`), read as skills, `**/*.md` in any depth. A nested command is
+/// namespaced by its folders: `frontend/component.md` is
+/// `/frontend:component`. A command named like one of `skills` is left out:
+/// Claude Code runs the skill.
+pub(crate) fn read_commands_in(
+    commands_dir: &Path,
+    skills: &[NormalizedSkill],
+) -> Result<Vec<NormalizedSkill>> {
+    let mut commands: Vec<NormalizedSkill> = Vec::new();
+    let mut command_paths = crate::adapters::collect_rule_files(commands_dir, "md")?;
+    command_paths.sort();
+    for path in command_paths {
+        let parts: Vec<String> = path
+            .strip_prefix(commands_dir)
+            .unwrap_or(&path)
+            .with_extension("")
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect();
+        if !parts.iter().all(|part| claude_loads_name(part)) {
+            continue;
+        }
+        let (fields, body) = frontmatter::read(&path)?;
+        let name = parts.join(":");
+        if skills.iter().chain(&commands).any(|s| s.name == name) {
+            continue;
+        }
+        let description = fields
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let allowed_tools = parse_tool_list(fields.get("allowed-tools"));
+        commands.push(NormalizedSkill {
+            name,
+            description,
+            content: body.trim().to_string(),
+            allowed_tools,
+            manual_invocation: fields
+                .get("disable-model-invocation")
+                .and_then(crate::skills::yaml_flag)
+                == Some(true),
+            files: Default::default(),
+        });
+    }
+    Ok(commands)
+}
+
+/// The subagents in `agents_dir` (`.claude/agents/`, or a plugin bundle's
+/// `agents/`), read recursively.
+pub(crate) fn read_agents_in(agents_dir: &Path) -> Result<Vec<NormalizedAgent>> {
+    let mut agents = Vec::new();
+    for path in crate::adapters::collect_rule_files(agents_dir, "md")? {
+        let content = crate::config::read_text(&path)?;
+        // Claude Code skips an agent whose frontmatter is not YAML.
+        if !frontmatter::is_strict_yaml(&content) {
+            continue;
+        }
+        let (fields, body) = frontmatter::parse(&content)
+            .with_context(|| format!("failed to parse the frontmatter of {}", path.display()))?;
+        // Claude Code treats a file without `name` as documentation kept
+        // beside the agents (a README), and skips one without `description`
+        // or with a `name` it refuses; none is an agent to propagate.
+        let field = |key: &str| {
+            fields
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        };
+        let (Some(name), Some(description)) = (field("name"), field("description")) else {
+            continue;
+        };
+        if !is_claude_agent_name(&name) {
+            continue;
+        }
+        let text = |key: &str| {
+            fields
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        };
+        agents.push(NormalizedAgent {
+            name,
+            description,
+            content: body.trim().to_string(),
+            model: text("model"),
+            tools: parse_tool_list(fields.get("tools")),
+            color: text("color"),
+            permission_mode: text("permissionMode"),
+        });
+    }
+    Ok(agents)
+}
+
+/// The project's `enabledPlugins` (`.claude/settings.json`): plugin id
+/// (`<name>@<marketplace>`) to on or off. An unreadable file reads as none.
+fn enabled_plugins(project_root: &Path) -> BTreeMap<String, bool> {
+    let path = project_root.join(".claude").join("settings.json");
+    crate::config::read_text(&path)
+        .ok()
+        .and_then(|text| crate::json_settings::parse_jsonc(&text).ok())
+        .and_then(|settings| settings.get("enabledPlugins").cloned())
+        .and_then(|map| map.as_object().cloned())
+        .map(|map| {
+            map.into_iter()
+                .filter_map(|(id, on)| on.as_bool().map(|on| (id, on)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn claude_md_path(project_root: &Path) -> PathBuf {
     let root = project_root.join("CLAUDE.md");
     if root.exists() {
@@ -130,8 +244,9 @@ const EMPTIED_CREDENTIAL_VARS: &[&str] = &[
 
 impl AiToolAdapter for ClaudeAdapter {
     /// MCP servers Claude Code will not use as written.
-    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
-        let mut warnings = Vec::new();
+    fn tool_warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+        let mut warnings =
+            crate::plugins::bundle_warnings(project_root, config, &crate::plugins::CLAUDE_PLUGINS);
         for server in &config.mcp_servers {
             if RESERVED_MCP_SERVER_NAMES.contains(&server.name.as_str()) {
                 warnings.push(format!(
@@ -280,101 +395,13 @@ impl AiToolAdapter for ClaudeAdapter {
         )?;
 
         // Read commands from .claude/commands/**/*.md (mapped to skills for
-        // cross-tool sync). A nested command is namespaced by its folders:
-        // `frontend/component.md` is `/frontend:component`.
-        let commands_dir = project_root.join(".claude").join("commands");
-        let mut command_paths = crate::adapters::collect_rule_files(&commands_dir, "md")?;
-        command_paths.sort();
-        for path in command_paths {
-            let parts: Vec<String> = path
-                .strip_prefix(&commands_dir)
-                .unwrap_or(&path)
-                .with_extension("")
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy().to_string())
-                .collect();
-            if !parts.iter().all(|part| claude_loads_name(part)) {
-                continue;
-            }
-            let (fields, body) = frontmatter::read(&path)?;
-            let name = parts.join(":");
-            // A skill and a command of the same name: Claude Code runs the skill.
-            if skills.iter().any(|s| s.name == name) {
-                continue;
-            }
-            let description = fields
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let allowed_tools = parse_tool_list(fields.get("allowed-tools"));
-            skills.push(NormalizedSkill {
-                name,
-                description,
-                content: body.trim().to_string(),
-                allowed_tools,
-                manual_invocation: fields
-                    .get("disable-model-invocation")
-                    .and_then(crate::skills::yaml_flag)
-                    == Some(true),
-                files: Default::default(),
-            });
-        }
+        // cross-tool sync).
+        let commands = read_commands_in(&project_root.join(".claude").join("commands"), &skills)?;
+        skills.extend(commands);
 
         // Read agents from .claude/agents/**/*.md — Claude Code scans the
         // agents directory recursively, like the rules directory.
-        let mut agents = Vec::new();
-        let agents_dir = project_root.join(".claude").join("agents");
-        for path in crate::adapters::collect_rule_files(&agents_dir, "md")? {
-            let content = crate::config::read_text(&path)?;
-            // Claude Code skips an agent whose frontmatter is not YAML.
-            if !frontmatter::is_strict_yaml(&content) {
-                continue;
-            }
-            let (fields, body) = frontmatter::parse(&content).with_context(|| {
-                format!("failed to parse the frontmatter of {}", path.display())
-            })?;
-            // Claude Code treats a file without `name` as documentation kept
-            // beside the agents (a README), and skips one without
-            // `description` or with a `name` it refuses; none is an agent to
-            // propagate.
-            let field = |key: &str| {
-                fields
-                    .get(key)
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .map(str::to_string)
-            };
-            let (Some(name), Some(description)) = (field("name"), field("description")) else {
-                continue;
-            };
-            if !is_claude_agent_name(&name) {
-                continue;
-            }
-            let model = fields
-                .get("model")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let tools = parse_tool_list(fields.get("tools"));
-            let color = fields
-                .get("color")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let permission_mode = fields
-                .get("permissionMode")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            agents.push(NormalizedAgent {
-                name,
-                description,
-                content: body.trim().to_string(),
-                model,
-                tools,
-                color,
-                permission_mode,
-            });
-        }
+        let agents = read_agents_in(&project_root.join(".claude").join("agents"))?;
 
         // Read MCP servers from .mcp.json
         let mut mcp_servers = Vec::new();
@@ -384,13 +411,21 @@ impl AiToolAdapter for ClaudeAdapter {
             mcp_servers = crate::mcp::CLAUDE_SHAPE.read_file(&mcp_content)?;
         }
 
+        // Plugin bundles in .claude/skills/<plugin>/ (`<plugin>@skills-dir`),
+        // switched on or off by the project's `enabledPlugins`.
+        let enabled_plugins = enabled_plugins(project_root);
+        let plugins =
+            crate::plugins::read_plugins(project_root, &crate::plugins::CLAUDE_PLUGINS, &|name| {
+                enabled_plugins.get(&format!("{name}@skills-dir")).copied()
+            })?;
+
         let config = NormalizedConfig {
             instructions,
             rules,
             skills,
             agents,
             mcp_servers,
-            plugins: Vec::new(),
+            plugins,
         };
         if !reads_agents_md_fallback(project_root) {
             return Ok(config);
@@ -411,7 +446,7 @@ impl AiToolAdapter for ClaudeAdapter {
         Ok(config)
     }
 
-    fn generate(
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,
@@ -484,7 +519,18 @@ impl AiToolAdapter for ClaudeAdapter {
             &[],
         )?);
 
+        // Plugin bundles as .claude/skills/<plugin>/.claude-plugin/plugin.json.
+        files.extend(crate::plugins::generate_plugins(
+            project_root,
+            &config.plugins,
+            &crate::plugins::CLAUDE_PLUGINS,
+        )?);
+
         Ok(files)
+    }
+
+    fn plugin_shape(&self) -> Option<&'static crate::plugins::PluginShape> {
+        Some(&crate::plugins::CLAUDE_PLUGINS)
     }
 }
 

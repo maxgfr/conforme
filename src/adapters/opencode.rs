@@ -78,7 +78,7 @@ impl AiToolAdapter for OpenCodeAdapter {
     /// What its variable syntax cannot carry (see [`crate::mcp::env_ref_losses`]),
     /// the SSE servers OpenCode 2 cannot reach, and OpenCode 1 entries left
     /// in its config files.
-    fn warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+    fn tool_warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
         let mut warnings = crate::mcp::env_ref_losses(
             &config.mcp_servers,
             crate::mcp::EnvRefStyle::OpenCode,
@@ -239,7 +239,7 @@ impl AiToolAdapter for OpenCodeAdapter {
         )
     }
 
-    fn generate(
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,

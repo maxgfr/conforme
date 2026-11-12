@@ -48,8 +48,18 @@ fn target_config<'a>(
             .map(|d| d.path)
             .collect()
     };
+    // The plugins the target cannot hold as bundles become its own items
+    // first, so a plugin's skills are left to the source like the others.
+    let config: std::borrow::Cow<'a, NormalizedConfig> = if config.plugins.is_empty() {
+        std::borrow::Cow::Borrowed(config)
+    } else {
+        match crate::plugins::flatten_for(config, target.plugin_shape()) {
+            Ok((flat, _)) => std::borrow::Cow::Owned(flat),
+            Err(_) => std::borrow::Cow::Borrowed(config),
+        }
+    };
     let Some(source) = find_adapter(source_id) else {
-        return std::borrow::Cow::Borrowed(config);
+        return config;
     };
     // The source's skills roots, plus a fallback root it reads (DeepSeek's
     // `.agents/skills` when `.dsh/skills` is empty).
@@ -59,11 +69,11 @@ fn target_config<'a>(
         .iter()
         .any(|d| is_one_of(d, &source_dirs))
     {
-        let mut stripped = config.clone();
+        let mut stripped = config.into_owned();
         stripped.skills.clear();
         std::borrow::Cow::Owned(stripped)
     } else {
-        std::borrow::Cow::Borrowed(config)
+        config
     }
 }
 
@@ -654,6 +664,8 @@ fn generated_agents_md(
     project_cfg: &ProjectConfig,
     config: &NormalizedConfig,
 ) -> Option<(std::path::PathBuf, String)> {
+    let flat = flat_view(config);
+    let config: &NormalizedConfig = &flat;
     let source_reads_agents_md =
         find_adapter(source_id).is_some_and(|a| a.reads_agents_md(project_root));
     // An AGENTS.md linked to a file the source reads (`AGENTS.md ->
@@ -697,6 +709,8 @@ fn carried_agents_md_sections(
     source_id: &str,
     config: &NormalizedConfig,
 ) -> NormalizedConfig {
+    let flat = flat_view(config);
+    let config: &NormalizedConfig = &flat;
     let Some(source) = find_adapter(source_id) else {
         return NormalizedConfig::default();
     };
@@ -734,6 +748,8 @@ fn refuse_hand_written_agents_md(
     project_cfg: &ProjectConfig,
     config: &NormalizedConfig,
 ) -> Result<()> {
+    let flat = flat_view(config);
+    let config: &NormalizedConfig = &flat;
     let Some((path, content)) = generated_agents_md(project_root, source_id, project_cfg, config)
     else {
         return Ok(());
@@ -1012,6 +1028,8 @@ fn warn_rules_outside_agents_md(
     target: &dyn AiToolAdapter,
     config: &NormalizedConfig,
 ) -> Result<()> {
+    let flat = flat_view(config);
+    let config: &NormalizedConfig = &flat;
     let Some(source) = find_adapter(source_id) else {
         return Ok(());
     };
@@ -1105,6 +1123,8 @@ fn warn_agents_md_readers_without_agents_md(
     targets: &[&dyn AiToolAdapter],
     config: &NormalizedConfig,
 ) -> Result<()> {
+    let flat = flat_view(config);
+    let config: &NormalizedConfig = &flat;
     let Some(fallback) = agents_md_fallback_file(project_root, source_id) else {
         return Ok(());
     };
@@ -1192,19 +1212,40 @@ fn instructions_rules_and_unheld(
     })
 }
 
-/// The source config as every target gets it: no tool holds a plugin bundle
-/// yet, so each plugin's rules, skills, agents and MCP servers become the
-/// config's own (see [`crate::plugins::flatten`]), with a warning for what
-/// that leaves out.
-fn flattened_source(config: NormalizedConfig) -> Result<NormalizedConfig> {
+/// The source config, its plugins checked: each target gets them as bundles
+/// or as its own items (see [`crate::plugins::flatten_for`]); what the tools
+/// without bundles lose is warned about here, once.
+fn checked_plugins(config: NormalizedConfig) -> Result<NormalizedConfig> {
     if config.plugins.is_empty() {
         return Ok(config);
     }
-    let (config, warnings) = crate::plugins::flatten(&config)?;
+    let (_, warnings) = crate::plugins::flatten(&config)?;
     for warning in warnings {
         eprintln!("  {} {warning}", "!".yellow());
     }
     Ok(config)
+}
+
+/// The source config with every plugin flattened ([`checked_plugins`] then
+/// [`crate::plugins::flatten`]): what `migrate` carries to its output.
+fn flattened_source(config: NormalizedConfig) -> Result<NormalizedConfig> {
+    let config = checked_plugins(config)?;
+    if config.plugins.is_empty() {
+        return Ok(config);
+    }
+    Ok(crate::plugins::flatten(&config)?.0)
+}
+
+/// `config` as AGENTS.md holds it and as it is compared with an existing
+/// one: every plugin flattened. Borrowed when there is no plugin.
+fn flat_view(config: &NormalizedConfig) -> std::borrow::Cow<'_, NormalizedConfig> {
+    if config.plugins.is_empty() {
+        return std::borrow::Cow::Borrowed(config);
+    }
+    match crate::plugins::flatten(config) {
+        Ok((flat, _)) => std::borrow::Cow::Owned(flat),
+        Err(_) => std::borrow::Cow::Borrowed(config),
+    }
 }
 
 /// An AGENTS.md read the way the source is ([`flattened_source`], without its
@@ -1255,7 +1296,7 @@ fn resolve_config(
             .read(project_root)
             .with_context(|| format!("failed to read config from {}", adapter.name()))?;
 
-        return Ok((flattened_source(config)?, id.clone()));
+        return Ok((checked_plugins(config)?, id.clone()));
     }
 
     // Fallback: read AGENTS.md
@@ -1263,7 +1304,7 @@ fn resolve_config(
     if agents_md.exists() {
         let content = std::fs::read_to_string(&agents_md).context("failed to read AGENTS.md")?;
         let config = markdown::parse_agents_md(&content)?;
-        return Ok((flattened_source(config)?, "agents.md".to_string()));
+        return Ok((checked_plugins(config)?, "agents.md".to_string()));
     }
 
     bail!(
@@ -1686,6 +1727,10 @@ fn warn_capability_loss(
     project_root: &Path,
     config: &NormalizedConfig,
 ) {
+    // Counted as the tool gets them: the plugins it cannot hold, flattened.
+    let warnings = adapter.warnings(project_root, config);
+    let flat = crate::plugins::flatten_for(config, adapter.plugin_shape());
+    let config: &NormalizedConfig = flat.as_ref().map_or(config, |(flat, _)| flat);
     let caps = adapter.capabilities();
 
     if !caps.activation_modes {
@@ -1729,7 +1774,7 @@ fn warn_capability_loss(
         );
     }
 
-    for warning in adapter.warnings(project_root, config) {
+    for warning in warnings {
         eprintln!("  {} {}: {}", "!".yellow(), adapter.name(), warning);
     }
 }
@@ -3157,6 +3202,9 @@ fn migrated_files(dir: &adapters::ManagedDir) -> Result<Vec<std::path::PathBuf>>
         // when the tool scans it recursively. Any other sub-folder is the
         // user's, and so is a skill nested inside a skill folder: readers
         // stop at the first `SKILL.md` and bundle nothing below another.
+        // A plugin bundle stays: the output gets its content as plain items
+        // at best, never its hooks, scripts or the files that need its folder.
+        adapters::ManagedKind::Bundles => Vec::new(),
         adapters::ManagedKind::Skills => files
             .into_iter()
             .filter(|path| {
@@ -3168,6 +3216,14 @@ fn migrated_files(dir: &adapters::ManagedDir) -> Result<Vec<std::path::PathBuf>>
                     .take_while(|ancestor| *ancestor != dir.path.as_path())
                     .collect();
                 folders.reverse();
+                // A plugin bundle in the skills directory (Claude Code) stays
+                // whole, a root `SKILL.md` beside its manifest included.
+                if folders
+                    .first()
+                    .is_some_and(|bundle| crate::plugins::is_bundle_dir(bundle))
+                {
+                    return false;
+                }
                 let mut skills = folders
                     .iter()
                     .enumerate()

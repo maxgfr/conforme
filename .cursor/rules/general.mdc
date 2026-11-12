@@ -81,8 +81,12 @@ Review for bugs.
 
 `## Plugin: <name>` declares a plugin (manifest metadata comments, its body
 the plugin's instructions); `<!-- plugin: <name> -->` places a Rule, Skill,
-Agent or MCP section in it. Every tool gets a plugin's content as its own
-(`plugins::flatten`, applied to the source as read); see `docs/plugins.md`.
+Agent or MCP section in it. Claude Code, Vibe and Antigravity hold plugins as
+bundles (`AiToolAdapter::plugin_shape`, a `plugins::PluginShape`; bundle dirs
+are `ManagedKind::Bundles`, owned through the `.conforme-plugin` marker); the
+trait's `generate` / `warnings` flatten what a tool cannot hold
+(`plugins::flatten_for`) before its `generate_flat` / `tool_warnings`; see
+`docs/plugins.md`.
 
 ### Adapter categories
 

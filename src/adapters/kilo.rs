@@ -130,7 +130,7 @@ impl AiToolAdapter for KiloAdapter {
             .is_some_and(|name| name == "kilo.json" || name == "kilo.jsonc")
     }
 
-    fn warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+    fn tool_warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
         let mut warnings = Vec::new();
         // Kilo also loads the root `opencode.json`, and refuses the whole
         // file when it holds the `{env:VAR}` references OpenCode resolves.
@@ -267,7 +267,7 @@ impl AiToolAdapter for KiloAdapter {
         Ok(config)
     }
 
-    fn generate(
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,

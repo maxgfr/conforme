@@ -244,6 +244,7 @@ pub(crate) fn source_locations(id: &str) -> &'static [&'static str] {
             ".claude/skills",
             ".claude/commands",
             ".claude/agents",
+            ".claude/settings.json",
             ".mcp.json",
         ],
         "cursor" => &[
@@ -302,6 +303,7 @@ pub(crate) fn source_locations(id: &str) -> &'static [&'static str] {
             ".vibe/skills",
             ".vibe/agents",
             ".vibe/prompts",
+            ".vibe/plugins",
             ".vibe/config.toml",
             ".agents/skills",
         ],
@@ -311,6 +313,7 @@ pub(crate) fn source_locations(id: &str) -> &'static [&'static str] {
             ".agents/rules",
             ".agents/skills",
             ".agents/agents",
+            ".agents/plugins",
             ".agents/mcp_config.json",
         ],
         "kilo" => &[

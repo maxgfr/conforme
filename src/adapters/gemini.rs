@@ -71,7 +71,7 @@ pub struct GeminiAdapter;
 
 impl AiToolAdapter for GeminiAdapter {
     /// What its variable syntax cannot carry (see [`crate::mcp::env_ref_losses`]).
-    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+    fn tool_warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
         crate::mcp::env_ref_losses(
             &config.mcp_servers,
             crate::mcp::EnvRefStyle::DollarOrBare,
@@ -190,7 +190,7 @@ impl AiToolAdapter for GeminiAdapter {
         Ok(config)
     }
 
-    fn generate(
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,

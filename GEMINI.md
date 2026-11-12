@@ -77,8 +77,12 @@ Review for bugs.
 
 `## Plugin: <name>` declares a plugin (manifest metadata comments, its body
 the plugin's instructions); `<!-- plugin: <name> -->` places a Rule, Skill,
-Agent or MCP section in it. Every tool gets a plugin's content as its own
-(`plugins::flatten`, applied to the source as read); see `docs/plugins.md`.
+Agent or MCP section in it. Claude Code, Vibe and Antigravity hold plugins as
+bundles (`AiToolAdapter::plugin_shape`, a `plugins::PluginShape`; bundle dirs
+are `ManagedKind::Bundles`, owned through the `.conforme-plugin` marker); the
+trait's `generate` / `warnings` flatten what a tool cannot hold
+(`plugins::flatten_for`) before its `generate_flat` / `tool_warnings`; see
+`docs/plugins.md`.
 
 ### Adapter categories
 
@@ -301,6 +305,7 @@ Managed by semantic-release. The `.version-hook.sh` script updates `Cargo.toml` 
 - Devin (formerly Windsurf): write `.devin/` only; `.windsurf/` is read as a legacy location (Devin loads both) and conforme's old copies there are cleaned. Project MCP is `.devin/mcp_config.json`; never generate `.windsurf/mcp.json`
 - Never add a user-authored directory (e.g. `.github/prompts/`) to `managed_directories()`: orphan cleanup deletes every file there that carries the directory's suffix and that conforme did not generate
 - Give each `ManagedDir` the exact suffix conforme writes there (`ManagedDir::files(dir, ".agent.md")`), and use `ManagedDir::subdirs` for skills directories, so files the tool accepts but conforme never writes (Kiro `.json` agents, dsh flat skills) survive a sync
+- A tool that loads plugin bundles committed in the project returns a `plugins::PluginShape` from `plugin_shape()`, writes them with `plugins::generate_plugins`, reads them with `plugins::read_plugins`, warns with `plugins::bundle_warnings`, and declares its bundle directory `ManagedDir::bundles` (Claude Code's are inside its skills directory); adapters implement `generate_flat` / `tool_warnings`, never `generate` / `warnings`, which flatten the plugins the tool cannot hold first. Only a bundle holding the `.conforme-plugin` marker is ever conforme's
 - An adapter must generate no files for an empty config and never a blank file (guarded by `test_no_adapter_writes_blank_files`)
 - When an upstream tool is retired (as Amazon Q was), delete its adapter outright rather than keeping it behind a deprecation flag; the removal checklist is the mirror of the "adding a new adapter" one above
 - Every MCP file is merged, never owned: any adapter that merges into a user-owned settings file (`.mcp.json`, `.cursor/mcp.json`, `.kiro/settings/mcp.json`, `.devin/mcp_config.json`, `opencode.json`, `.zed/settings.json`, `.gemini/settings.json`, `kilo.jsonc`, `.vscode/mcp.json`, `.github/mcp.json`, `.roo/mcp.json`, `.codex/config.toml`, `.vibe/config.toml`, `.agents/mcp_config.json`) MUST implement `is_shared_file()` so `remove` and `migrate` never delete it wholesale, and its gitignore patterns must not match it

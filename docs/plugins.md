@@ -3,14 +3,55 @@
 A plugin is a named, versioned package of rules, skills, subagents, MCP
 servers (and, depending on the tool, commands and hooks) that a tool loads
 together. conforme models one as `NormalizedPlugin` (`src/config.rs`), reads it
-from AGENTS.md (`## Plugin:` sections, see the README), and writes its content
-to every tool.
+from AGENTS.md (`## Plugin:` sections, see the README) or from a tool's own
+bundles, and writes it to every tool.
 
-Last verified online: 2026-11-12.
+Last verified online: 2026-11-12 (Claude Code 2.1.322, Mistral Vibe 3.1.0 and
+3.1.2 source, Antigravity CLI 1.5.3).
 
-## What conforme writes
+## Bundles: Claude Code, Mistral Vibe, Antigravity CLI
 
-Every tool gets a plugin's content as its own configuration
+These three tools load a plugin bundle committed in the project. conforme
+reads theirs and writes one per plugin in each (`plugins::PluginShape`,
+`generate_plugins`, `read_plugins`):
+
+| | Claude Code | Mistral Vibe | Antigravity CLI |
+|---|---|---|---|
+| Bundle folder | `.claude/skills/<plugin>/` | `.vibe/plugins/<plugin>/` | `.agents/plugins/<plugin>/` |
+| Manifest | `.claude-plugin/plugin.json` (`author` an object) | `plugin.json`, Agent Plugins 1.0 `$schema`, no other top-level field | `plugin.json` with its own `$schema` (`.antigravity-plugin/` and `.gemini-plugin/` read too) |
+| Skills | `skills/<name>/SKILL.md`, and `commands/*.md` read as skills | `skills/<name>/SKILL.md` | `skills/<name>/SKILL.md` |
+| Agents | `agents/<name>.md` | `ai.mistral.vibe/agents/<name>.toml` (`schema_version = 1`; the manifest gets the `ai.mistral.vibe` block) | `agents/<name>.md` |
+| Rules and instructions | none: they become the tool's own rules | none: they become the tool's own rules | `rules/<name>.md`, instructions in `rules/AGENTS.md` |
+| MCP servers | `.mcp.json` | `mcp.json` (`$schema`, `stdio` / `streamable-http`; SSE written as streamable HTTP, warned) | `mcp_config.json` |
+| Off switch | manifest `defaultEnabled: false`; the project's `enabledPlugins["<plugin>@skills-dir"]` read over it | `disabled_plugins` in `.vibe/config.toml` (Vibe 3.1.2 and later; an older one loads it, warned), `enabled_plugins` read | manifest `disabled: true` |
+| Sources | [loading](https://code.claude.com/docs/en/plugins/loading.md), [reference](https://code.claude.com/docs/en/plugins-reference) | [plugins](https://docs.mistral.ai/vibe/code/cli/plugins), [`_enablement.py`](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/plugins/_enablement.py) | [build plugins](https://antigravity.google/docs/build-plugins/), [schema](https://antigravity.google/schemas/v1/plugin.json) |
+
+The bundle's other text files (scripts, a README, a hooks file) are carried as
+they are; files that are not UTF-8 text are not.
+
+Each bundle conforme writes holds a `.conforme-plugin` marker, so it is kept in
+step with the source and deleted once its plugin leaves it. A bundle folder
+without the marker was written by hand: conforme never writes over it nor
+deletes it, and warns that the plugin of that name is not written there. In
+`.agents/plugins/` only bundle folders are conforme's: Codex's repository
+marketplace (`marketplace.json`) beside them is left alone, and
+`gitignore install` ignores `.agents/plugins/*/`, not the whole folder.
+
+In Claude Code a skill and a plugin of the same name would share one folder:
+the plugin is then not written there (warned). A folder holding both a root
+`SKILL.md` and a manifest, which Claude Code loads as a skill and as a plugin,
+is read as both, and the skill elsewhere carries none of the plugin's files.
+
+`migrate` carries a plugin's content to its output as plain items, and never
+deletes a source bundle: its hooks, scripts and the items that need its folder
+have nowhere else to go.
+
+The generated bundles were checked with `claude plugin validate --strict`,
+`agy plugin validate --strict` and Vibe 3.1.0's own plugin resolver.
+
+## Tools without bundles
+
+Every other tool gets a plugin's content as its own configuration
 (`plugins::flatten`):
 
 - the plugin's instructions become an always-on rule named after the plugin;

@@ -62,12 +62,15 @@ fn static_patterns(id: &str) -> Vec<&'static str> {
         "zed" => vec!["/.rules", ".agents/skills/"],
         "kiro" => vec![".kiro/steering/*.md", ".kiro/skills/", ".kiro/agents/*.md"],
         "deepseek" => vec![".dsh/skills/"],
-        "vibe" => vec![".vibe/skills/", ".vibe/agents/*.toml"],
+        "vibe" => vec![".vibe/skills/", ".vibe/agents/*.toml", ".vibe/plugins/"],
         "kilo" => vec![".kilo/skills/", ".kilo/agents/*.md"],
         "antigravity" => vec![
             ".agents/rules/*.md",
             ".agents/skills/",
             ".agents/agents/*.md",
+            // Bundle folders only: Codex keeps its repository marketplace,
+            // `.agents/plugins/marketplace.json`, beside them.
+            ".agents/plugins/*/",
         ],
         _ => vec![],
     }
@@ -424,11 +427,16 @@ mod tests {
     }
 
     /// Whether a pattern of [`adapter_gitignore_patterns`] matches a path
-    /// relative to the project root, with gitignore semantics for the three
-    /// forms used there: `/file`, `dir/`, and `dir/*suffix`.
+    /// relative to the project root, with gitignore semantics for the four
+    /// forms used there: `/file`, `dir/`, `dir/*/` (every folder in `dir`,
+    /// none of its files) and `dir/*suffix`.
     fn pattern_matches(pattern: &str, rel: &str) -> bool {
         if let Some(file) = pattern.strip_prefix('/') {
             rel == file
+        } else if let Some(dir) = pattern.strip_suffix("/*/") {
+            rel.strip_prefix(dir)
+                .and_then(|r| r.strip_prefix('/'))
+                .is_some_and(|inside| inside.contains('/'))
         } else if pattern.ends_with('/') {
             rel.starts_with(pattern)
         } else if let Some((dir, suffix)) = pattern.split_once("/*") {
@@ -469,8 +477,31 @@ mod tests {
                 },
                 env: Default::default(),
             }],
-            plugins: Vec::new(),
+            plugins: vec![NormalizedPlugin {
+                name: "kit".to_string(),
+                skills: vec![NormalizedSkill {
+                    name: "lint".to_string(),
+                    description: "Lint".to_string(),
+                    content: "Lint.".to_string(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
         }
+    }
+
+    /// The Antigravity pattern ignores its bundle folders, never Codex's
+    /// repository marketplace beside them.
+    #[test]
+    fn test_antigravity_bundles_pattern_keeps_the_marketplace() {
+        assert!(pattern_matches(
+            ".agents/plugins/*/",
+            ".agents/plugins/kit/plugin.json"
+        ));
+        assert!(!pattern_matches(
+            ".agents/plugins/*/",
+            ".agents/plugins/marketplace.json"
+        ));
     }
 
     /// Every file an adapter owns is ignored, no file it merges into (and

@@ -93,9 +93,38 @@ pub trait AiToolAdapter: Send + Sync {
         Vec::new()
     }
 
+    /// How the tool holds a plugin bundle committed in the project, or `None`
+    /// when it cannot hold one: its plugins then reach it as its own rules,
+    /// skills, agents and MCP servers (see [`crate::plugins::flatten_for`]).
+    fn plugin_shape(&self) -> Option<&'static crate::plugins::PluginShape> {
+        None
+    }
+
     /// What the tool will not load as written, for `sync` and `migrate` to
     /// print: a setting it cannot express, or a file in the project it refuses.
-    fn warnings(&self, _project_root: &Path, _config: &NormalizedConfig) -> Vec<String> {
+    /// Computed from the config as the tool gets it ([`Self::tool_warnings`]
+    /// on the plugins it holds and the content of those it cannot).
+    fn warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+        if config.plugins.is_empty() {
+            return self.tool_warnings(project_root, config);
+        }
+        match crate::plugins::flatten_for(config, self.plugin_shape()) {
+            Ok((flat, particular)) => {
+                let mut warnings = self.tool_warnings(project_root, &flat);
+                // Without a shape, the warnings are flattening's, printed
+                // once for the source.
+                if self.plugin_shape().is_some() {
+                    warnings.extend(particular);
+                }
+                warnings
+            }
+            Err(e) => vec![e.to_string()],
+        }
+    }
+
+    /// [`Self::warnings`] for a config whose plugins are already in the shape
+    /// this tool holds.
+    fn tool_warnings(&self, _project_root: &Path, _config: &NormalizedConfig) -> Vec<String> {
         Vec::new()
     }
 
@@ -106,8 +135,24 @@ pub trait AiToolAdapter: Send + Sync {
     }
 
     /// Generate expected file contents without writing.
-    /// Returns Vec<(path, expected_content)>.
+    /// Returns Vec<(path, expected_content)>. The plugins the tool cannot
+    /// hold as bundles reach it as its own items first
+    /// ([`crate::plugins::flatten_for`]).
     fn generate(
+        &self,
+        project_root: &Path,
+        config: &NormalizedConfig,
+    ) -> Result<Vec<(PathBuf, String)>> {
+        if config.plugins.is_empty() {
+            return self.generate_flat(project_root, config);
+        }
+        let (config, _) = crate::plugins::flatten_for(config, self.plugin_shape())?;
+        self.generate_flat(project_root, &config)
+    }
+
+    /// [`Self::generate`] for a config whose plugins are already in the shape
+    /// this tool holds (none, unless [`Self::plugin_shape`] says so).
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,
@@ -136,8 +181,15 @@ pub enum ManagedKind {
     /// Copilot `.md` agents) survive.
     Files(&'static str),
     /// Skill folders (`<name>/SKILL.md`) only: no top-level file there is
-    /// ever one of conforme's orphans.
+    /// ever one of conforme's orphans. Claude Code also loads plugin bundles
+    /// from its skills directory: a folder holding conforme's plugin marker
+    /// is pruned like one in a [`ManagedKind::Bundles`] directory.
     Skills,
+    /// Plugin bundle folders (`<plugin>/plugin.json`, …) only. A folder
+    /// holding [`crate::plugins::PLUGIN_MARKER`] is conforme's: kept in step
+    /// with the source, deleted when its plugin leaves it. Any other folder
+    /// or file there is the user's.
+    Bundles,
 }
 
 /// A directory an adapter writes into.
@@ -192,6 +244,14 @@ impl ManagedDir {
             superseded_by: None,
             keep: None,
             recursive: false,
+        }
+    }
+
+    /// A directory where conforme only writes plugin bundle folders.
+    pub fn bundles(path: PathBuf) -> Self {
+        Self {
+            kind: ManagedKind::Bundles,
+            ..Self::subdirs(path)
         }
     }
 
@@ -257,6 +317,13 @@ pub fn find_orphans(
                         folder,
                         &expected_set,
                     )?);
+                    orphans.extend(crate::plugins::stale_bundle_files(folder, &expected_set)?);
+                }
+                continue;
+            }
+            ManagedKind::Bundles => {
+                for folder in paths.iter().filter(|p| is_real_dir(p)) {
+                    orphans.extend(crate::plugins::stale_bundle_files(folder, &expected_set)?);
                 }
                 continue;
             }
@@ -310,6 +377,8 @@ pub fn clean_orphans_where(
                 clean_superseded_files(&dir.path, current, suffix, &expected_set)?
             }
             ManagedKind::Skills => clean_superseded_skills(&dir.path, current, &expected_set)?,
+            // No tool has a legacy plugin directory.
+            ManagedKind::Bundles => Vec::new(),
         });
     }
     for path in find_orphans(managed_dirs, expected_files)? {

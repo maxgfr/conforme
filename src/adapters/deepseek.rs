@@ -98,7 +98,7 @@ impl AiToolAdapter for DeepSeekAdapter {
         )
     }
 
-    fn generate(
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,

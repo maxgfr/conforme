@@ -12,7 +12,7 @@ pub struct CursorAdapter;
 
 impl AiToolAdapter for CursorAdapter {
     /// What its variable syntax cannot carry (see [`crate::mcp::env_ref_losses`]).
-    fn warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
+    fn tool_warnings(&self, _project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
         crate::mcp::env_ref_losses(
             &config.mcp_servers,
             crate::mcp::EnvRefStyle::EnvColon,
@@ -133,7 +133,7 @@ impl AiToolAdapter for CursorAdapter {
         })
     }
 
-    fn generate(
+    fn generate_flat(
         &self,
         project_root: &Path,
         config: &NormalizedConfig,

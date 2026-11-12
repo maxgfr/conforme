@@ -20,8 +20,15 @@ src/
   plugins.rs        — Plugin bundles: flatten moves a plugin's content into the top-level config for a tool
                        that cannot hold a bundle (instructions → always-on rule, `<plugin>-<name>` on a name
                        clash, items using ${PLUGIN_ROOT}-style variables and disabled plugins left out, each
-                       warned; empty or duplicate plugin names an error). sync applies it to the source as
-                       read (flattened_source) and to every AGENTS.md compared with it (parse_agents_md_flat)
+                       warned; empty or duplicate plugin names an error); flatten_for keeps the plugins a
+                       PluginShape holds (CLAUDE_PLUGINS, VIBE_PLUGINS, ANTIGRAVITY_PLUGINS: dir, BundleFormat)
+                       and flattens only the rest (rules of a Claude or Vibe bundle; a Claude plugin named like
+                       a skill is left out, warned); generate_plugins / read_plugins write and read bundles
+                       (manifest per format, components, loose text files, the PLUGIN_MARKER `.conforme-plugin`;
+                       a hand-written bundle is never written over, bundle_warnings says so); stale_bundle_files
+                       is orphan cleanup inside a marked bundle. sync prints flattening's warnings once for the
+                       source (checked_plugins), compares AGENTS.md flattened (flat_view, parse_agents_md_flat),
+                       and migrate carries plugins flattened (flattened_source) while keeping source bundles
   frontmatter.rs    — `---` block split by hand (BOM, CRLF, files of 3 bytes or fewer), parsed as YAML, else
                        entry by entry (`globs: **/*.ts`); `read` names the file in errors; is_strict_yaml for
                        tools that ignore a broken block (Antigravity rules, which accept an unquoted
@@ -141,7 +148,9 @@ src/
                        write_if_changed, contents_match (line ends aside), is_real_dir (walks never follow a
                        linked directory, a linked skill folder is never an orphan), push_inline_rule, is_instructions_file (only the top-level `general`) +
                        collect_rule_files (recursive rules-dir scan, sorted by base name) +
-                       ManagedDir (`kind`: a ManagedKind, `Files(suffix)` or `Skills`, matched exhaustively wherever
+                       plugin_shape + the provided generate / warnings, which flatten what the tool cannot hold
+                       (plugins::flatten_for) before the adapter's generate_flat / tool_warnings +
+                       ManagedDir (`kind`: a ManagedKind, `Files(suffix)`, `Skills` or `Bundles`, matched exhaustively wherever
                        a directory's contents are cleaned or migrated; `recursive`: the tool reads nested files there,
                        so migrate moves them) / find_orphans (what sync would remove, including skill folders that hold the
                        `.conforme` marker but left the source; check, diff and status report it) /

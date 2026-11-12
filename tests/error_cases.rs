@@ -1219,7 +1219,7 @@ Run the plugin linter.
 
 Run ${CLAUDE_PLUGIN_ROOT}/scripts/check.sh.
 "#;
-    let dir = create_project_with_tools(agents_md, &["claude"]);
+    let dir = create_project_with_tools(agents_md, &["claude", "cursor"]);
     let root = dir.path();
 
     conforme()
@@ -1231,17 +1231,30 @@ Run ${CLAUDE_PLUGIN_ROOT}/scripts/check.sh.
         ))
         .stderr(predicate::str::contains("skill check is left out"));
 
+    // Cursor holds no bundle: the plugin's skills become its own.
     assert!(
-        fs::read_to_string(root.join(".claude/skills/lint/SKILL.md"))
+        fs::read_to_string(root.join(".cursor/skills/lint/SKILL.md"))
             .unwrap()
             .contains("Run eslint.")
     );
     assert!(
-        fs::read_to_string(root.join(".claude/skills/kit-lint/SKILL.md"))
+        fs::read_to_string(root.join(".cursor/skills/kit-lint/SKILL.md"))
             .unwrap()
             .contains("Run the plugin linter.")
     );
-    assert!(!root.join(".claude/skills/check").exists());
+    assert!(!root.join(".cursor/skills/check").exists());
+    // Claude Code holds the bundle, which keeps both, the plugin root included.
+    assert!(
+        fs::read_to_string(root.join(".claude/skills/kit/skills/lint/SKILL.md"))
+            .unwrap()
+            .contains("Run the plugin linter.")
+    );
+    assert!(
+        fs::read_to_string(root.join(".claude/skills/kit/skills/check/SKILL.md"))
+            .unwrap()
+            .contains("${CLAUDE_PLUGIN_ROOT}/scripts/check.sh")
+    );
+    assert!(!root.join(".claude/skills/kit-lint").exists());
 }
 
 /// Two `## Plugin:` sections of the same name are refused, not merged.

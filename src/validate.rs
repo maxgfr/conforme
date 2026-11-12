@@ -87,9 +87,74 @@ pub fn literal_secrets(config: &NormalizedConfig) -> Vec<String> {
     found
 }
 
-/// Validate a NormalizedConfig and print warnings. Returns true if valid (no errors).
-pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
+/// Names used twice inside one plugin: its bundle would hold two files at the
+/// same path (`skills/lint/` twice), which no tool loads.
+fn plugin_duplicates(config: &NormalizedConfig) -> Vec<String> {
     let mut errors = Vec::new();
+    for plugin in &config.plugins {
+        let mut check = |kind: &str, names: Vec<String>| {
+            let mut seen = HashSet::new();
+            for name in names {
+                if !seen.insert(name.clone()) {
+                    errors.push(format!(
+                        "Plugin '{}' has two {kind}s named '{name}'",
+                        plugin.name
+                    ));
+                }
+            }
+        };
+        check(
+            "rule",
+            plugin
+                .rules
+                .iter()
+                .map(|r| crate::config::rule_file_name(&r.name))
+                .collect(),
+        );
+        check(
+            "skill",
+            plugin
+                .skills
+                .iter()
+                .map(|s| crate::config::sanitize_name(&s.name))
+                .collect(),
+        );
+        check(
+            "agent",
+            plugin
+                .agents
+                .iter()
+                .map(|a| crate::config::sanitize_name(&a.name))
+                .collect(),
+        );
+        check(
+            "MCP server",
+            plugin.mcp_servers.iter().map(|m| m.name.clone()).collect(),
+        );
+    }
+    errors
+}
+
+/// Validate a NormalizedConfig and print warnings. Returns true if valid (no errors).
+/// Plugins are checked as their bundles hold them, then flattened, the way a
+/// tool without bundles gets them, for every other check.
+pub fn validate(config: &NormalizedConfig, verbose: bool) -> bool {
+    let mut errors = plugin_duplicates(config);
+    let flat;
+    let config = if config.plugins.is_empty() {
+        config
+    } else {
+        match crate::plugins::flatten(config) {
+            Ok((flattened, _)) => {
+                flat = flattened;
+                &flat
+            }
+            Err(e) => {
+                errors.push(e.to_string());
+                config
+            }
+        }
+    };
     let mut warnings = Vec::new();
 
     // Check for duplicate rule names

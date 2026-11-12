@@ -85,5 +85,14 @@ Reading: `agy mcp list` and `agy agents` show nothing from the project's `.agent
 - Antigravity also reads `AGENTS.md` or `GEMINI.md` under `.agents/` (https://antigravity.google/docs/rules); conforme reads only the root files.
 - Legacy folders: the rules page keeps a "legacy path at `.agent/rules/`" and the skills page "backward compatibility for `.agent/skills`" (https://antigravity.google/docs/rules, https://antigravity.google/docs/skills); conforme reads and writes only `.agents/` (deliberate: it never writes the legacy folders, and a project still on them is migrated by renaming the folder)
 - `.agents/skills/` is shared with Codex and Zed. `remove` and `migrate` never delete a file another kept tool generates there.
-- Not handled: workflows, hooks, plugins, `.agents/*.json` manifests, nested rule folders listed in `.agents/rules.json`, and the `<name>/agent.md` subagent layout on write.
+- Not handled: workflows, hooks, `.agents/*.json` manifests (`.agents/plugins.json` included), nested rule folders listed in `.agents/rules.json`, and the `<name>/agent.md` subagent layout on write.
+
+## Plugins
+
+Verified 2026-11-12 against Antigravity CLI 1.5.3; generated bundles pass `agy plugin validate --strict`.
+
+- Bundles load from `.agents/plugins/<plugin>/` ("Manifests add to the standard folders; they don't replace them", https://antigravity.google/docs/customization-discovery); conforme reads and writes them (`plugins::ANTIGRAVITY_PLUGINS`, a `ManagedKind::Bundles` directory).
+- Manifest: `plugin.json`, else `.antigravity-plugin/plugin.json` or `.gemini-plugin/plugin.json` on read (the first wins); conforme writes `plugin.json` with `$schema` `https://antigravity.google/schemas/v1/plugin.json`, `name` (`^[a-zA-Z0-9_-]+$`), `description`, `version`, `author` (a string), `homepage`, `repository`, `license`, `keywords`, and `disabled: true` for a plugin switched off ("A user's own enable/disable choice takes precedence", https://antigravity.google/schemas/v1/plugin.json).
+- Components (https://antigravity.google/docs/build-plugins/): `skills/<name>/SKILL.md`, `agents/<name>.md`, `rules/<name>.md` with the `trigger` frontmatter of `.agents/rules/`, `rules/AGENTS.md` (the plugin's always-on instructions, no frontmatter), and `mcp_config.json` (`mcpServers`, the shape of `.agents/mcp_config.json`). Other text files are carried as they are. A bundle's `hooks.json` is not translated.
+- `.agents/plugins/` is also where Codex keeps its repository marketplace (`marketplace.json`): only bundle folders there are conforme's, and `gitignore install` ignores `.agents/plugins/*/`.
 - The Gemini CLI target is unchanged; see [gemini.md](gemini.md).
