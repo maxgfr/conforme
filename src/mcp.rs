@@ -1326,12 +1326,13 @@ pub const ANTIGRAVITY_SHAPE: ServerShape = ServerShape {
     env_refs: EnvRefStyle::Dollar,
 };
 
-/// The `mcpServers` of a Mistral Vibe plugin's `mcp.json` (Agent Plugins
-/// 1.0): `type` is required, `stdio` or `streamable-http`; plugins have no SSE
-/// ("Plugins don't support `sse`", https://docs.mistral.ai/vibe/code/cli/plugins),
+/// The `mcpServers` of an Agent Plugins 1.0 `mcp.json`, as Mistral Vibe and
+/// Codex load it: `type` is required, `stdio` or `streamable-http`. Neither
+/// has SSE ("Plugins don't support `sse`",
+/// https://docs.mistral.ai/vibe/code/cli/plugins; Codex has no SSE transport),
 /// so an SSE server is written as streamable HTTP. Only `${PLUGIN_ROOT}` and
 /// `${PLUGIN_DATA}` expand, so other references are written as is.
-pub const VIBE_PLUGIN_SHAPE: ServerShape = ServerShape {
+pub const AGENT_PLUGINS_SHAPE: ServerShape = ServerShape {
     layout: Layout::Flat,
     toggle: None,
     drop_passthrough_env: false,

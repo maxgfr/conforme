@@ -5948,7 +5948,7 @@ fn test_plugin_content_reaches_every_tool() {
     assert!(rule.contains("Review every change before merging."));
     for skill in [
         ".cursor/skills/lint/SKILL.md",
-        ".agents/skills/lint/SKILL.md",
+        ".codex/plugins/review-kit/skills/lint/SKILL.md",
     ] {
         let text = fs::read_to_string(root.join(skill)).unwrap();
         assert!(text.contains("Run `npm run lint`."), "{skill}: {text}");
@@ -6332,4 +6332,106 @@ fn test_hybrid_skill_and_plugin_folder() {
         .args(["-C", root.to_str().unwrap(), "check"])
         .assert()
         .success();
+}
+
+/// Codex gets the bundle in `.codex/plugins/`, listed in the repository
+/// marketplace next to the user's own entries and enabled in
+/// `.codex/config.toml` next to their settings; when the plugin leaves the
+/// source, only conforme's entry, table and bundle go.
+#[test]
+fn test_codex_bundle_through_the_repository_marketplace() {
+    let dir = claude_plugin_project();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::write(
+        root.join(".codex/config.toml"),
+        "model = \"gpt-5\"\n\n[plugins.\"theirs@team\"]\nenabled = true\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".agents/plugins")).unwrap();
+    let marketplace = root.join(".agents/plugins/marketplace.json");
+    fs::write(
+        &marketplace,
+        r#"{"name": "team", "plugins": [{"name": "theirs", "source": {"source": "local", "path": "./tools/theirs"}}]}"#,
+    )
+    .unwrap();
+
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+
+    let bundle = root.join(".codex/plugins/review-kit");
+    let manifest = fs::read_to_string(bundle.join("plugin.json")).unwrap();
+    assert!(manifest.contains("agent-plugins.org/schemas/1.0.0/plugin.schema.json"));
+    assert!(fs::read_to_string(bundle.join("skills/lint/SKILL.md"))
+        .unwrap()
+        .contains("Run lint."));
+    let listed: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&marketplace).unwrap()).unwrap();
+    assert_eq!(listed["name"], "team");
+    let names: Vec<&str> = listed["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["theirs", "review-kit"]);
+    assert_eq!(
+        listed["plugins"][1]["source"]["path"],
+        "./.codex/plugins/review-kit"
+    );
+    let config = fs::read_to_string(root.join(".codex/config.toml")).unwrap();
+    assert!(config.contains("model = \"gpt-5\""), "{config}");
+    assert!(config.contains("[plugins.\"theirs@team\"]"), "{config}");
+    assert!(
+        config.contains("[plugins.\"review-kit@team\"]\nenabled = true"),
+        "{config}"
+    );
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "check"])
+        .assert()
+        .success();
+
+    fs::remove_dir_all(root.join(".claude/skills/review-kit")).unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    assert!(!bundle.exists());
+    let listed = fs::read_to_string(&marketplace).unwrap();
+    assert!(
+        listed.contains("theirs") && !listed.contains("review-kit"),
+        "{listed}"
+    );
+    let config = fs::read_to_string(root.join(".codex/config.toml")).unwrap();
+    assert!(config.contains("[plugins.\"theirs@team\"]"), "{config}");
+    assert!(!config.contains("review-kit"), "{config}");
+}
+
+/// A disabled plugin is listed but switched off in Codex.
+#[test]
+fn test_codex_disabled_plugin_is_switched_off() {
+    let dir = claude_plugin_project();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".codex")).unwrap();
+    fs::write(
+        root.join(".claude/settings.json"),
+        "{\"enabledPlugins\": {\"review-kit@skills-dir\": false}}\n",
+    )
+    .unwrap();
+    conforme()
+        .args(["-C", root.to_str().unwrap(), "sync"])
+        .assert()
+        .success();
+    let config = fs::read_to_string(root.join(".codex/config.toml")).unwrap();
+    assert!(
+        config.contains("[plugins.\"review-kit@conforme\"]\nenabled = false"),
+        "{config}"
+    );
+    assert!(
+        fs::read_to_string(root.join(".agents/plugins/marketplace.json"))
+            .unwrap()
+            .contains("\"name\": \"conforme\"")
+    );
 }

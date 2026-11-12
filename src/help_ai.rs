@@ -258,7 +258,9 @@ pub fn print_help_ai() {
     println!(
         "  Bundles: Claude Code .claude/skills/<plugin>/.claude-plugin/plugin.json, Mistral Vibe \
          .vibe/plugins/<plugin>/plugin.json (Agent Plugins 1.0), Antigravity CLI \
-         .agents/plugins/<plugin>/plugin.json; conforme's carry a .conforme-plugin marker."
+         .agents/plugins/<plugin>/plugin.json, Codex .codex/plugins/<plugin>/ listed in \
+         .agents/plugins/marketplace.json and enabled in .codex/config.toml (both merged); \
+         conforme's carry a .conforme-plugin marker."
     );
     println!(
         "  Every other tool gets the plugin's content as its own: its instructions as an \

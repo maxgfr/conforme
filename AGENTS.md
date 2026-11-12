@@ -79,7 +79,9 @@ Review for bugs.
 
 `## Plugin: <name>` declares a plugin (manifest metadata comments, its body
 the plugin's instructions); `<!-- plugin: <name> -->` places a Rule, Skill,
-Agent or MCP section in it. Claude Code, Vibe and Antigravity hold plugins as
+Agent or MCP section in it. Claude Code, Vibe, Antigravity and Codex (through
+its repository marketplace `.agents/plugins/marketplace.json`, merged and
+shared) hold plugins as
 bundles (`AiToolAdapter::plugin_shape`, a `plugins::PluginShape`; bundle dirs
 are `ManagedKind::Bundles`, owned through the `.conforme-plugin` marker); the
 trait's `generate` / `warnings` flatten what a tool cannot hold

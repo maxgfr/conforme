@@ -45,6 +45,10 @@ pub enum BundleFormat {
     /// `skills/`, `agents/*.md`, `rules/` (`rules/AGENTS.md` always on),
     /// `mcp_config.json` (https://antigravity.google/docs/build-plugins/).
     Antigravity,
+    /// Codex: Agent Plugins 1.0 `plugin.json` (`.codex-plugin/plugin.json`
+    /// read too), `skills/`, `mcp.json`; no subagents nor rules
+    /// (https://developers.openai.com/plugins/build/plugins).
+    Codex,
 }
 
 /// Where and how a tool keeps the plugin bundles committed in a project.
@@ -77,12 +81,23 @@ pub const ANTIGRAVITY_PLUGINS: PluginShape = PluginShape {
     format: BundleFormat::Antigravity,
 };
 
+/// Codex installs the plugins a repository marketplace lists
+/// (`.agents/plugins/marketplace.json`) and its project `.codex/config.toml`
+/// enables; conforme keeps their bundles in `.codex/plugins/<plugin>/`, a
+/// folder Codex gives no other meaning (its plugin cache lives in
+/// `$CODEX_HOME/plugins/cache/`).
+pub const CODEX_PLUGINS: PluginShape = PluginShape {
+    dir: ".codex/plugins",
+    format: BundleFormat::Codex,
+};
+
 /// Every manifest location a bundle folder may use, any tool.
 const MANIFESTS: &[&str] = &[
     ".claude-plugin/plugin.json",
     "plugin.json",
     ".antigravity-plugin/plugin.json",
     ".gemini-plugin/plugin.json",
+    ".codex-plugin/plugin.json",
 ];
 
 /// Whether `dir` is a plugin bundle folder: it holds a plugin manifest.
@@ -102,11 +117,17 @@ impl PluginShape {
         self.format == BundleFormat::Antigravity
     }
 
+    /// Whether a bundle holds the plugin's subagents; Codex's does not, so
+    /// Codex gets them as its own agents.
+    pub fn holds_agents(&self) -> bool {
+        self.format != BundleFormat::Codex
+    }
+
     /// The manifest conforme writes, relative to the bundle folder.
     fn manifest(&self) -> &'static str {
         match self.format {
             BundleFormat::Claude => ".claude-plugin/plugin.json",
-            BundleFormat::Vibe | BundleFormat::Antigravity => "plugin.json",
+            BundleFormat::Vibe | BundleFormat::Antigravity | BundleFormat::Codex => "plugin.json",
         }
     }
 
@@ -115,6 +136,9 @@ impl PluginShape {
         match self.format {
             BundleFormat::Claude => &[".claude-plugin/plugin.json"],
             BundleFormat::Vibe => &["plugin.json"],
+            // "Existing `.codex-plugin/plugin.json` files remain supported as
+            // a compatibility fallback."
+            BundleFormat::Codex => &["plugin.json", ".codex-plugin/plugin.json"],
             BundleFormat::Antigravity => &[
                 ".antigravity-plugin/plugin.json",
                 ".gemini-plugin/plugin.json",
@@ -152,6 +176,7 @@ impl PluginShape {
                 "rules",
                 "mcp_config.json",
             ],
+            BundleFormat::Codex => &["plugin.json", ".codex-plugin", "skills", "mcp.json"],
         }
     }
 }
@@ -190,6 +215,7 @@ pub fn flatten_for(
         return Ok((config.clone(), Vec::new()));
     }
     let holds_rules = shape.holds_rules();
+    let holds_agents = shape.holds_agents();
     let unheld = NormalizedConfig {
         plugins: config
             .plugins
@@ -206,7 +232,11 @@ pub fn flatten_for(
                     p.rules.clone()
                 },
                 skills: Vec::new(),
-                agents: Vec::new(),
+                agents: if holds_agents {
+                    Vec::new()
+                } else {
+                    p.agents.clone()
+                },
                 mcp_servers: Vec::new(),
                 files: BTreeMap::new(),
                 ..p.clone()
@@ -245,6 +275,9 @@ pub fn flatten_for(
             if !holds_rules {
                 held.instructions.clear();
                 held.rules.clear();
+            }
+            if !holds_agents {
+                held.agents.clear();
             }
             held
         })
@@ -333,10 +366,17 @@ fn manifest(plugin: &NormalizedPlugin, shape: &PluginShape) -> Result<String> {
     use serde_json::Value;
     let mut manifest = match shape.format {
         // Claude Code wants `author` as an object, Antigravity takes a string.
-        BundleFormat::Claude | BundleFormat::Vibe => manifest_metadata(plugin, true),
+        BundleFormat::Claude | BundleFormat::Vibe | BundleFormat::Codex => {
+            manifest_metadata(plugin, true)
+        }
         BundleFormat::Antigravity => manifest_metadata(plugin, false),
     };
     match shape.format {
+        // Codex's switch is `[plugins."<plugin>@<marketplace>"] enabled` in
+        // `.codex/config.toml`, written by the Codex adapter.
+        BundleFormat::Codex => {
+            manifest.insert("$schema".into(), Value::String(AGENT_PLUGINS_SCHEMA.into()));
+        }
         BundleFormat::Claude => {
             if plugin.disabled {
                 manifest.insert("defaultEnabled".into(), Value::Bool(false));
@@ -435,7 +475,7 @@ pub fn generate_plugins(
                     files.push((
                         bundle.join("mcp.json"),
                         mcp_file(
-                            crate::mcp::VIBE_PLUGIN_SHAPE.build(&plugin.mcp_servers),
+                            crate::mcp::AGENT_PLUGINS_SHAPE.build(&plugin.mcp_servers),
                             Some(crate::mcp::AGENT_PLUGINS_MCP_SCHEMA),
                         )?,
                     ));
@@ -445,7 +485,7 @@ pub fn generate_plugins(
                 files.extend(crate::skills::generate_skills_in(
                     &skills_dir,
                     &plugin.skills,
-                    &crate::skills::ANTIGRAVITY_PLUGIN_SKILLS,
+                    &crate::skills::PLUGIN_SKILLS,
                 )?);
                 files.extend(crate::adapters::antigravity::generate_agents_in(
                     &bundle.join("agents"),
@@ -468,6 +508,24 @@ pub fn generate_plugins(
                         mcp_file(
                             crate::mcp::ANTIGRAVITY_SHAPE.build(&plugin.mcp_servers),
                             None,
+                        )?,
+                    ));
+                }
+            }
+            BundleFormat::Codex => {
+                files.extend(crate::skills::generate_skills_in(
+                    &skills_dir,
+                    &plugin.skills,
+                    &crate::skills::PLUGIN_SKILLS,
+                )?);
+                // "Don't just rename `.mcp.json`": the Agent Plugins file
+                // carries its `$schema` and a `type` per server.
+                if !plugin.mcp_servers.is_empty() {
+                    files.push((
+                        bundle.join("mcp.json"),
+                        mcp_file(
+                            crate::mcp::AGENT_PLUGINS_SHAPE.build(&plugin.mcp_servers),
+                            Some(crate::mcp::AGENT_PLUGINS_MCP_SCHEMA),
                         )?,
                     ));
                 }
@@ -572,7 +630,8 @@ pub fn read_plugins(
                     .and_then(serde_json::Value::as_bool)
                     == Some(true)
             }
-            BundleFormat::Vibe => false,
+            // Their switch lives in the tool's config (`enabled`).
+            BundleFormat::Vibe | BundleFormat::Codex => false,
         };
         let mut plugin = NormalizedPlugin {
             description: text_field(&manifest, "description").unwrap_or_default(),
@@ -613,7 +672,10 @@ pub fn read_plugins(
                         &join_rel(&bundle, "ai.mistral.vibe/prompts"),
                     )?;
                 }
-                Some((bundle.join("mcp.json"), &crate::mcp::VIBE_PLUGIN_SHAPE))
+                Some((bundle.join("mcp.json"), &crate::mcp::AGENT_PLUGINS_SHAPE))
+            }
+            BundleFormat::Codex => {
+                Some((bundle.join("mcp.json"), &crate::mcp::AGENT_PLUGINS_SHAPE))
             }
             BundleFormat::Antigravity => {
                 plugin.agents =

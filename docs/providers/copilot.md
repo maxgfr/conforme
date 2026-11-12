@@ -77,6 +77,7 @@
 
 ## Notes
 
+- Plugins (checked 2026-11-12): Copilot CLI installs a plugin a repository enables (`.github/copilot/settings.json` `enabledPlugins`, with its marketplace in `extraKnownMarketplaces`, sources `directory` / `git` / `github`), and reads both keys from `.claude/settings.json` too (https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference). The fields of a `directory` source are not documented there, so conforme writes no Copilot bundle nor marketplace: a plugin reaches Copilot as its own skills, agents and MCP servers (`plugins::flatten`)
 - MCP uses `"servers"` key (NOT `"mcpServers"`) -- unique among all tools
 - MCP: `env` on stdio servers and `headers` on HTTP ones (VS Code's remote fields are `type`, `url`, `headers`, `oauth`), which is what conforme writes. Environment references are written `${env:VAR}` (VS Code's predefined-variable syntax) and read back as `${VAR}`; `${input:…}` references are kept as they are
 - MCP: a legacy SSE server is written as `type: "sse"` with `url` and `headers` in both `.vscode/mcp.json` and `.github/mcp.json`, and read back as SSE (VS Code `"type": "sse"`, https://code.visualstudio.com/docs/agents/reference/mcp-configuration)

@@ -49,6 +49,48 @@ have nowhere else to go.
 The generated bundles were checked with `claude plugin validate --strict`,
 `agy plugin validate --strict` and Vibe 3.1.0's own plugin resolver.
 
+## Codex: a repository marketplace
+
+Codex loads no bundle folder by itself, but discovers a marketplace at the
+repository root (`.agents/plugins/marketplace.json`, also
+`.claude-plugin/marketplace.json` and `.cursor-plugin/marketplace.json`:
+`MARKETPLACE_MANIFEST_RELATIVE_PATHS` in
+[`codex-rs/core-plugins/src/marketplace.rs`](https://github.com/openai/codex/blob/main/codex-rs/core-plugins/src/marketplace.rs))
+and installs the plugins of it that the trusted project's `.codex/config.toml`
+enables ([plugins](https://developers.openai.com/plugins/build/plugins)). A
+session looks it up from its working directory; `codex plugin list` passes no
+project root, so it does not show it. conforme writes, per plugin:
+
+- the bundle in `.codex/plugins/<plugin>/` (`plugins::CODEX_PLUGINS`): an Agent
+  Plugins 1.0 `plugin.json`, `skills/` and an Agent Plugins `mcp.json` (`$schema`,
+  `type` per server; Codex has no SSE, so an SSE server is streamable HTTP).
+  Codex gives `.codex/plugins/` no other meaning (its cache is
+  `$CODEX_HOME/plugins/cache/`). A Codex plugin holds no subagents nor rules,
+  so Codex gets those as its own agents and through AGENTS.md;
+- an entry in `.agents/plugins/marketplace.json`: `name`, `source`
+  `{"source": "local", "path": "./.codex/plugins/<plugin>"}` (resolved from the
+  repository root, `./` required), `policy` `AVAILABLE` / `ON_INSTALL` and a
+  `category`, the entries sorted by name. The file is merged: the user's own
+  entries, its `name` and `interface` are kept (a new file is named
+  `conforme`), and an entry the user gave the plugin's name wins;
+- `[plugins."<plugin>@<marketplace>"] enabled = true` (`false` for a disabled
+  plugin) in `.codex/config.toml`, merged like its MCP servers. Codex reads it
+  only in a trusted project, which `sync` warns about.
+
+Only entries pointing at a bundle of `.codex/plugins/` that conforme wrote (or
+that is gone) are conforme's, and only the tables of plugins it listed: when a
+plugin leaves the source, its bundle, entry and table go, nothing else. A
+source with no plugin leaves both files untouched. The output was checked with
+Codex CLI 0.167.2: `codex plugin marketplace add <project>` lists the plugin
+and `codex plugin add` installs it.
+
+GitHub Copilot can also install plugins from a marketplace a repository
+declares (`.github/copilot/settings.json` `extraKnownMarketplaces` +
+`enabledPlugins`), but the fields of a `directory` marketplace source are not
+documented ([config directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)),
+so conforme does not write one: Copilot gets a plugin's content as its own
+skills, agents and MCP servers, which it loads today.
+
 ## Tools without bundles
 
 Every other tool gets a plugin's content as its own configuration
