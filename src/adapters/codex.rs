@@ -470,7 +470,9 @@ impl AiToolAdapter for CodexAdapter {
     /// `.codex/config.toml` holds the user's settings and the repository
     /// marketplace lists their own plugins too: both are merged.
     fn is_shared_file(&self, path: &Path) -> bool {
-        path.ends_with(Path::new(".codex/config.toml")) || path.ends_with(Path::new(MARKETPLACE))
+        path.ends_with(Path::new(".codex/config.toml"))
+            || path.ends_with(Path::new(".codex/hooks.json"))
+            || path.ends_with(Path::new(MARKETPLACE))
     }
 
     fn tool_warnings(&self, project_root: &Path, config: &NormalizedConfig) -> Vec<String> {
@@ -618,8 +620,18 @@ impl AiToolAdapter for CodexAdapter {
                     })
                     .unwrap_or_default(),
                 marketplaces: Vec::new(),
+                hooks: crate::config::read_text(&hooks_path(project_root))
+                    .ok()
+                    .and_then(|text| crate::json_settings::parse_jsonc(&text).ok())
+                    .and_then(|doc| doc.get("hooks").cloned())
+                    .map(|hooks| crate::hooks::read_claude(&hooks))
+                    .unwrap_or_default(),
             },
         )
+    }
+
+    fn holds_hooks(&self) -> Result<(), &'static str> {
+        Ok(())
     }
 
     fn holds_plugin_refs(&self) -> bool {
@@ -702,12 +714,29 @@ impl AiToolAdapter for CodexAdapter {
             }
         }
 
+        // Project hooks (`hooks = true`) in .codex/hooks.json, Claude Code's
+        // shape (https://learn.chatgpt.com/docs/hooks).
+        if !config.hooks.is_empty() {
+            let path = hooks_path(project_root);
+            let existing = crate::json_settings::load(&path)?;
+            let hooks = crate::hooks::claude_json(&config.hooks);
+            files.push((
+                path,
+                crate::json_settings::render(existing.as_ref(), &[("hooks", hooks)], &[])?,
+            ));
+        }
+
         Ok(files)
     }
 
     fn plugin_shape(&self) -> Option<&'static crate::plugins::PluginShape> {
         Some(&crate::plugins::CODEX_PLUGINS)
     }
+}
+
+/// Codex's project hooks file.
+fn hooks_path(project_root: &Path) -> PathBuf {
+    project_root.join(".codex").join("hooks.json")
 }
 
 #[cfg(test)]

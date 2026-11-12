@@ -18,6 +18,11 @@ pub struct ProjectConfig {
     /// Auto-clean orphaned files after sync.
     #[serde(default = "default_true")]
     pub clean: bool,
+    /// Sync the project's own hooks (not a plugin bundle's) into each tool's
+    /// native hooks file. Off by default: a hook script receives each tool's
+    /// own payload, so a guard written for one tool may not hold in another.
+    #[serde(default)]
+    pub hooks: bool,
 }
 
 fn default_true() -> bool {
@@ -32,6 +37,7 @@ impl Default for ProjectConfig {
             exclude: None,
             generate_agents_md: true,
             clean: true,
+            hooks: false,
         }
     }
 }

@@ -110,6 +110,10 @@ generate_agents_md = true
 
 # Clean orphan files on sync (default: true)
 clean = true
+
+# Sync the project's own hooks into each tool's hooks file (default: false: a hook
+# script receives each tool's own payload, so check yours handle it first)
+hooks = true
 ```
 
 Every command reads this file strictly: an unknown key (a misspelt `exlude`), a file that does not parse, or a tool id conforme does not know (or a renamed one, such as `windsurf`) is an error, never a silent fallback to syncing every tool.

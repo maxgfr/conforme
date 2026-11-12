@@ -217,6 +217,8 @@ pub struct NormalizedConfig {
     pub plugin_refs: Vec<NormalizedPluginRef>,
     /// Marketplaces the project declares
     pub marketplaces: Vec<NormalizedMarketplace>,
+    /// The project's own hooks (synced only with `hooks = true`)
+    pub hooks: Vec<NormalizedHook>,
 }
 
 impl NormalizedConfig {
@@ -230,6 +232,7 @@ impl NormalizedConfig {
             plugins: Vec::new(),
             plugin_refs: Vec::new(),
             marketplaces: Vec::new(),
+            hooks: Vec::new(),
         }
     }
 
@@ -243,6 +246,7 @@ impl NormalizedConfig {
             && self.plugins.iter().all(NormalizedPlugin::is_empty)
             && self.plugin_refs.is_empty()
             && self.marketplaces.is_empty()
+            && self.hooks.is_empty()
     }
 }
 

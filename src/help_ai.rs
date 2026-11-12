@@ -275,6 +275,11 @@ pub fn print_help_ai() {
          `extraKnownMarketplaces` (.claude/settings.json, .github/copilot/settings.json), Codex \
          `[plugins.\"<id>\"]` in .codex/config.toml; other tools are warned about."
     );
+    println!(
+        "  Project hooks (`## Hook:` with event/matcher/timeout, or the source's own), only with \
+         `hooks = true`: .claude/settings.json and .github/copilot/settings.json `hooks`, \
+         .codex/hooks.json, .agents/hooks.json (`conforme` group), .vibe/hooks.toml (`conforme-…`)."
+    );
     println!();
     println!(
         "For more info: {}",

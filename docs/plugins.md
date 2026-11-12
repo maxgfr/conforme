@@ -114,6 +114,42 @@ documented ([config directory](https://docs.github.com/en/copilot/reference/copi
 so conforme does not write one: Copilot gets a plugin's content as its own
 skills, agents and MCP servers, which it loads today.
 
+## Project hooks
+
+The project's own hooks (not a bundle's) are synced only with `hooks = true` in
+`.conformerc.toml`: a hook script receives each tool's own JSON on stdin and
+blocks an action its own way, so a guard written for one tool may let an
+action through in another. Without it, `sync` names the hooks it leaves
+where they are. In AGENTS.md a hook is a section:
+
+````markdown
+## Hook: guard
+<!-- event: PreToolUse -->
+<!-- matcher: Bash -->
+<!-- timeout: 10 -->
+
+```sh
+./scripts/guard.sh
+```
+````
+
+(`<!-- plugin: <name> -->` puts it in a plugin's bundle instead.) The event
+and the matcher use Claude Code's names.
+
+| Tool | Where | Owned by conforme |
+|---|---|---|
+| Claude Code | `.claude/settings.json` `hooks` ([hooks](https://code.claude.com/docs/en/hooks)) | the `hooks` key, as the source has it; every other key stays |
+| GitHub Copilot | `.github/copilot/settings.json` `hooks`, Claude Code's shape, part of "the shared cross-tool subset" ([config directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)) | the `hooks` key; nothing is written there when Claude Code is the source, since Copilot CLI reads `.claude/settings.json` hooks itself |
+| Codex | `.codex/hooks.json`, Claude Code's shape ([hooks](https://learn.chatgpt.com/docs/hooks)) | the `hooks` key; Codex runs a project hook once it is trusted and approved (`/hooks`) |
+| Antigravity CLI | `.agents/hooks.json` ([hooks](https://antigravity.google/docs/hooks/)) | the `conforme` group only; `PreToolUse`, `PostToolUse`, `SessionStart`, `Stop`, tool names as `agy plugin validate` gives them |
+| Mistral Vibe | `.vibe/hooks.toml` ([hooks](https://docs.mistral.ai/vibe/code/cli/hooks)) | the hooks named `conforme-…`; `pre_tool`, `post_tool`, `post_agent`, tool names in Vibe's; checked with Vibe 3.1.0's `load_hooks_file` |
+| Cursor, Devin | not written | both load Claude Code's `.claude/settings.json` hooks themselves ([Cursor](https://cursor.com/docs/reference/third-party-hooks), [Devin](https://docs.devin.ai/cli/extensibility/hooks/overview)) |
+| every other tool | not written | `sync` names the hooks it does not get (Gemini CLI and Kiro have their own formats, not written yet; OpenCode and Kilo Code only run hooks from code plugins; Zed, Zoo Code and DeepSeek Harness have none) |
+
+A hook on an event or a tool a format lacks is left out with a warning, and
+Vibe and Antigravity warn about their payload. A source with no hook leaves
+every hooks file untouched.
+
 ## Plugins enabled from a marketplace
 
 A project can also enable a plugin it does not hold, from a marketplace

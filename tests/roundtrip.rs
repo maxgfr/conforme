@@ -52,6 +52,7 @@ fn rich_config() -> NormalizedConfig {
         plugins: Vec::new(),
         plugin_refs: Vec::new(),
         marketplaces: Vec::new(),
+        hooks: Vec::new(),
     }
 }
 
@@ -93,6 +94,7 @@ fn roundtrip_config() -> NormalizedConfig {
         plugins: Vec::new(),
         plugin_refs: Vec::new(),
         marketplaces: Vec::new(),
+        hooks: Vec::new(),
     }
 }
 

@@ -24,7 +24,9 @@ src/
                        merge_codex_refs_toml for Codex `[plugins]` (its repository marketplace's tables left alone),
                        codex_add_argument for the `codex plugin marketplace add` warning; holds_plugin_refs on the
                        trait marks the three tools, sync warns for the others
-  hooks.rs          — Hooks (NormalizedHook: Claude Code's events and tool names) in each bundle format: read_claude /
+  hooks.rs          — Hooks (NormalizedHook: Claude Code's events and tool names) in each bundle format, and the
+                       project's own (merge_vibe_project_toml: `conforme-` names; antigravity_group: the `conforme`
+                       group; Claude, Copilot and Codex take claude_json; sync gates them on `hooks = true`): read_claude /
                        claude_json, vibe_toml / read_vibe (pre_tool, post_tool, post_agent; tool names through
                        skills::vibe_tool), antigravity_json / read_antigravity (a `conforme` group; ANTIGRAVITY_TOOLS,
                        the names `agy plugin validate` gives); `${CLAUDE_PLUGIN_ROOT}` ⇄ `${PLUGIN_ROOT}`; what a format
@@ -99,7 +101,7 @@ src/
                        adapter selected by only/exclude owns (root files anchored, rules/agents dirs
                        by suffix; Gemini's pattern is the context file it writes); merged settings
                        files, the source's own locations and its source_files() stay tracked
-  project_config.rs  — .conformerc.toml parser (source, only, exclude, clean options); strict: an unknown key,
+  project_config.rs  — .conformerc.toml parser (source, only, exclude, clean, hooks options; `hooks` gates the project's own hooks); strict: an unknown key,
                        a parse error or an unknown or renamed tool id (RENAMED_IDS) is an error in every command
   validate.rs        — Config validation (duplicate or empty names, empty content, invalid globs,
                        names that sanitize to nothing or collide, skill descriptions over the 1024
