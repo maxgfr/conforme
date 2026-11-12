@@ -126,9 +126,31 @@ pub struct NormalizedPlugin {
     pub skills: Vec<NormalizedSkill>,
     pub agents: Vec<NormalizedAgent>,
     pub mcp_servers: Vec<NormalizedMcpServer>,
+    /// Hooks the bundle runs on the tool's lifecycle events.
+    pub hooks: Vec<NormalizedHook>,
     /// Files of the bundle outside its components (scripts, assets), by
     /// `/`-separated path relative to the bundle root.
     pub files: BTreeMap<String, String>,
+}
+
+/// A command a tool runs on one of its lifecycle events. The event and the
+/// matcher are in Claude Code's vocabulary (`PreToolUse`, `Bash|Edit`), the
+/// richest; each tool's format translates what it can
+/// (see [`crate::hooks`]).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NormalizedHook {
+    /// A label: Vibe and Kiro name each hook, Claude Code does not.
+    pub name: String,
+    /// `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
+    /// `Stop`, …
+    pub event: String,
+    /// The tools a tool event applies to (a regular expression of tool
+    /// names); `None` for all, or for an event without tools.
+    pub matcher: Option<String>,
+    /// The shell command, `${PLUGIN_ROOT}` standing for the bundle's folder.
+    pub command: String,
+    /// Seconds.
+    pub timeout: Option<u64>,
 }
 
 impl NormalizedPlugin {
@@ -139,6 +161,7 @@ impl NormalizedPlugin {
             && self.skills.is_empty()
             && self.agents.is_empty()
             && self.mcp_servers.is_empty()
+            && self.hooks.is_empty()
             && self.files.is_empty()
     }
 }

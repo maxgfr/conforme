@@ -26,8 +26,31 @@ reads theirs and writes one per plugin in each (`plugins::PluginShape`,
 | Off switch | manifest `defaultEnabled: false`; the project's `enabledPlugins["<plugin>@skills-dir"]` read over it | `disabled_plugins` in `.vibe/config.toml` (Vibe 3.1.2 and later; an older one loads it, warned), `enabled_plugins` read | manifest `disabled: true` |
 | Sources | [loading](https://code.claude.com/docs/en/plugins/loading.md), [reference](https://code.claude.com/docs/en/plugins-reference) | [plugins](https://docs.mistral.ai/vibe/code/cli/plugins), [`_enablement.py`](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/plugins/_enablement.py) | [build plugins](https://antigravity.google/docs/build-plugins/), [schema](https://antigravity.google/schemas/v1/plugin.json) |
 
-The bundle's other text files (scripts, a README, a hooks file) are carried as
-they are; files that are not UTF-8 text are not.
+The bundle's other text files (scripts, a README) are carried as they are;
+files that are not UTF-8 text are not.
+
+### Hooks in bundles
+
+A bundle's hooks (`NormalizedHook`: event and matcher in Claude Code's
+vocabulary, command, timeout) are translated into each bundle format
+(`src/hooks.rs`):
+
+| | Claude Code | Mistral Vibe | Antigravity CLI |
+|---|---|---|---|
+| File | `hooks/hooks.json`, `{"hooks": {Event: [{matcher, hooks: [{type: "command", command, timeout}]}]}}` ([components](https://code.claude.com/docs/en/plugins/components.md)) | `ai.mistral.vibe/hooks.toml`, `[[hooks]]` `name`, `type`, `match`, `command`, `timeout` (the manifest gets the `ai.mistral.vibe` block) | `hooks.json`, `{"conforme": {"PreToolUse": [{matcher, hooks: [...]}], "SessionStart": [{type, command, timeout}]}}` ([hooks](https://antigravity.google/docs/hooks/)) |
+| Events | all | `PreToolUse` → `pre_tool`, `PostToolUse` → `post_tool`, `Stop` → `post_agent` (`HookType`, `vibe/core/hooks/models.py`, the mapping Vibe applies to a Claude Code plugin's hooks) | `PreToolUse`, `PostToolUse`, `SessionStart`, `Stop` |
+| Matcher | as written | each tool name in Vibe's (`Bash` → `bash`, `Edit\|Write` → `re:^(edit\|write_file)$`) | each tool name in Antigravity's, as `agy plugin validate` names them (`Bash` → `run_command`, `Read` → `view_file\|read_file`, …) |
+| Plugin root | `${CLAUDE_PLUGIN_ROOT}` | `${PLUGIN_ROOT}` (set for plugin hooks) | `${PLUGIN_ROOT}` (set in hook environments since 1.5.3) |
+
+A hook on an event the format lacks, or whose matcher names a tool it has no
+equivalent for (`TodoWrite`, an `mcp__…` pattern), is left out with a warning.
+A hook script receives each tool's own JSON on stdin and blocks its own way
+(Vibe: printing a `deny` decision, a non-zero exit being a warning unless
+`strict`; Antigravity: printing a `decision`), so Vibe and Antigravity warn
+that a translated guard must handle their payload. Codex bundles hold no hooks
+(`plugin_hooks` is `removed` in Codex CLI 0.167.2), nor does any tool without
+bundles: `sync` names the hooks they do not get. The translated hooks pass
+`agy plugin validate --strict` and load in Vibe 3.1.0's resolver.
 
 Each bundle conforme writes holds a `.conforme-plugin` marker, so it is kept in
 step with the source and deleted once its plugin leaves it. A bundle folder
