@@ -1,6 +1,6 @@
 ---
 allowed-tools: Read Grep Glob Bash WebFetch WebSearch Edit Write
-description: Verify conforme's provider adapters online, against each tool's live docs, changelog and source fetched during the run; prove every tool's copy of every skill matches the source, and fix what drifted
+description: Verify conforme's provider adapters online, against each tool's live docs, changelog and source fetched during the run; prove every tool's copy of every skill matches the source; fix what drifted, restamp every provider doc and ship it, merged, without stopping to ask
 disable-model-invocation: true
 name: verify-providers
 ---
@@ -19,6 +19,16 @@ on it.
 The audit is exhaustive when every registered adapter has a fact sheet in
 which every line carries a proof URL, every drift is merged with a regression
 test, and every copy of every skill matches its source.
+
+**Run it end to end, without stopping to ask.** A run updates everything
+itself: it fixes every drift it proves, adds the new official pages, corrects
+the provider docs, restamps every `Last verified online` line, regenerates the
+dogfooded copies, runs the gate, then ships (step 13): signed commit, PR,
+merge once CI is green, release checked, worktree removed. The only decision
+left to the user is a breaking change, deleting or renaming a tool id (step
+10): everything else in that run still ships, and the report names it. When
+nothing moved upstream (step 2) and every check passes, the run still
+restamps the dates and ships that.
 
 Work in a worktree. Run the full gate before touching anything so a failure
 later is attributable to the audit:
@@ -44,7 +54,20 @@ audit is known, and the adapter count matches `README.md` ("Supported tools
 ## 2. Find what changed upstream
 
 Start from the web, not from `docs/providers/`: the first question is what
-moved since the last audit. For each adapter:
+moved since the last audit. First ask the registries:
+
+```bash
+python3 .claude/skills/verify-providers/scripts/provider_versions.py .
+```
+
+It fetches each tool's latest version (npm, PyPI, GitHub releases, VS Code's
+update API) and prints one row per provider doc: CURRENT when the version is
+already in its `Last verified online` line, STALE when the tool shipped since,
+MANUAL with the changelog to read for a tool no registry publishes (Cursor,
+Devin, Kiro), ERROR when a fetch failed (a registry or repository moved: find
+the new one and update `PROVIDERS` in the script). A new adapter needs an
+entry there too. Every STALE and MANUAL row is a changelog to read below;
+a CURRENT one still gets its pages re-read in step 3. Then, for each adapter:
 
 - **Search.** `WebSearch` (mode `standard`; `extended` when results are thin,
   old or the tool is niche) for the product name with "changelog",
@@ -304,16 +327,18 @@ unexplained.
 
 ## 10. Classify every finding
 
-Before fixing, sort the audit table into four lists so the user can see the
-decisions, and confirm the third one:
+Before fixing, sort the audit table into four lists, which the report shows.
+Apply the first one without asking; only the third waits for the user:
 
 - **fix now**: drift with a proof URL, broken links, failed safety,
   conformity or CLI checks;
 - **leave**: deliberate deviations already documented as such;
 - **delete or rename the adapter**: absorbed, retired, forked or renamed
-  upstream (step 2). Deleting or renaming a tool id is a breaking change and
-  ships as a major release: the commit needs `!` and a `BREAKING CHANGE:`
-  footer with the migration, and say so before merging;
+  upstream (step 2). Update the docs and the paths the tool now reads right
+  away (non-breaking), but deleting or renaming a tool id is a breaking change
+  that ships as a major release: it goes in its own PR, left open for the
+  user, its commit with `!` and a `BREAKING CHANGE:` footer holding the
+  migration;
 - **unconfirmed**: claims no fetched page backs, with what was searched.
 
 ## 11. Fix, with a regression test per finding
@@ -341,6 +366,17 @@ usual set is:
    renamed one changes its module, struct, id, `docs/providers/` file and
    every test fixture that names it.
 
+Restamp each provider once its fact sheet was re-verified in this run, with
+the versions step 2 found (a MANUAL one with the version its changelog gave):
+
+```bash
+python3 .claude/skills/verify-providers/scripts/provider_versions.py . --stamp all
+python3 .claude/skills/verify-providers/scripts/provider_versions.py . --stamp cursor --against "Cursor 3.29.15 and Cursor CLI 2026.11.11"
+python3 .claude/skills/verify-providers/scripts/provider_versions.py .   # every row CURRENT or MANUAL
+```
+
+Other dated claims in a provider doc ("Verified … against Antigravity CLI
+1.5.6", "checked with Vibe 3.1.2") move with it when they were re-checked.
 Then regenerate the dogfooded configs, prove the skills again, and run the
 full gate:
 
@@ -366,6 +402,25 @@ One table, one row per adapter:
 
 followed by the four lists from step 10 and the PR link. State plainly what
 was not verified (a page that could not be read, a tool not installed here, a
-behaviour only a manual run in the IDE would confirm). After the merge, check
-that semantic-release published the expected version and that the release
-binaries are attached.
+behaviour only a manual run in the IDE would confirm).
+
+## 13. Ship
+
+The run ends merged, not with a diff waiting:
+
+1. One signed commit (`git log --format='%G?' -1` prints `G`), typed by what
+   it holds: `fix:` when code changed, `docs:` when only docs and dates did;
+   it closes the run's issue.
+2. Push the branch, open the PR with the step 12 table, and wait for every CI
+   check (`gh pr checks <n> --watch`). A red check is a finding: fix it on the
+   branch and push again.
+3. Merge once green (`gh pr merge <n> --squash --delete-branch`), then confirm
+   the merge commit is verified and the issue closed.
+4. When the commit type releases (`fix:`, `feat:`), wait for the Release
+   workflow on `main` and check that semantic-release published the expected
+   version with its binaries attached (`gh release view`).
+5. Remove the worktree and the local branch, and pull `main`.
+
+Done when: the PR is merged, the release (if any) is published, `git
+worktree list` shows no audit worktree, and the only open item is a breaking
+rename or deletion from step 10, if there was one.

@@ -281,7 +281,7 @@ Quick start: init, sync, check, status, diff, remove, add, watch, migrate, hook,
 
 This project uses Claude Code skills in `.claude/skills/`:
 
-- **verify-providers** — Verify all 14 provider adapters online, with a proof URL for every fact, the tools' own CLIs and every command; fix drift with regression tests (see its `SKILL.md`)
+- **verify-providers** — Verify all 14 provider adapters online, with a proof URL for every fact, the tools' own CLIs and every command; it fixes drift with regression tests, restamps every provider doc (`scripts/provider_versions.py` finds what shipped upstream) and merges the result on its own (see its `SKILL.md`)
 
 And one plugin, the example of plugin sync: **conforme-dev**
 (`.claude/skills/conforme-dev/`, loaded as `conforme-dev@skills-dir`) holds the
